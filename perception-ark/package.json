@@ -1,0 +1,18 @@
+{
+  "name": "perception-ark",
+  "version": "1.0.0",
+  "description": "感知方舟 · 视障人群AI感知眼镜 · TRAE五智能体协作",
+  "private": true,
+  "scripts": {
+    "install:all": "npm install && npm --prefix backend install && npm --prefix frontend install",
+    "dev": "concurrently -n BACKEND,FRONTEND -c #00FFA3,#7B61FF \"npm --prefix backend run dev\" \"npm --prefix frontend run dev\"",
+    "start": "concurrently -n BACKEND,FRONTEND -c #00FFA3,#7B61FF \"npm --prefix backend start\" \"npm --prefix frontend run dev\"",
+    "build": "npm --prefix frontend run build",
+    "start:prod": "npm --prefix backend start",
+    "build:full": "npm --prefix frontend run build && npm --prefix backend start",
+    "preview:prod": "npm run build && npm --prefix backend start"
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.1"
+  }
+}
