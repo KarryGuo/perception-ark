@@ -27,9 +27,9 @@ services:
       - key: ARK_API_KEY
         sync: false  # 在Render界面手动填写,不在配置中暴露
       - key: ARK_VISION_MODEL
-        value: doubao-1.5-vision-pro-32k
+        sync: false  # 在Render界面填写推理接入点ID(如ep-2026xxxx)
       - key: ARK_TEXT_MODEL
-        value: doubao-1.5-pro-32k
+        sync: false  # 在Render界面填写推理接入点ID(如ep-2026xxxx)
       - key: ARK_API_BASE
         value: https://ark.cn-beijing.volces.com/api/v3
       # ===== 高德地图 API =====
