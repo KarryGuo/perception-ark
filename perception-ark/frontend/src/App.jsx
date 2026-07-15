@@ -7,6 +7,7 @@ import Login from './pages/Login.jsx';
 import Register from './pages/Register.jsx';
 import Guide from './pages/Guide.jsx';
 import AppMobile from './pages/AppMobile.jsx';
+import Settings from './pages/Settings.jsx';
 
 // 路由守卫: 未登录则跳转登录页
 function RequireAuth({ children }) {
@@ -86,6 +87,7 @@ export default function App() {
 
   // 受保护路由: 需要登录
   if (route === '#/app' || route === '#/app/') return <RequireAuth><AppMobile /></RequireAuth>;
+  if (route === '#/settings' || route === '#/settings/') return <RequireAuth><Settings /></RequireAuth>;
   if (route.startsWith('#/family')) return <RequireAuth><Family /></RequireAuth>;
   if (route === '#/' || route === '' || route === '#') return <RequireAuth><Glasses /></RequireAuth>;
 

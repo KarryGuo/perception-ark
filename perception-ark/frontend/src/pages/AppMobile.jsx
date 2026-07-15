@@ -37,10 +37,8 @@ export default function AppMobile() {
     catch { return []; }
   });
   const [showNavHistory, setShowNavHistory] = useState(false); // 历史搜索浮层
-  const [showSettings, setShowSettings] = useState(false); // 设置浮层
   const [ttsRate, setTtsRate] = useState(() => parseFloat(localStorage.getItem('ark_tts_rate')) || 0.95);
-  const [ttsVoiceName, setTtsVoiceName] = useState(() => localStorage.getItem('ark_tts_voice') || '');
-  const [availableVoices, setAvailableVoices] = useState([]);
+  const [navInputMode, setNavInputMode] = useState(false); // 导航页: false=按住说话, true=文字输入
 
   const { speak, stop: stopSpeak, setVoiceByName, voice: currentVoice } = useSpeechSynthesis();
   const asr = useSpeechRecognition();
@@ -55,20 +53,6 @@ export default function AppMobile() {
   useEffect(() => {
     if (!camera.active && !camera.error) camera.start();
   }, [camera.active, camera.error]);
-
-  // 加载可用语音列表(设置页用)
-  useEffect(() => {
-    const load = () => {
-      const voices = window.speechSynthesis?.getVoices() || [];
-      // 优先显示中文语音
-      const cn = voices.filter(v => v.lang.startsWith('zh'));
-      setAvailableVoices(cn.length > 0 ? cn : voices);
-    };
-    load();
-    if (window.speechSynthesis) {
-      window.speechSynthesis.onvoiceschanged = load;
-    }
-  }, []);
 
   // ===== 摇一摇开启出行模式 (定义提前到 showToast 之后) =====
   // (见下方)
@@ -437,19 +421,13 @@ export default function AppMobile() {
     } catch (err) { showToast('闪光灯切换失败'); }
   }, [camera, torchOn, showToast]);
 
-  // ===== 设置页: 语速/音色 =====
-  const handleSaveRate = useCallback((rate) => {
-    localStorage.setItem('ark_tts_rate', String(rate));
-    setTtsRate(rate);
-    speak(`语速已调整为${rate.toFixed(1)}`);
-  }, [speak]);
+  // ===== 设置页跳转 =====
+  const goSettings = useCallback(() => {
+    if (navigator.vibrate) navigator.vibrate(10);
+    window.location.hash = '#/settings';
+  }, []);
 
-  const handleSaveVoice = useCallback((name) => {
-    setVoiceByName(name);
-    setTtsVoiceName(name);
-    speak('音色已切换');
-  }, [setVoiceByName, speak]);
-
+  // 清除导航历史
   const handleClearNavHistory = useCallback(() => {
     localStorage.removeItem('ark_nav_history');
     setNavHistory([]);
@@ -492,28 +470,26 @@ export default function AppMobile() {
         </button>
       </div>
 
-      {/* ===== 顶部浮动工具栏 ===== */}
+      {/* ===== 左上角浮动工具栏 (竖向排列) ===== */}
       <div className="am-top-tools">
         <div className="am-status">
           <span className={`am-dot ${connected ? 'on' : 'off'}`} />
           <span className="am-status-text">{connected ? '在线' : '离线'}</span>
         </div>
-        <div className="am-tools-right">
-          {activeTab === 'recognize' && (
-            <>
-              <button className="am-icon-btn" onClick={() => { vibrateClick(); camera.active ? camera.stop() : camera.start(); }} title="摄像头">📹</button>
-              <button className="am-icon-btn" onClick={async () => { vibrateClick(); await camera.switchCamera(); showToast(camera.facingMode === 'user' ? '前置摄像头' : '后置摄像头'); }} title="切换">🔄</button>
-              <button className={`am-icon-btn ${torchOn ? 'on' : ''}`} onClick={() => { vibrateClick(); toggleTorch(); }} title="闪光灯">🔦</button>
-            </>
-          )}
-          {activeTab === 'navigate' && (
-            <>
-              <button className="am-icon-btn" onClick={() => { vibrateClick(); setShowFavorites(!showFavorites); }} title="收藏">⭐</button>
-              <button className="am-icon-btn" onClick={() => { vibrateClick(); showToast('已获取位置'); }} title="定位">📍</button>
-            </>
-          )}
-          <button className="am-icon-btn" onClick={() => { vibrateClick(); setShowSettings(true); }} title="设置">⚙️</button>
-        </div>
+        {activeTab === 'recognize' && (
+          <>
+            <button className="am-icon-btn" onClick={() => { vibrateClick(); camera.active ? camera.stop() : camera.start(); }} title="摄像头">📹</button>
+            <button className="am-icon-btn" onClick={async () => { vibrateClick(); await camera.switchCamera(); showToast(camera.facingMode === 'user' ? '前置摄像头' : '后置摄像头'); }} title="切换">🔄</button>
+            <button className={`am-icon-btn ${torchOn ? 'on' : ''}`} onClick={() => { vibrateClick(); toggleTorch(); }} title="闪光灯">🔦</button>
+          </>
+        )}
+        {activeTab === 'navigate' && (
+          <>
+            <button className="am-icon-btn" onClick={() => { vibrateClick(); setShowFavorites(!showFavorites); }} title="收藏">⭐</button>
+            <button className="am-icon-btn" onClick={() => { vibrateClick(); showToast('已获取位置'); }} title="定位">📍</button>
+          </>
+        )}
+        <button className="am-icon-btn" onClick={goSettings} title="设置">⚙️</button>
       </div>
 
       {/* ===== 主内容浮层 ===== */}
@@ -605,54 +581,6 @@ export default function AppMobile() {
             </div>
           </div>
         )}
-
-        {/* 设置浮层 */}
-        {showSettings && (
-          <div className="am-settings-overlay" onClick={() => setShowSettings(false)}>
-            <div className="am-settings-panel" onClick={e => e.stopPropagation()}>
-              <div className="am-settings-header">
-                <span className="am-settings-title">⚙️ 设置</span>
-                <button className="am-settings-close" onClick={() => setShowSettings(false)}>✕</button>
-              </div>
-              <div className="am-settings-body">
-                {/* 语速调节 */}
-                <div className="am-setting-group">
-                  <label className="am-setting-label">播报语速: <span className="am-setting-value">{ttsRate.toFixed(2)}x</span></label>
-                  <input
-                    type="range" min="0.5" max="1.5" step="0.05"
-                    value={ttsRate}
-                    onChange={e => handleSaveRate(parseFloat(e.target.value))}
-                    className="am-setting-slider"
-                  />
-                  <div className="am-setting-marks"><span>慢</span><span>正常</span><span>快</span></div>
-                </div>
-                {/* 音色选择 */}
-                {availableVoices.length > 0 && (
-                  <div className="am-setting-group">
-                    <label className="am-setting-label">播报音色</label>
-                    <select
-                      className="am-setting-select"
-                      value={ttsVoiceName}
-                      onChange={e => handleSaveVoice(e.target.value)}
-                    >
-                      <option value="">系统默认</option>
-                      {availableVoices.map(v => (
-                        <option key={v.name} value={v.name}>{v.name} ({v.lang})</option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-                {/* 清除导航历史 */}
-                <div className="am-setting-group">
-                  <label className="am-setting-label">导航历史记录</label>
-                  <button className="am-setting-btn" onClick={handleClearNavHistory}>
-                    清除历史记录 ({navHistory.length}条)
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
 
       {/* ===== 底部浮动操作区 ===== */}
@@ -736,29 +664,51 @@ export default function AppMobile() {
           </div>
         )}
 
-        {/* 导航页 - 输入框+按住说话 */}
+        {/* 导航页 - 统一输入框: 按住说话(左长) + 搜索(右), 点击搜索切换文字输入 */}
         {activeTab === 'navigate' && (
           <div className="am-navigate-bottom">
-            <div className="am-input-row">
-              <input
-                type="text"
-                className="am-input"
-                value={navInput}
-                onChange={e => setNavInput(e.target.value)}
-                onFocus={() => setShowNavHistory(true)}
-                onBlur={() => setTimeout(() => setShowNavHistory(false), 200)}
-                placeholder="输入目的地,如五一广场"
-                onKeyDown={e => e.key === 'Enter' && handleNavigate()}
-              />
-              <button className="am-input-send" onClick={() => handleNavigate()} disabled={busy}>搜索</button>
+            <div className="am-nav-input-box">
+              {navInputMode ? (
+                <>
+                  <input
+                    type="text"
+                    className="am-nav-input-field"
+                    value={navInput}
+                    onChange={e => setNavInput(e.target.value)}
+                    onFocus={() => setShowNavHistory(true)}
+                    onBlur={() => setTimeout(() => setShowNavHistory(false), 200)}
+                    placeholder="输入目的地,如五一广场"
+                    onKeyDown={e => { if (e.key === 'Enter' && navInput.trim()) { handleNavigate(); setNavInputMode(false); } }}
+                    autoFocus
+                  />
+                  <button
+                    className="am-nav-send-btn"
+                    onClick={() => { if (navInput.trim()) { handleNavigate(); setNavInputMode(false); } }}
+                    disabled={busy}
+                  >搜索</button>
+                  <button
+                    className="am-nav-toggle-btn"
+                    onClick={() => { vibrateClick(); setNavInputMode(false); setNavInput(''); }}
+                    title="切回语音"
+                  >🎤</button>
+                </>
+              ) : (
+                <>
+                  <button
+                    className={`am-nav-press-btn ${asr.listening ? 'listening' : ''}`}
+                    onMouseDown={handlePressStart} onMouseUp={handlePressEnd}
+                    onTouchStart={handlePressStart} onTouchEnd={handlePressEnd}
+                  >
+                    <span className="icon">🎤</span><span>{asr.listening ? '松开发送' : '按住说话'}</span>
+                  </button>
+                  <button
+                    className="am-nav-toggle-btn"
+                    onClick={() => { vibrateClick(); setNavInputMode(true); }}
+                    title="文字输入"
+                  >⌨️</button>
+                </>
+              )}
             </div>
-            <button
-              className={`am-press-btn ${asr.listening ? 'listening' : ''}`}
-              onMouseDown={handlePressStart} onMouseUp={handlePressEnd}
-              onTouchStart={handlePressStart} onTouchEnd={handlePressEnd}
-            >
-              <span className="icon">🎤</span><span>{asr.listening ? '松开发送' : '按住说话'}</span>
-            </button>
           </div>
         )}
       </div>
