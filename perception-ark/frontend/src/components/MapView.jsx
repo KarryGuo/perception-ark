@@ -7,11 +7,12 @@ import { loadAmapSDK, AMAP_JS_KEY } from '../services/amap.js';
  * - 显示坐标、地址
  * - 接收路径规划结果时绘制路线
  */
-export default function MapView({ location, route, className }) {
+export default function MapView({ location, route, pois, className }) {
   const containerRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const markerRef = useRef(null);
   const routePolylineRef = useRef(null);
+  const poiMarkersRef = useRef([]);
   const [status, setStatus] = useState('loading');
   const [addr, setAddr] = useState('');
 
@@ -103,6 +104,33 @@ export default function MapView({ location, route, className }) {
       mapInstance.setFitView([routePolylineRef.current], false, [80, 80, 80, 80]);
     }
   }, [route]);
+
+  // POI列表标记绘制(附近搜索结果)
+  useEffect(() => {
+    const mapInstance = mapInstanceRef.current;
+    if (!mapInstance || !window.AMap) return;
+    // 清除旧标记
+    poiMarkersRef.current.forEach(m => { try { mapInstance.remove(m); } catch(e){} });
+    poiMarkersRef.current = [];
+
+    if (pois && pois.length > 0) {
+      const AMap = window.AMap;
+      const colors = ['#FFB627', '#00FFA3', '#7B61FF', '#FF2E7E', '#00E5FF'];
+      pois.forEach((poi, i) => {
+        const color = colors[i % colors.length];
+        const marker = new AMap.Marker({
+          position: new AMap.LngLat(poi.lng, poi.lat),
+          content: `<div style="display:flex;align-items:center;gap:4px;padding:4px 10px;background:rgba(8,11,20,0.9);border:1px solid ${color};border-radius:20px;color:${color};font-size:12px;font-weight:600;white-space:nowrap;backdrop-filter:blur(8px);box-shadow:0 2px 8px rgba(0,0,0,0.4);">${i+1}. ${poi.name}</div>`,
+          anchor: 'bottom-center',
+          offset: new AMap.Pixel(0, -4)
+        });
+        mapInstance.add(marker);
+        poiMarkersRef.current.push(marker);
+      });
+      // 自动缩放显示所有标记
+      mapInstance.setFitView(poiMarkersRef.current, false, [60, 60, 60, 60]);
+    }
+  }, [pois]);
 
   return (
     <div className={`map-view ${className || ''}`}>

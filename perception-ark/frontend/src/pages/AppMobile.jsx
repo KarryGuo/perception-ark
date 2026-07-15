@@ -22,6 +22,13 @@ export default function AppMobile() {
   const camera = useCamera();
   const { location } = useGeolocation();
 
+  // 摄像头强制开启(识物功能依赖)
+  useEffect(() => {
+    if (!camera.active && !camera.error) {
+      camera.start();
+    }
+  }, [camera.active, camera.error]);
+
   // WebSocket接收后端事件
   const handleWsEvent = useCallback((event) => {
     switch (event.type) {
@@ -30,6 +37,15 @@ export default function AppMobile() {
         break;
       case 'subtitle':
         setSubtitle(event.text);
+        break;
+      case 'poi_list':
+        if (event.pois && event.pois.length > 0) {
+          const top3 = event.pois.slice(0, 3);
+          let text = `附近找到${event.pois.length}个结果。`;
+          top3.forEach((p, i) => { text += `第${i+1}个，${p.name}，${p.distance}米。`; });
+          setSubtitle(text);
+          showToast(`找到${event.pois.length}个结果，说"去第一个"导航`);
+        }
         break;
     }
   }, [speak]);
@@ -126,11 +142,12 @@ export default function AppMobile() {
     } finally { setBusy(false); }
   }, [navInput, location, showToast, speak]);
 
-  // 摄像头开关
+  // 摄像头开关(强制开启,只允许重启)
   const toggleCamera = useCallback(() => {
     if (camera.active) {
       camera.stop();
-      showToast('摄像头已关闭');
+      setTimeout(() => camera.start(), 300);
+      showToast('摄像头重启中');
     } else {
       camera.start().then(ok => {
         if (!ok) {
@@ -199,7 +216,7 @@ export default function AppMobile() {
       <div className="app-mobile-actions">
         <button className="app-mobile-btn" onClick={toggleCamera}>
           <span className="amb-icon">{camera.active ? '📹' : '📷'}</span>
-          <span className="amb-label">{camera.active ? '关闭摄像头' : '开启摄像头'}</span>
+          <span className="amb-label">{camera.active ? '重启摄像头' : '开启摄像头'}</span>
         </button>
         <button className="app-mobile-btn primary" onClick={handleScene} disabled={busy || !camera.active}>
           <span className="amb-icon">👁️</span>

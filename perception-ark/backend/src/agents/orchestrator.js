@@ -35,7 +35,8 @@ const sharedContext = {
   lastDangerEvent: null,
   userActivity: 'idle', // walking | waiting | reading | fallen
   lastSpoken: null,
-  history: []
+  history: [],
+  pendingPois: null // 附近搜索结果缓存,供用户语音选择
 };
 
 // 输出队列 - 按优先级排序
@@ -243,7 +244,44 @@ export async function runNavigationAgent(destination, startLat, startLng) {
       return null;
     }
 
-    // 全局搜索可能返回多个城市的同名地点,优先选用户当前所在城市
+    // 智能选择模式: 用户说"最近的XX"/"附近XX"时,展示多个结果供选择
+    const isNearbySearch = /最近|附近|周边|就近/.test(destination);
+    if (isNearbySearch && pois.length > 1 && startLatVal && startLngVal) {
+      // 按距离排序
+      pois.sort((a, b) => a.distance - b.distance);
+      // 缓存搜索结果供用户选择
+      sharedContext.pendingPois = pois;
+
+      // 推送poi_list事件到前端,地图上显示多个标记
+      emit({
+        type: 'poi_list',
+        keyword: destination,
+        pois: pois.map((p, i) => ({
+          index: i + 1,
+          name: p.name,
+          address: p.address,
+          city: p.city || '',
+          distance: p.distance,
+          lat: p.lat,
+          lng: p.lng
+        })),
+        origin: { lat: startLatVal, lng: startLngVal }
+      });
+
+      // 语音播报搜索结果
+      const top3 = pois.slice(0, 3);
+      let speakText = `附近找到${pois.length}个结果。`;
+      top3.forEach((p, i) => {
+        speakText += `第${i + 1}个，${p.name}，距离${p.distance}米。`;
+      });
+      speakText += `说"去第一个"即可开始导航。`;
+      emitSpeak('A02', speakText);
+      emitSubtitle(`🧭 ${speakText}`);
+      emitAgentState('A02', false, `找到${pois.length}个结果,等待用户选择`);
+      return { pois, route: null, mode: 'select' };
+    }
+
+    // 精确搜索: 全局搜索可能返回多个城市的同名地点,优先选用户当前所在城市
     let target = pois[0];
     const userCity = sharedContext.currentLocation?.city;
     if (userCity && pois.length > 1) {
@@ -351,8 +389,107 @@ export async function runNavigationAgent(destination, startLat, startLng) {
   }
 }
 
+/**
+ * 选择POI并导航 - 用户说"去第一个"/"去最近的"时调用
+ * @param {string} selection - "第一个"/"第二个"/"最近"/"最近的"
+ * @param {number} startLat
+ * @param {number} startLng
+ */
+export async function selectPoiAndNavigate(selection, startLat, startLng) {
+  emitAgentState('A02', true, '正在规划路径...');
+
+  try {
+    const pois = sharedContext.pendingPois;
+    if (!pois || pois.length === 0) {
+      emitSpeak('A02', '请先搜索目的地，比如说"附近的药店"。');
+      return null;
+    }
+
+    // 解析用户选择: 第几个 / 最近 / 最远
+    let target = null;
+    const numMatch = selection.match(/第([一二三四五六七八九\d]+)个?/);
+    if (numMatch) {
+      const numMap = { '一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9 };
+      let idx = numMap[numMatch[1]] || parseInt(numMatch[1]);
+      if (idx >= 1 && idx <= pois.length) {
+        target = pois[idx - 1];
+      }
+    } else if (/最近|第一/.test(selection)) {
+      target = pois[0]; // 已按距离排序,第一个就是最近的
+    }
+
+    if (!target) {
+      emitSpeak('A02', `没有第${selection}个结果，请说第一到第${pois.length}个。`);
+      return null;
+    }
+
+    // 清除待选择缓存
+    sharedContext.pendingPois = null;
+
+    emitLog('A02', `用户选择了: ${target.name} (距离${target.distance}米)`);
+
+    // 确定起点
+    let startLatVal = startLat;
+    let startLngVal = startLng;
+    if (!startLatVal || !startLngVal) {
+      if (sharedContext.currentLocation) {
+        startLatVal = sharedContext.currentLocation.lat;
+        startLngVal = sharedContext.currentLocation.lng;
+      }
+    }
+
+    if (!startLatVal || !startLngVal) {
+      emitSpeak('A02', `已选择${target.name}，但无法获取您的位置，请允许定位后重试。`);
+      return null;
+    }
+
+    // 规划路线
+    const route = await planWalkRoute(startLatVal, startLngVal, target.lat, target.lng);
+    emitLog('A02', `路径规划完成: 距离${route.distance}米, 预计${route.duration}分钟`);
+
+    const firstStep = route.steps[0];
+    const speakText = `好的，正在导航到${target.name}，距离${route.distance}米，预计步行${route.duration}分钟。${firstStep.instruction}。`;
+    emitSpeak('A02', speakText);
+    emitSubtitle(`🧭 ${speakText}`);
+
+    // 推送路线
+    if (route.polyline) {
+      emit({
+        type: 'route',
+        polyline: route.polyline,
+        destination: { name: target.name, lat: target.lat, lng: target.lng },
+        origin: { lat: startLatVal, lng: startLngVal },
+        distance: route.distance,
+        duration: route.duration
+      });
+    }
+
+    // 记忆写入
+    try {
+      addRoute({
+        start_lat: startLatVal,
+        start_lng: startLngVal,
+        end_lat: target.lat,
+        end_lng: target.lng,
+        route_name: target.name,
+        visit_count: 1
+      });
+    } catch (e) {}
+
+    return { target, route };
+  } catch (err) {
+    emitLog('A02', `选择导航失败: ${err.message}`, 'error');
+    emitSpeak('A02', '导航失败，请稍后再试。');
+    return null;
+  } finally {
+    setTimeout(() => {
+      emitAgentState('A02', false);
+    }, Math.max(3000, 12000));
+  }
+}
+
 // ============================================================
-// A03 安全预警 Agent - P0 最高优先级
+// A03 安全预警 Agent
 // ============================================================
 export async function runSafetyAgent(imageBase64, mode = 'scan') {
   emitAgentState('A03', true, '安全扫描中...');

@@ -101,6 +101,7 @@ export async function understandIntent(text, sessionId) {
   // 1. 规则优先匹配(快速路径,免LLM调用,延迟最低)
   // 注意: memory规则必须在navigate之前,避免"之前去过哪里"被navigate的"去"误匹配
   const rules = [
+    { intent: 'select_poi', patterns: [/去第([一二三四五六七八九\d]+)个?/, /去最近的/, /去第一/, /第([一二三四五六七八九\d]+)个/], extract: (m) => m[0] },
     { intent: 'memory', patterns: [/记忆/, /上次/, /之前/, /最近/, /常去/, /习惯/, /去过哪里/, /来过/, /去过/] },
     { intent: 'navigate', patterns: [/带我去(.+)/, /导航到(.+)/, /怎么去(.+)/, /帮我去(.+)/, /我要去(.+)/, /附近(.+)/, /去(?!过|来|回|出)(.+)/], extract: (m) => m[1] },
     { intent: 'ocr', patterns: [/读.{0,4}(文字|菜单|招牌|说明书|药盒|价签)/, /识别.{0,4}(文字|菜单)/, /^读/, /^念/] },

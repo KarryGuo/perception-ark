@@ -12,7 +12,8 @@ import {
 } from '../services/assistant.js';
 import {
   runSceneAgent, runNavigationAgent, runSafetyAgent, runSocialAgent,
-  runMemoryAgent, triggerFallDetection, updateLocation, cancelFallSos
+  runMemoryAgent, triggerFallDetection, updateLocation, cancelFallSos,
+  selectPoiAndNavigate
 } from '../agents/orchestrator.js';
 import { log } from '../utils/logger.js';
 
@@ -87,6 +88,13 @@ router.post('/chat', upload.single('image'), async (req, res) => {
         action = 'navigate';
         await runNavigationAgent(dest, location?.lat, location?.lng);
         reply = pick(replies.navigate).replace(/目的地/g, dest);
+        break;
+      }
+
+      case 'select_poi': {
+        action = 'select_poi';
+        const selResult = await selectPoiAndNavigate(intent.entity || '第一个', location?.lat, location?.lng);
+        reply = selResult ? `好的，正在导航到${selResult.target.name}。` : '请先搜索目的地，比如说"附近的药店"。';
         break;
       }
 

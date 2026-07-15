@@ -40,6 +40,7 @@ export default function Glasses() {
   const [weather, setWeather] = useState(null);
   const [mapLocation, setMapLocation] = useState(null);
   const [mapRoute, setMapRoute] = useState(null);
+  const [mapPois, setMapPois] = useState(null);
 
   const bootingRef = useRef(false);
 
@@ -47,6 +48,13 @@ export default function Glasses() {
   const { speak, stop: stopSpeak, speaking, supported: ttsSupported } = useSpeechSynthesis();
   const camera = useCamera();
   const { location } = useGeolocation();
+
+  // ===== 摄像头强制开启(识物功能依赖) =====
+  useEffect(() => {
+    if (!camera.active && !camera.error) {
+      camera.start();
+    }
+  }, [camera.active, camera.error]);
 
   // ===== 小舟智能助手 =====
   // onAgentAction回调: 小舟意图识别后,前端直接调用对应Agent API(不依赖WebSocket推送)
@@ -107,6 +115,8 @@ export default function Glasses() {
         break;
       case 'route':
         console.log('[Route] 收到路线事件, polyline长度:', event.polyline?.length || 0);
+        // 收到路线规划结果时清空POI标记
+        setMapPois(null);
         if (event.polyline) {
           try {
             const coords = event.polyline.split(';')
@@ -138,6 +148,15 @@ export default function Glasses() {
         showToast(`⚡ 优先级抢占: ${event.preemptedBy} 抢占 ${event.preempted}`);
         break;
       case 'location':
+        break;
+      case 'poi_list':
+        // 附近搜索结果: 地图上显示多个POI标记
+        console.log('[POI] 收到附近搜索结果:', event.pois?.length || 0, '个');
+        if (event.pois && event.pois.length > 0) {
+          setMapPois(event.pois);
+          setMapRoute(null); // 清空旧路线
+          showToast(`📍 附近找到${event.pois.length}个结果，说"去第一个"开始导航`);
+        }
         break;
     }
   }, [speak]);
@@ -372,8 +391,10 @@ export default function Glasses() {
 
   // ===== 摄像头开关 =====
   const toggleCamera = useCallback(async () => {
+    // 摄像头强制开启: 只允许重启,不允许关闭
     if (camera.active) {
       camera.stop();
+      setTimeout(() => camera.start(), 300);
     } else {
       const ok = await camera.start();
       if (!ok) showToast(camera.error || '摄像头启动失败');
@@ -447,8 +468,8 @@ export default function Glasses() {
           </div>
 
           <div className="cam-actions">
-            <button className={`cam-btn primary ${camera.active ? 'danger' : ''}`} onClick={toggleCamera}>
-              {camera.active ? '🛑 停止' : '▶ 启动摄像头'}
+            <button className={`cam-btn primary ${camera.active ? '' : 'danger'}`} onClick={toggleCamera}>
+              {camera.active ? '🔄 重启摄像头' : '▶ 启动摄像头'}
             </button>
             <button className="cam-btn" onClick={() => captureImage().then(f => f && showToast('📸 已抓拍一帧'))} disabled={!camera.active}>
               📸 拍照
@@ -518,7 +539,7 @@ export default function Glasses() {
 
         {/* CENTER: 地图展示 */}
         <div className="map-panel">
-          <MapView location={mapLocation} route={mapRoute} className="map-stage" />
+          <MapView location={mapLocation} route={mapRoute} pois={mapPois} className="map-stage" />
 
           {weather && (
             <div className="map-weather-overlay">
