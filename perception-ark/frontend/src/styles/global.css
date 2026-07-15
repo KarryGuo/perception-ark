@@ -1418,47 +1418,13 @@ input:focus-visible,
   top: calc(env(safe-area-inset-top) + 110px);
   left: 0;
   right: 0;
-  bottom: 200px;
+  bottom: 10px;
   z-index: 15;
   pointer-events: none;
   display: flex;
   flex-direction: column;
 }
 .am-content-layer > * { pointer-events: auto; }
-
-/* 识别页 - 聊天浮层 */
-.am-chat-panel {
-  flex: 1;
-  margin: 0 12px;
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-.am-chat-list {
-  flex: 1;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 4px 0;
-  min-height: 0;
-}
-.am-chat-empty {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  color: rgba(255,255,255,0.5);
-  font-size: .82rem;
-  gap: 8px;
-  padding: 30px;
-}
-.am-chat-empty .hint {
-  font-size: .72rem;
-  color: rgba(255,255,255,0.35);
-}
 .am-msg {
   display: flex;
   flex-direction: column;
@@ -1640,12 +1606,29 @@ input:focus-visible,
   text-align: center;
 }
 
-/* 识别页 - 四个模式按钮 + 按住说话 + 文字输入 */
+/* 识别页 - 识别记录 + 四个模式按钮 + 统一输入框 */
 .am-recognize-bottom {
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
+
+/* 识别记录列表(按钮上方) */
+.am-msg-list {
+  max-height: 160px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 0;
+}
+.am-msg-empty {
+  text-align: center;
+  color: rgba(255,255,255,0.4);
+  font-size: .78rem;
+  padding: 16px 0;
+}
+
 .am-quick-row {
   display: flex;
   gap: 8px;
@@ -1682,14 +1665,45 @@ input:focus-visible,
   box-shadow: 0 0 12px rgba(0,255,163,0.25);
 }
 
-/* 文字输入展开区 */
-.am-text-input-row {
+/* 统一输入框: 按住说话 / 文字输入 切换 */
+.am-input-box {
   display: flex;
   gap: 8px;
+  align-items: center;
 }
-.am-text-input {
+.am-input-box-press {
   flex: 1;
-  padding: 12px 16px;
+  padding: 14px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(0,0,0,0.4);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-radius: 100px;
+  color: rgba(255,255,255,0.85);
+  font-size: .86rem;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: all .2s;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  min-height: 48px;
+}
+.am-input-box-press .icon { font-size: 1.1rem; }
+.am-input-box-press:active, .am-input-box-press.listening {
+  border-color: var(--bio-magenta);
+  background: rgba(255,46,126,0.2);
+  color: var(--bio-magenta);
+  transform: scale(.98);
+}
+.am-input-box-field {
+  flex: 1;
+  padding: 13px 18px;
   background: rgba(0,0,0,0.5);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
@@ -1699,12 +1713,12 @@ input:focus-visible,
   font-size: .86rem;
   font-family: inherit;
   outline: none;
-  min-height: 46px;
+  min-height: 48px;
 }
-.am-text-input:focus { border-color: rgba(0,255,163,0.4); }
-.am-text-input::placeholder { color: rgba(255,255,255,0.4); }
-.am-text-send {
-  padding: 12px 20px;
+.am-input-box-field:focus { border-color: rgba(0,255,163,0.4); }
+.am-input-box-field::placeholder { color: rgba(255,255,255,0.4); }
+.am-input-box-send {
+  padding: 13px 20px;
   background: var(--bio-emerald);
   color: #000;
   border: none;
@@ -1712,20 +1726,10 @@ input:focus-visible,
   font-size: .82rem;
   font-weight: 600;
   cursor: pointer;
-  min-height: 46px;
+  min-height: 48px;
 }
-.am-text-send:active { transform: scale(.95); }
-
-/* 按住说话 + 文字输入icon 行 */
-.am-press-row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-.am-press-row .am-press-btn {
-  flex: 1;
-}
-.am-text-icon {
+.am-input-box-send:active { transform: scale(.95); }
+.am-input-box-toggle {
   width: 48px;
   height: 48px;
   flex-shrink: 0;
@@ -1742,11 +1746,11 @@ input:focus-visible,
   justify-content: center;
   transition: all .2s;
 }
-.am-text-icon:hover {
+.am-input-box-toggle:hover {
   background: rgba(255,255,255,0.18);
   border-color: rgba(255,255,255,0.25);
 }
-.am-text-icon:active { transform: scale(.92); }
+.am-input-box-toggle:active { transform: scale(.92); }
 
 /* 导航页 - 输入框+按住说话 */
 .am-navigate-bottom {

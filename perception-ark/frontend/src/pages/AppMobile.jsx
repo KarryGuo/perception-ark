@@ -27,10 +27,9 @@ export default function AppMobile() {
   const [favorites, setFavorites] = useState([]);
   const [torchOn, setTorchOn] = useState(false);
   const [textInput, setTextInput] = useState('');
-  const [showChat, setShowChat] = useState(true); // 识别页聊天浮层显隐
   const [showFavorites, setShowFavorites] = useState(false); // 导航页收藏浮层
   const [activeMode, setActiveMode] = useState(null); // null | 'analyze' | 'travel' | 'read' | 'traffic'
-  const [showTextInput, setShowTextInput] = useState(false); // 识别页文字输入展开
+  const [showTextInput, setShowTextInput] = useState(false); // 识别页文字输入模式
 
   const { speak, stop: stopSpeak } = useSpeechSynthesis();
   const asr = useSpeechRecognition();
@@ -353,7 +352,6 @@ export default function AppMobile() {
               <button className="am-icon-btn" onClick={() => camera.active ? camera.stop() : camera.start()} title="摄像头">📹</button>
               <button className="am-icon-btn" onClick={async () => { await camera.switchCamera(); showToast(camera.facingMode === 'user' ? '前置摄像头' : '后置摄像头'); }} title="切换">🔄</button>
               <button className={`am-icon-btn ${torchOn ? 'on' : ''}`} onClick={toggleTorch} title="闪光灯">🔦</button>
-              <button className="am-icon-btn" onClick={() => setShowChat(!showChat)} title="聊天">{showChat ? '💬' : '👁️'}</button>
             </>
           )}
           {activeTab === 'navigate' && (
@@ -370,27 +368,6 @@ export default function AppMobile() {
 
       {/* ===== 主内容浮层 ===== */}
       <div className="am-content-layer">
-        {/* 识别页 - 聊天浮层 */}
-        {activeTab === 'recognize' && showChat && (
-          <div className="am-chat-panel">
-            <div className="am-chat-list">
-              {messages.length === 0 ? (
-                <div className="am-chat-empty">
-                  <div>说"快速分析"或按住下方按钮说话</div>
-                  <div className="hint">支持: 快速分析 / 阅读文字 / 红绿灯</div>
-                </div>
-              ) : (
-                messages.map((msg, i) => (
-                  <div key={i} className={`am-msg ${msg.role}`}>
-                    <div className="am-msg-bubble">{msg.text}</div>
-                  </div>
-                ))
-              )}
-              <div ref={messagesEndRef} />
-            </div>
-          </div>
-        )}
-
         {/* 导航页 - 收藏浮层 */}
         {activeTab === 'navigate' && showFavorites && favorites.length > 0 && (
           <div className="am-fav-panel">
@@ -444,9 +421,23 @@ export default function AppMobile() {
           </div>
         )}
 
-        {/* 识别页 - 四个模式按钮 + 按住说话 + 文字输入 */}
+        {/* 识别页 - 识别记录 + 四个模式按钮 + 输入框 */}
         {activeTab === 'recognize' && (
           <div className="am-recognize-bottom">
+            {/* 识别记录显示(按钮上方) */}
+            <div className="am-msg-list">
+              {messages.length === 0 ? (
+                <div className="am-msg-empty">点击下方按钮开始识别</div>
+              ) : (
+                messages.slice(-5).map((msg, i) => (
+                  <div key={i} className={`am-msg ${msg.role}`}>
+                    <div className="am-msg-bubble">{msg.text}</div>
+                  </div>
+                ))
+              )}
+              <div ref={messagesEndRef} />
+            </div>
+
             {/* 四个模式按钮一行 */}
             <div className="am-quick-row">
               <button className={`am-quick-icon ${activeMode === 'analyze' ? 'active' : ''}`} onClick={() => toggleMode('analyze')}>
@@ -463,33 +454,32 @@ export default function AppMobile() {
               </button>
             </div>
 
-            {/* 文字输入展开区 */}
-            {showTextInput && (
-              <div className="am-text-input-row">
-                <input
-                  type="text"
-                  className="am-text-input"
-                  value={textInput}
-                  onChange={e => setTextInput(e.target.value)}
-                  placeholder="输入文字指令..."
-                  onKeyDown={e => { if (e.key === 'Enter' && textInput.trim()) { handleTextInputSubmit(textInput.trim()); setTextInput(''); } }}
-                  autoFocus
-                />
-                <button className="am-text-send" onClick={() => { if (textInput.trim()) { handleTextInputSubmit(textInput.trim()); setTextInput(''); } }}>发送</button>
-              </div>
-            )}
-
-            {/* 按住说话(长) + 文字输入icon(右侧) */}
-            <div className="am-press-row">
-              <button
-                className={`am-press-btn ${asr.listening ? 'listening' : ''}`}
-                onMouseDown={handlePressStart} onMouseUp={handlePressEnd}
-                onTouchStart={handlePressStart} onTouchEnd={handlePressEnd}
-              >
-                <span className="icon">🎤</span><span>{asr.listening ? '松开发送' : '按住说话'}</span>
-              </button>
-              <button className="am-text-icon" onClick={() => setShowTextInput(!showTextInput)} title="文字输入">
-                {showTextInput ? '⌨️' : '⌨️'}
+            {/* 统一输入框: 按住说话 / 文字输入 切换 */}
+            <div className="am-input-box">
+              {showTextInput ? (
+                <>
+                  <input
+                    type="text"
+                    className="am-input-box-field"
+                    value={textInput}
+                    onChange={e => setTextInput(e.target.value)}
+                    placeholder="输入文字指令..."
+                    onKeyDown={e => { if (e.key === 'Enter' && textInput.trim()) { handleTextInputSubmit(textInput.trim()); setTextInput(''); } }}
+                    autoFocus
+                  />
+                  <button className="am-input-box-send" onClick={() => { if (textInput.trim()) { handleTextInputSubmit(textInput.trim()); setTextInput(''); } }}>发送</button>
+                </>
+              ) : (
+                <button
+                  className={`am-input-box-press ${asr.listening ? 'listening' : ''}`}
+                  onMouseDown={handlePressStart} onMouseUp={handlePressEnd}
+                  onTouchStart={handlePressStart} onTouchEnd={handlePressEnd}
+                >
+                  <span className="icon">🎤</span><span>{asr.listening ? '松开发送' : '按住说话'}</span>
+                </button>
+              )}
+              <button className="am-input-box-toggle" onClick={() => setShowTextInput(!showTextInput)} title={showTextInput ? '语音输入' : '文字输入'}>
+                {showTextInput ? '🎤' : '⌨️'}
               </button>
             </div>
           </div>
