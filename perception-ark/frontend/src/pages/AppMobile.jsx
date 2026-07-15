@@ -1,35 +1,49 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useWebSocket } from '../hooks/useWebSocket.js';
 import { useCamera } from '../hooks/useCamera.js';
-import { useSpeechSynthesis } from '../hooks/useSpeech.js';
+import { useSpeechSynthesis, useSpeechRecognition } from '../hooks/useSpeech.js';
 import { useGeolocation } from '../hooks/useGeolocation.js';
 import { useAuth } from '../hooks/useAuth.jsx';
 import { api } from '../services/api.js';
+import MapView from '../components/MapView.jsx';
 
 /**
- * H5移动端APP页 - 精简版
- * 聚焦视障用户核心需求: 识物 + 导航
- * 大按钮、简洁布局、语音反馈为主
+ * 感知方舟 · 移动端APP
+ * 模拟盲人眼镜,手机摄像头即"眼镜的眼睛"
+ * 三大模式: 识别 / 导航 / SOS紧急呼救
+ * 语音指令: "打开识别" / "打开导航" / "紧急呼救"
  */
 export default function AppMobile() {
   const { user, logout } = useAuth();
-  const [subtitle, setSubtitle] = useState('点击下方按钮开始使用');
+  const [activeTab, setActiveTab] = useState('recognize'); // recognize | navigate | sos
+  const [messages, setMessages] = useState([]); // 识别页聊天消息
+  const [subtitle, setSubtitle] = useState('点击下方按钮或按住说话开始使用');
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState('');
   const [navInput, setNavInput] = useState('');
+  const [mapRoute, setMapRoute] = useState(null);
+  const [mapPois, setMapPois] = useState([]);
+  const [contacts, setContacts] = useState([]);
+  const [favorites, setFavorites] = useState([]);
+  const [torchOn, setTorchOn] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
 
   const { speak, stop: stopSpeak } = useSpeechSynthesis();
+  const asr = useSpeechRecognition();
   const camera = useCamera();
   const { location } = useGeolocation();
 
-  // 摄像头强制开启(识物功能依赖)
+  const messagesEndRef = useRef(null);
+  const pressTimerRef = useRef(null);
+  const isPressingRef = useRef(false);
+  const tabSwitchRef = useRef(null);
+
+  // 摄像头强制开启
   useEffect(() => {
-    if (!camera.active && !camera.error) {
-      camera.start();
-    }
+    if (!camera.active && !camera.error) camera.start();
   }, [camera.active, camera.error]);
 
-  // WebSocket接收后端事件
+  // WebSocket事件
   const handleWsEvent = useCallback((event) => {
     switch (event.type) {
       case 'speak':
@@ -37,93 +51,178 @@ export default function AppMobile() {
         break;
       case 'subtitle':
         setSubtitle(event.text);
+        addMessage('assistant', event.text);
         break;
       case 'poi_list':
-        if (event.pois && event.pois.length > 0) {
+        if (event.pois?.length > 0) {
+          setMapPois(event.pois);
+          setMapRoute(null);
           const top3 = event.pois.slice(0, 3);
           let text = `附近找到${event.pois.length}个结果。`;
           top3.forEach((p, i) => { text += `第${i+1}个，${p.name}，${p.distance}米。`; });
+          text += '说"去第一个"开始导航。';
           setSubtitle(text);
-          showToast(`找到${event.pois.length}个结果，说"去第一个"导航`);
+          addMessage('assistant', text);
+        }
+        break;
+      case 'route':
+        setMapPois([]);
+        if (event.polyline) {
+          try {
+            const coords = event.polyline.split(';').filter(p => p).map(p => {
+              const [lng, lat] = p.split(',').map(parseFloat);
+              return [lng, lat];
+            }).filter(c => !isNaN(c[0]) && !isNaN(c[1]));
+            if (coords.length > 1) {
+              setMapRoute(coords);
+              addMessage('assistant', `路线已规划：${event.distance}米，约${event.duration}分钟。`);
+            }
+          } catch (e) {}
         }
         break;
     }
   }, [speak]);
+
   const { connected } = useWebSocket(handleWsEvent);
+
+  const addMessage = useCallback((role, text) => {
+    setMessages(prev => [...prev.slice(-30), { role, text, time: new Date().toLocaleTimeString('zh-CN', { hour12: false }) }]);
+  }, []);
 
   const showToast = useCallback((text) => {
     setToast(text);
-    setTimeout(() => setToast(''), 3000);
+    setTimeout(() => setToast(''), 2500);
   }, []);
 
+  // 消息列表自动滚动到底部
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  // 语音指令切换tab
+  useEffect(() => {
+    if (!asr.transcript) return;
+    const text = asr.transcript;
+    if (/打开识别|识别模式|切换识别/.test(text)) { switchTab('recognize'); asr.stop(); }
+    else if (/打开导航|导航模式|切换导航/.test(text)) { switchTab('navigate'); asr.stop(); }
+    else if (/紧急呼救|SOS|救命|呼救/.test(text)) { switchTab('sos'); asr.stop(); }
+  }, [asr.transcript]);
+
+  // 加载紧急联系人
+  useEffect(() => {
+    api.familyContacts().then(r => setContacts(r.contacts || [])).catch(() => {});
+    api.familyUsers().then(r => setFavorites(r.users || [])).catch(() => {});
+  }, []);
+
+  const switchTab = useCallback((tab) => {
+    setActiveTab(tab);
+    const names = { recognize: '识别', navigate: '导航', sos: '紧急呼救' };
+    showToast(`已切换到${names[tab]}`);
+  }, [showToast]);
+
+  // ===== 按住说话 =====
+  const handlePressStart = useCallback(() => {
+    isPressingRef.current = true;
+    if (!asr.supported) {
+      showToast('当前浏览器不支持语音识别');
+      return;
+    }
+    asr.start();
+    setSubtitle('正在聆听...');
+  }, [asr, showToast]);
+
+  const handlePressEnd = useCallback(() => {
+    isPressingRef.current = false;
+    if (asr.listening) asr.stop();
+    // ASR结果在useEffect中处理
+    setTimeout(() => {
+      setSubtitle('点击下方按钮或按住说话开始使用');
+    }, 1000);
+  }, [asr]);
+
+  // ASR结果处理(按住说话模式)
+  useEffect(() => {
+    if (!asr.transcript || isPressingRef.current === null) return;
+    const text = asr.transcript.trim();
+    if (!text) return;
+    // 检查tab切换指令
+    if (/打开识别|识别模式/.test(text)) { switchTab('recognize'); return; }
+    if (/打开导航|导航模式/.test(text)) { switchTab('navigate'); return; }
+    if (/紧急呼救|SOS|救命/.test(text)) { switchTab('sos'); return; }
+
+    // 根据当前tab处理
+    addMessage('user', text);
+    if (activeTab === 'recognize') {
+      handleRecognizeCommand(text);
+    } else if (activeTab === 'navigate') {
+      handleNavigateCommand(text);
+    }
+  }, [asr.transcript]);
+
+  // ===== 识别页功能 =====
   const captureImage = useCallback(async () => {
     if (!camera.active) {
-      showToast('请先开启摄像头');
-      speak('请先开启摄像头');
+      showToast('摄像头未开启');
+      speak('摄像头未开启');
       return null;
     }
     const file = await camera.capture();
-    if (!file) showToast('拍照失败');
     return file;
   }, [camera, showToast, speak]);
 
-  // 识物: 场景描述
-  const handleScene = useCallback(async () => {
+  const handleRecognizeCommand = useCallback(async (text) => {
     setBusy(true);
-    setSubtitle('正在识别场景...');
     try {
       const img = await captureImage();
-      if (!img) return;
-      await api.scene(img, '请用一段话描述当前场景,包括前方物体、路面状况、可能的障碍。专为视障者设计,50字以内。');
+      if (!img) { setBusy(false); return; }
+      if (/快速分析|分析|描述/.test(text)) {
+        await api.scene(img, '请用一段话描述当前场景,包括前方物体、路面状况、可能的障碍。专为视障者设计,50字以内。');
+      } else if (/阅读|文字|读/.test(text)) {
+        await api.social(img, 'ocr');
+      } else if (/红绿灯|红灯|绿灯|信号灯/.test(text)) {
+        await api.safety(img, 'scan');
+      } else {
+        await api.scene(img, '请用一段话描述当前场景,专为视障者设计,50字以内。');
+      }
     } catch (err) {
-      showToast(`识别失败: ${err.message}`);
+      addMessage('assistant', `识别失败: ${err.message}`);
       speak(`识别失败: ${err.message}`);
     } finally { setBusy(false); }
-  }, [captureImage, showToast, speak]);
+  }, [captureImage, addMessage, speak]);
 
-  // 识物: 文字识别
-  const handleOCR = useCallback(async () => {
+  const handleQuickAction = useCallback(async (action) => {
     setBusy(true);
-    setSubtitle('正在读取文字...');
+    const actionNames = { analyze: '快速分析', travel: '出行模式', read: '阅读文字', traffic: '红绿灯识别' };
+    addMessage('user', actionNames[action]);
     try {
       const img = await captureImage();
-      if (!img) return;
-      await api.social(img, 'ocr');
+      if (!img) { setBusy(false); return; }
+      if (action === 'analyze') {
+        await api.scene(img, '请用一段话描述当前场景,包括前方物体、路面状况、可能的障碍。专为视障者设计,50字以内。');
+      } else if (action === 'travel') {
+        await api.safety(img, 'scan');
+      } else if (action === 'read') {
+        await api.social(img, 'ocr');
+      } else if (action === 'traffic') {
+        await api.safety(img, 'scan');
+      }
     } catch (err) {
-      showToast(`识别失败: ${err.message}`);
-      speak(`识别失败: ${err.message}`);
+      addMessage('assistant', `操作失败: ${err.message}`);
+      speak(`操作失败: ${err.message}`);
     } finally { setBusy(false); }
-  }, [captureImage, showToast, speak]);
+  }, [captureImage, addMessage, speak]);
 
-  // 识物: 人脸识别
-  const handleFace = useCallback(async () => {
+  // ===== 导航页功能 =====
+  const handleNavigateCommand = useCallback(async (text) => {
     setBusy(true);
-    setSubtitle('正在识别面前的人...');
     try {
-      const img = await captureImage();
-      if (!img) return;
-      await api.social(img, 'face');
+      await api.navigate(text, location?.lat, location?.lng);
     } catch (err) {
-      showToast(`识别失败: ${err.message}`);
-      speak(`识别失败: ${err.message}`);
+      addMessage('assistant', `导航失败: ${err.message}`);
+      speak(`导航失败: ${err.message}`);
     } finally { setBusy(false); }
-  }, [captureImage, showToast, speak]);
+  }, [location, addMessage, speak]);
 
-  // 识物: 安全扫描
-  const handleSafety = useCallback(async () => {
-    setBusy(true);
-    setSubtitle('正在安全扫描...');
-    try {
-      const img = await captureImage();
-      if (!img) return;
-      await api.safety(img, 'scan');
-    } catch (err) {
-      showToast(`扫描失败: ${err.message}`);
-      speak(`扫描失败: ${err.message}`);
-    } finally { setBusy(false); }
-  }, [captureImage, showToast, speak]);
-
-  // 导航
   const handleNavigate = useCallback(async (dest) => {
     const destination = (dest || navInput).trim();
     if (!destination) {
@@ -132,116 +231,233 @@ export default function AppMobile() {
       return;
     }
     setBusy(true);
-    setSubtitle(`正在规划到${destination}的路线...`);
+    addMessage('user', `导航到${destination}`);
     try {
       await api.navigate(destination, location?.lat, location?.lng);
       setNavInput('');
     } catch (err) {
-      showToast(`导航失败: ${err.message}`);
+      addMessage('assistant', `导航失败: ${err.message}`);
       speak(`导航失败: ${err.message}`);
     } finally { setBusy(false); }
-  }, [navInput, location, showToast, speak]);
+  }, [navInput, location, addMessage, showToast, speak]);
 
-  // 摄像头开关(强制开启,只允许重启)
-  const toggleCamera = useCallback(() => {
-    if (camera.active) {
-      camera.stop();
-      setTimeout(() => camera.start(), 300);
-      showToast('摄像头重启中');
-    } else {
-      camera.start().then(ok => {
-        if (!ok) {
-          showToast(camera.error || '摄像头启动失败');
-          speak('摄像头启动失败');
-        }
-      });
-    }
-  }, [camera, showToast, speak]);
+  // ===== SOS紧急呼救 =====
+  const handleSos = useCallback(async () => {
+    setBusy(true);
+    addMessage('user', '🆘 紧急呼救');
+    try {
+      await api.fall(location?.lat, location?.lng);
+      addMessage('assistant', '已发送SOS紧急呼救，紧急联系人将收到您的位置信息。');
+    } catch (err) {
+      addMessage('assistant', `SOS发送失败: ${err.message}`);
+      speak(`SOS发送失败: ${err.message}`);
+    } finally { setBusy(false); }
+  }, [location, addMessage, speak]);
 
-  // 显示位置信息
-  useEffect(() => {
-    if (location?.address) {
-      const parts = [location.province, location.city, location.district].filter(Boolean).join('');
-      if (parts) {
-        setSubtitle(`当前位置: ${parts}`);
+  // ===== 闪光灯切换 =====
+  const toggleTorch = useCallback(async () => {
+    try {
+      const track = camera.stream?.getVideoTracks()[0];
+      if (!track) return;
+      const capabilities = track.getCapabilities ? track.getCapabilities() : {};
+      if (!capabilities.torch) {
+        showToast('当前设备不支持闪光灯');
+        return;
       }
+      await track.applyConstraints({ advanced: [{ torch: !torchOn }] });
+      setTorchOn(!torchOn);
+      showToast(torchOn ? '闪光灯已关' : '闪光灯已开');
+    } catch (err) {
+      showToast('闪光灯切换失败');
     }
-  }, [location]);
+  }, [camera, torchOn, showToast]);
 
   return (
     <div className="app-mobile">
-      {/* 顶部状态栏 */}
-      <div className="app-mobile-header">
-        <h1>感知方舟</h1>
-        <div className="app-mobile-status">
-          <span className={`dot ${connected ? 'green' : 'red'}`}></span>
-          <span>{connected ? '在线' : '离线'}</span>
-          {user && <span>· {user.username}</span>}
-          <a href="#/" style={{ color: 'var(--ink-muted)', marginLeft: 8, fontSize: '.75rem', textDecoration: 'none' }}>Web端</a>
+      {/* 顶部Tab栏 */}
+      <div className="am-tab-bar">
+        <button className={`am-tab ${activeTab === 'recognize' ? 'active' : ''}`} onClick={() => switchTab('recognize')}>
+          <span className="am-tab-icon">👁️</span>
+          <span className="am-tab-label">识别</span>
+        </button>
+        <button className={`am-tab ${activeTab === 'navigate' ? 'active' : ''}`} onClick={() => switchTab('navigate')}>
+          <span className="am-tab-icon">🧭</span>
+          <span className="am-tab-label">导航</span>
+        </button>
+        <button className={`am-tab ${activeTab === 'sos' ? 'active danger' : ''}`} onClick={() => switchTab('sos')}>
+          <span className="am-tab-icon">🆘</span>
+          <span className="am-tab-label">紧急呼救</span>
+        </button>
+      </div>
+
+      {/* 顶部工具栏 */}
+      <div className="am-toolbar">
+        <div className="am-toolbar-left">
+          <span className={`am-status-dot ${connected ? 'green' : 'red'}`}></span>
+          <span className="am-status-text">{connected ? '在线' : '离线'}</span>
+          {user && <span className="am-user">· {user.username}</span>}
+        </div>
+        <div className="am-toolbar-right">
+          <button className="am-tool-btn" onClick={() => setShowSettings(!showSettings)} title="设置">⚙️</button>
+          {activeTab === 'recognize' && (
+            <>
+              <button className={`am-tool-btn ${camera.active ? 'active' : ''}`} onClick={() => camera.active ? camera.stop() : camera.start()} title="摄像头">📹</button>
+              <button className={`am-tool-btn ${torchOn ? 'active' : ''}`} onClick={toggleTorch} title="闪光灯">🔦</button>
+              <button className="am-tool-btn" onClick={() => showToast('已获取位置')} title="定位">📍</button>
+            </>
+          )}
+          {activeTab === 'navigate' && (
+            <>
+              <button className="am-tool-btn" onClick={() => showToast('已获取位置')} title="定位">📍</button>
+              <button className="am-tool-btn" onClick={() => setShowSettings(!showSettings)} title="设置">⚙️</button>
+            </>
+          )}
         </div>
       </div>
 
-      {/* 摄像头预览 */}
-      <div className="app-mobile-camera">
-        <video ref={camera.videoRef} playsInline muted style={{ display: camera.active ? 'block' : 'none' }} />
-        {!camera.active && (
-          <div className="app-mobile-cam-placeholder">
-            <div className="icon">📷</div>
-            <div>摄像头未开启</div>
-            <div style={{ fontSize: '.75rem', marginTop: 4 }}>点击下方"摄像头"按钮启用</div>
+      {/* 主内容区 */}
+      <div className="am-content">
+        {/* ===== 识别Tab ===== */}
+        {activeTab === 'recognize' && (
+          <div className="am-recognize">
+            {/* 摄像头预览(小窗,模拟眼镜视角) */}
+            <div className="am-cam-preview">
+              <video ref={camera.videoRef} playsInline muted autoPlay />
+              {!camera.active && (
+                <div className="am-cam-off">
+                  <div className="icon">📷</div>
+                  <div>摄像头启动中...</div>
+                </div>
+              )}
+              {camera.active && <div className="am-cam-badge">● REC · 眼镜视角</div>}
+            </div>
+
+            {/* 聊天消息列表 */}
+            <div className="am-chat">
+              {messages.length === 0 ? (
+                <div className="am-chat-empty">
+                  <div className="icon">💬</div>
+                  <div>说"快速分析"或按住下方按钮说话</div>
+                  <div className="hint">支持: 快速分析 / 阅读文字 / 红绿灯识别</div>
+                </div>
+              ) : (
+                messages.map((msg, i) => (
+                  <div key={i} className={`am-msg ${msg.role}`}>
+                    <div className="am-msg-bubble">{msg.text}</div>
+                    <div className="am-msg-time">{msg.time}</div>
+                  </div>
+                ))
+              )}
+              <div ref={messagesEndRef} />
+            </div>
+
+            {/* 快捷功能按钮 */}
+            <div className="am-quick-actions">
+              <button className="am-quick-btn" onClick={() => handleQuickAction('analyze')} disabled={busy}>
+                <span className="icon">⚡</span><span>快速分析</span>
+              </button>
+              <button className="am-quick-btn" onClick={() => handleQuickAction('travel')} disabled={busy}>
+                <span className="icon">🚶</span><span>出行模式</span>
+              </button>
+              <button className="am-quick-btn" onClick={() => handleQuickAction('read')} disabled={busy}>
+                <span className="icon">📖</span><span>阅读文字</span>
+              </button>
+              <button className="am-quick-btn" onClick={() => handleQuickAction('traffic')} disabled={busy}>
+                <span className="icon">🚦</span><span>红绿灯</span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ===== 导航Tab ===== */}
+        {activeTab === 'navigate' && (
+          <div className="am-navigate">
+            {/* 3D地图 */}
+            <div className="am-map">
+              <MapView location={location} route={mapRoute} pois={mapPois} className="am-map-view" />
+            </div>
+
+            {/* 导航输入 */}
+            <div className="am-nav-input">
+              <input
+                type="text"
+                value={navInput}
+                onChange={e => setNavInput(e.target.value)}
+                placeholder="输入目的地,如五一广场"
+                onKeyDown={e => e.key === 'Enter' && handleNavigate()}
+              />
+              <button onClick={() => handleNavigate()} disabled={busy}>搜索</button>
+            </div>
+
+            {/* 收藏位置 */}
+            {favorites.length > 0 && (
+              <div className="am-favorites">
+                <div className="am-fav-title">⭐ 收藏位置</div>
+                <div className="am-fav-list">
+                  {favorites.map((fav, i) => (
+                    <button key={i} className="am-fav-item" onClick={() => handleNavigate(fav.name)}>
+                      📍 {fav.name || fav.username}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ===== SOS紧急呼救Tab ===== */}
+        {activeTab === 'sos' && (
+          <div className="am-sos">
+            <div className="am-sos-hero">
+              <button className="am-sos-btn" onClick={handleSos} disabled={busy}>
+                <span className="icon">🆘</span>
+                <span className="text">{busy ? '发送中...' : '紧急呼救'}</span>
+              </button>
+              <div className="am-sos-tip">点击按钮立即向紧急联系人发送您的位置</div>
+            </div>
+
+            <div className="am-sos-contacts">
+              <div className="am-contacts-title">紧急联系人</div>
+              {contacts.length === 0 ? (
+                <div className="am-contacts-empty">
+                  <div>暂无联系人</div>
+                  <div className="hint">请在Web端家属管理中添加紧急联系人</div>
+                </div>
+              ) : (
+                contacts.map((c, i) => (
+                  <div key={i} className="am-contact-item">
+                    <div className="am-contact-info">
+                      <div className="name">{c.name}</div>
+                      <div className="relation">{c.relation || '紧急联系人'}</div>
+                    </div>
+                    <a href={`tel:${c.phone}`} className="am-contact-call">📞 呼叫</a>
+                  </div>
+                ))
+              )}
+            </div>
           </div>
         )}
       </div>
 
-      {/* 语音播报区 */}
-      <div className="app-mobile-subtitle" aria-live="polite">
-        <div className="ams-label">语音播报</div>
-        <div className="ams-text">{subtitle}</div>
-      </div>
+      {/* 底部按住说话(识别和导航tab共用) */}
+      {activeTab !== 'sos' && (
+        <div className="am-press-speak">
+          <button
+            className={`am-press-btn ${asr.listening ? 'listening' : ''}`}
+            onMouseDown={handlePressStart}
+            onMouseUp={handlePressEnd}
+            onTouchStart={handlePressStart}
+            onTouchEnd={handlePressEnd}
+          >
+            <span className="icon">🎤</span>
+            <span className="text">{asr.listening ? '松开发送' : '按住说话'}</span>
+          </button>
+          <div className="am-subtitle" aria-live="polite">{subtitle}</div>
+        </div>
+      )}
 
-      {/* 导航输入 */}
-      <div className="app-mobile-nav-input">
-        <input
-          type="text"
-          value={navInput}
-          onChange={e => setNavInput(e.target.value)}
-          placeholder="输入目的地,如五一广场"
-          aria-label="导航目的地"
-          onKeyDown={e => e.key === 'Enter' && handleNavigate()}
-        />
-        <button onClick={() => handleNavigate()} disabled={busy}>导航</button>
-      </div>
-
-      {/* 功能按钮 */}
-      <div className="app-mobile-actions">
-        <button className="app-mobile-btn" onClick={toggleCamera}>
-          <span className="amb-icon">{camera.active ? '📹' : '📷'}</span>
-          <span className="amb-label">{camera.active ? '重启摄像头' : '开启摄像头'}</span>
-        </button>
-        <button className="app-mobile-btn primary" onClick={handleScene} disabled={busy || !camera.active}>
-          <span className="amb-icon">👁️</span>
-          <span className="amb-label">场景描述</span>
-        </button>
-        <button className="app-mobile-btn" onClick={handleOCR} disabled={busy || !camera.active}>
-          <span className="amb-icon">📖</span>
-          <span className="amb-label">读取文字</span>
-        </button>
-        <button className="app-mobile-btn" onClick={handleFace} disabled={busy || !camera.active}>
-          <span className="amb-icon">👤</span>
-          <span className="amb-label">识别面孔</span>
-        </button>
-        <button className="app-mobile-btn danger" onClick={handleSafety} disabled={busy || !camera.active}>
-          <span className="amb-icon">🛡️</span>
-          <span className="amb-label">安全扫描</span>
-        </button>
-        <button className="app-mobile-btn" onClick={() => { stopSpeak(); setSubtitle('已停止播报'); }} disabled={busy}>
-          <span className="amb-icon">⏹️</span>
-          <span className="amb-label">停止播报</span>
-        </button>
-      </div>
-
-      {/* Toast提示 */}
-      {toast && <div className="app-mobile-toast">{toast}</div>}
+      {/* Toast */}
+      {toast && <div className="am-toast">{toast}</div>}
     </div>
   );
 }
