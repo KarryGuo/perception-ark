@@ -12,7 +12,7 @@ services:
     region: singapore  # 新加坡节点,访问中国相对较快
     branch: main
     rootDir: perception-ark  # 项目根目录
-    buildCommand: bash -c "cd frontend && npm install && npm run build && cd ../backend && npm install"
+    buildCommand: bash -c "cd frontend && npm install --include=dev && npm run build && cd ../backend && npm install"
     startCommand: cd backend && npm start
     healthCheckPath: /api/health
     autoDeploy: true
