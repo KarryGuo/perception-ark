@@ -1438,18 +1438,14 @@ input:focus-visible,
   font-size: .84rem;
   line-height: 1.5;
   word-break: break-word;
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
 }
 .am-msg.user .am-msg-bubble {
-  background: rgba(0,255,163,0.85);
-  color: #000;
+  color: rgba(0,255,163,0.9);
   border-bottom-right-radius: 5px;
+  text-align: right;
 }
 .am-msg.assistant .am-msg-bubble {
-  background: rgba(0,0,0,0.5);
   color: rgba(255,255,255,0.92);
-  border: 1px solid rgba(255,255,255,0.1);
   border-bottom-left-radius: 5px;
 }
 
@@ -1621,12 +1617,6 @@ input:focus-visible,
   flex-direction: column;
   gap: 6px;
   padding: 4px 0;
-}
-.am-msg-empty {
-  text-align: center;
-  color: rgba(255,255,255,0.4);
-  font-size: .78rem;
-  padding: 16px 0;
 }
 
 .am-quick-row {

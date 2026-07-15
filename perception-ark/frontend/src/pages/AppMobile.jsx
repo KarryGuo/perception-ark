@@ -169,6 +169,12 @@ export default function AppMobile() {
 
   // ===== 模式切换(开启/关闭连续分析) =====
   const modeNames = { analyze: '快速分析', travel: '出行模式', read: '阅读文字', traffic: '红绿灯识别' };
+  const modeHints = {
+    analyze: '正在分析当前场景',
+    travel: '正在检测前方障碍物',
+    read: '正在识别文字内容',
+    traffic: '正在识别红绿灯状态'
+  };
 
   const toggleMode = useCallback((mode) => {
     setActiveMode(prev => {
@@ -182,7 +188,7 @@ export default function AppMobile() {
         if (prev) {
           speak(`${modeNames[prev]}已关闭`);
         }
-        speak(`${modeNames[mode]}已开启`);
+        speak(`${modeNames[mode]}已开启，${modeHints[mode]}`);
         showToast(`${modeNames[mode]}已开启`);
         addMessage('user', `开启${modeNames[mode]}`);
         return mode;
@@ -314,9 +320,10 @@ export default function AppMobile() {
     <div className="am-app">
       {/* ===== 全屏背景层 ===== */}
       <div className="am-bg-layer">
-        {activeTab === 'recognize' && (
-          <video ref={camera.videoRef} playsInline muted autoPlay className="am-bg-video" />
-        )}
+        <video ref={camera.videoRef} playsInline muted autoPlay
+          className="am-bg-video"
+          style={{ display: activeTab === 'recognize' ? 'block' : 'none' }}
+        />
         {activeTab === 'navigate' && (
           <MapView location={location} route={mapRoute} pois={mapPois} className="am-bg-map" />
         )}
@@ -426,15 +433,11 @@ export default function AppMobile() {
           <div className="am-recognize-bottom">
             {/* 识别记录显示(按钮上方) */}
             <div className="am-msg-list">
-              {messages.length === 0 ? (
-                <div className="am-msg-empty">点击下方按钮开始识别</div>
-              ) : (
-                messages.slice(-5).map((msg, i) => (
-                  <div key={i} className={`am-msg ${msg.role}`}>
-                    <div className="am-msg-bubble">{msg.text}</div>
-                  </div>
-                ))
-              )}
+              {messages.slice(-5).map((msg, i) => (
+                <div key={i} className={`am-msg ${msg.role}`}>
+                  <div className="am-msg-bubble">{msg.text}</div>
+                </div>
+              ))}
               <div ref={messagesEndRef} />
             </div>
 
