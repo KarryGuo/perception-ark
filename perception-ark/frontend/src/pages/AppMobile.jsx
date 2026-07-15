@@ -8,26 +8,27 @@ import { api } from '../services/api.js';
 import MapView from '../components/MapView.jsx';
 
 /**
- * 感知方舟 · 移动端APP
- * 模拟盲人眼镜,手机摄像头即"眼镜的眼睛"
- * 三大模式: 识别 / 导航 / SOS紧急呼救
- * 语音指令: "打开识别" / "打开导航" / "紧急呼救"
+ * 感知方舟 · 移动端APP (沉浸式全屏版)
+ * - 识别: 全屏摄像头背景 + 浮动透明按钮 + 聊天浮层
+ * - 导航: 全屏3D地图 + 浮动工具栏 + 底部输入
+ * - SOS:  全屏背景 + 浮动紧急按钮 + 联系人列表
  */
 export default function AppMobile() {
   const { user, logout } = useAuth();
-  const [activeTab, setActiveTab] = useState('recognize'); // recognize | navigate | sos
-  const [messages, setMessages] = useState([]); // 识别页聊天消息
+  const [activeTab, setActiveTab] = useState('recognize');
+  const [messages, setMessages] = useState([]);
   const [subtitle, setSubtitle] = useState('点击下方按钮或按住说话开始使用');
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState('');
-  const [navInput, setNavInput] = useState(''); // 保留兼容(收藏位置点击)
+  const [navInput, setNavInput] = useState('');
   const [mapRoute, setMapRoute] = useState(null);
   const [mapPois, setMapPois] = useState([]);
   const [contacts, setContacts] = useState([]);
   const [favorites, setFavorites] = useState([]);
   const [torchOn, setTorchOn] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
-  const [textInput, setTextInput] = useState(''); // 识别页文本输入
+  const [textInput, setTextInput] = useState('');
+  const [showChat, setShowChat] = useState(true); // 识别页聊天浮层显隐
+  const [showFavorites, setShowFavorites] = useState(false); // 导航页收藏浮层
 
   const { speak, stop: stopSpeak } = useSpeechSynthesis();
   const asr = useSpeechRecognition();
@@ -35,9 +36,7 @@ export default function AppMobile() {
   const { location } = useGeolocation();
 
   const messagesEndRef = useRef(null);
-  const pressTimerRef = useRef(null);
-  const isPressingRef = useRef(false);
-  const tabSwitchRef = useRef(null);
+  const isPressingRef = useRef(null);
 
   // 摄像头强制开启
   useEffect(() => {
@@ -95,7 +94,6 @@ export default function AppMobile() {
     setTimeout(() => setToast(''), 2500);
   }, []);
 
-  // 消息列表自动滚动到底部
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
@@ -109,7 +107,6 @@ export default function AppMobile() {
     else if (/紧急呼救|SOS|救命|呼救/.test(text)) { switchTab('sos'); asr.stop(); }
   }, [asr.transcript]);
 
-  // 加载紧急联系人
   useEffect(() => {
     api.familyContacts().then(r => setContacts(r.contacts || [])).catch(() => {});
     api.familyUsers().then(r => setFavorites(r.users || [])).catch(() => {});
@@ -121,28 +118,10 @@ export default function AppMobile() {
     showToast(`已切换到${names[tab]}`);
   }, [showToast]);
 
-  // ===== 文本输入提交(识别和导航共用) =====
-  const handleTextInputSubmit = useCallback((text) => {
-    // 检查tab切换指令
-    if (/打开识别|识别模式/.test(text)) { switchTab('recognize'); return; }
-    if (/打开导航|导航模式/.test(text)) { switchTab('navigate'); return; }
-    if (/紧急呼救|SOS|救命/.test(text)) { switchTab('sos'); return; }
-
-    addMessage('user', text);
-    if (activeTab === 'recognize') {
-      handleRecognizeCommand(text);
-    } else if (activeTab === 'navigate') {
-      handleNavigateCommand(text);
-    }
-  }, [activeTab, switchTab, addMessage, handleRecognizeCommand, handleNavigateCommand]);
-
   // ===== 按住说话 =====
   const handlePressStart = useCallback(() => {
     isPressingRef.current = true;
-    if (!asr.supported) {
-      showToast('当前浏览器不支持语音识别');
-      return;
-    }
+    if (!asr.supported) { showToast('当前浏览器不支持语音识别'); return; }
     asr.start();
     setSubtitle('正在聆听...');
   }, [asr, showToast]);
@@ -150,40 +129,25 @@ export default function AppMobile() {
   const handlePressEnd = useCallback(() => {
     isPressingRef.current = false;
     if (asr.listening) asr.stop();
-    // ASR结果在useEffect中处理
-    setTimeout(() => {
-      setSubtitle('点击下方按钮或按住说话开始使用');
-    }, 1000);
+    setTimeout(() => setSubtitle('点击下方按钮或按住说话开始使用'), 1000);
   }, [asr]);
 
-  // ASR结果处理(按住说话模式)
   useEffect(() => {
     if (!asr.transcript || isPressingRef.current === null) return;
     const text = asr.transcript.trim();
     if (!text) return;
-    // 检查tab切换指令
     if (/打开识别|识别模式/.test(text)) { switchTab('recognize'); return; }
     if (/打开导航|导航模式/.test(text)) { switchTab('navigate'); return; }
     if (/紧急呼救|SOS|救命/.test(text)) { switchTab('sos'); return; }
-
-    // 根据当前tab处理
     addMessage('user', text);
-    if (activeTab === 'recognize') {
-      handleRecognizeCommand(text);
-    } else if (activeTab === 'navigate') {
-      handleNavigateCommand(text);
-    }
+    if (activeTab === 'recognize') handleRecognizeCommand(text);
+    else if (activeTab === 'navigate') handleNavigateCommand(text);
   }, [asr.transcript]);
 
   // ===== 识别页功能 =====
   const captureImage = useCallback(async () => {
-    if (!camera.active) {
-      showToast('摄像头未开启');
-      speak('摄像头未开启');
-      return null;
-    }
-    const file = await camera.capture();
-    return file;
+    if (!camera.active) { showToast('摄像头未开启'); speak('摄像头未开启'); return null; }
+    return await camera.capture();
   }, [camera, showToast, speak]);
 
   const handleRecognizeCommand = useCallback(async (text) => {
@@ -191,15 +155,10 @@ export default function AppMobile() {
     try {
       const img = await captureImage();
       if (!img) { setBusy(false); return; }
-      if (/快速分析|分析|描述/.test(text)) {
-        await api.scene(img, '请用一段话描述当前场景,包括前方物体、路面状况、可能的障碍。专为视障者设计,50字以内。');
-      } else if (/阅读|文字|读/.test(text)) {
-        await api.social(img, 'ocr');
-      } else if (/红绿灯|红灯|绿灯|信号灯/.test(text)) {
-        await api.safety(img, 'scan');
-      } else {
-        await api.scene(img, '请用一段话描述当前场景,专为视障者设计,50字以内。');
-      }
+      if (/快速分析|分析|描述/.test(text)) await api.scene(img, '请用一段话描述当前场景,包括前方物体、路面状况、可能的障碍。专为视障者设计,50字以内。');
+      else if (/阅读|文字|读/.test(text)) await api.social(img, 'ocr');
+      else if (/红绿灯|红灯|绿灯|信号灯/.test(text)) await api.safety(img, 'scan');
+      else await api.scene(img, '请用一段话描述当前场景,专为视障者设计,50字以内。');
     } catch (err) {
       addMessage('assistant', `识别失败: ${err.message}`);
       speak(`识别失败: ${err.message}`);
@@ -213,15 +172,10 @@ export default function AppMobile() {
     try {
       const img = await captureImage();
       if (!img) { setBusy(false); return; }
-      if (action === 'analyze') {
-        await api.scene(img, '请用一段话描述当前场景,包括前方物体、路面状况、可能的障碍。专为视障者设计,50字以内。');
-      } else if (action === 'travel') {
-        await api.safety(img, 'scan');
-      } else if (action === 'read') {
-        await api.social(img, 'ocr');
-      } else if (action === 'traffic') {
-        await api.safety(img, 'scan');
-      }
+      if (action === 'analyze') await api.scene(img, '请用一段话描述当前场景,包括前方物体、路面状况、可能的障碍。专为视障者设计,50字以内。');
+      else if (action === 'travel') await api.safety(img, 'scan');
+      else if (action === 'read') await api.social(img, 'ocr');
+      else if (action === 'traffic') await api.safety(img, 'scan');
     } catch (err) {
       addMessage('assistant', `操作失败: ${err.message}`);
       speak(`操作失败: ${err.message}`);
@@ -231,30 +185,29 @@ export default function AppMobile() {
   // ===== 导航页功能 =====
   const handleNavigateCommand = useCallback(async (text) => {
     setBusy(true);
-    try {
-      await api.navigate(text, location?.lat, location?.lng);
-    } catch (err) {
-      addMessage('assistant', `导航失败: ${err.message}`);
-      speak(`导航失败: ${err.message}`);
-    } finally { setBusy(false); }
+    try { await api.navigate(text, location?.lat, location?.lng); }
+    catch (err) { addMessage('assistant', `导航失败: ${err.message}`); speak(`导航失败: ${err.message}`); }
+    finally { setBusy(false); }
   }, [location, addMessage, speak]);
+
+  // ===== 文本输入提交(必须在handleRecognizeCommand/handleNavigateCommand之后定义) =====
+  const handleTextInputSubmit = useCallback((text) => {
+    if (/打开识别|识别模式/.test(text)) { switchTab('recognize'); return; }
+    if (/打开导航|导航模式/.test(text)) { switchTab('navigate'); return; }
+    if (/紧急呼救|SOS|救命/.test(text)) { switchTab('sos'); return; }
+    addMessage('user', text);
+    if (activeTab === 'recognize') handleRecognizeCommand(text);
+    else if (activeTab === 'navigate') handleNavigateCommand(text);
+  }, [activeTab, switchTab, addMessage, handleRecognizeCommand, handleNavigateCommand]);
 
   const handleNavigate = useCallback(async (dest) => {
     const destination = (dest || navInput).trim();
-    if (!destination) {
-      showToast('请输入目的地');
-      speak('请告诉我您要去哪里');
-      return;
-    }
+    if (!destination) { showToast('请输入目的地'); speak('请告诉我您要去哪里'); return; }
     setBusy(true);
     addMessage('user', `导航到${destination}`);
-    try {
-      await api.navigate(destination, location?.lat, location?.lng);
-      setNavInput('');
-    } catch (err) {
-      addMessage('assistant', `导航失败: ${err.message}`);
-      speak(`导航失败: ${err.message}`);
-    } finally { setBusy(false); }
+    try { await api.navigate(destination, location?.lat, location?.lng); setNavInput(''); }
+    catch (err) { addMessage('assistant', `导航失败: ${err.message}`); speak(`导航失败: ${err.message}`); }
+    finally { setBusy(false); }
   }, [navInput, location, addMessage, showToast, speak]);
 
   // ===== SOS紧急呼救 =====
@@ -270,163 +223,122 @@ export default function AppMobile() {
     } finally { setBusy(false); }
   }, [location, addMessage, speak]);
 
-  // ===== 闪光灯切换 =====
+  // ===== 闪光灯 =====
   const toggleTorch = useCallback(async () => {
     try {
       const track = camera.stream?.getVideoTracks()[0];
       if (!track) return;
       const capabilities = track.getCapabilities ? track.getCapabilities() : {};
-      if (!capabilities.torch) {
-        showToast('当前设备不支持闪光灯');
-        return;
-      }
+      if (!capabilities.torch) { showToast('当前设备不支持闪光灯'); return; }
       await track.applyConstraints({ advanced: [{ torch: !torchOn }] });
       setTorchOn(!torchOn);
       showToast(torchOn ? '闪光灯已关' : '闪光灯已开');
-    } catch (err) {
-      showToast('闪光灯切换失败');
-    }
+    } catch (err) { showToast('闪光灯切换失败'); }
   }, [camera, torchOn, showToast]);
 
   return (
-    <div className="app-mobile">
-      {/* 顶部Tab栏 */}
-      <div className="am-tab-bar">
-        <button className={`am-tab ${activeTab === 'recognize' ? 'active' : ''}`} onClick={() => switchTab('recognize')}>
-          <span className="am-tab-icon">👁️</span>
-          <span className="am-tab-label">识别</span>
+    <div className="am-app">
+      {/* ===== 全屏背景层 ===== */}
+      <div className="am-bg-layer">
+        {activeTab === 'recognize' && (
+          <video ref={camera.videoRef} playsInline muted autoPlay className="am-bg-video" />
+        )}
+        {activeTab === 'navigate' && (
+          <MapView location={location} route={mapRoute} pois={mapPois} className="am-bg-map" />
+        )}
+        {activeTab === 'sos' && (
+          <div className="am-bg-sos" />
+        )}
+        {/* 暗化遮罩(提升文字可读性) */}
+        <div className="am-overlay" />
+      </div>
+
+      {/* ===== 顶部浮动Tab栏 ===== */}
+      <div className="am-top-tabs">
+        <button className={`am-tab-pill ${activeTab === 'recognize' ? 'active' : ''}`} onClick={() => switchTab('recognize')}>
+          <span>识别</span>
         </button>
-        <button className={`am-tab ${activeTab === 'navigate' ? 'active' : ''}`} onClick={() => switchTab('navigate')}>
-          <span className="am-tab-icon">🧭</span>
-          <span className="am-tab-label">导航</span>
+        <button className={`am-tab-pill ${activeTab === 'navigate' ? 'active' : ''}`} onClick={() => switchTab('navigate')}>
+          <span>导航</span>
         </button>
-        <button className={`am-tab ${activeTab === 'sos' ? 'active danger' : ''}`} onClick={() => switchTab('sos')}>
-          <span className="am-tab-icon">🆘</span>
-          <span className="am-tab-label">紧急呼救</span>
+        <button className={`am-tab-pill danger ${activeTab === 'sos' ? 'active' : ''}`} onClick={() => switchTab('sos')}>
+          <span>SOS</span>
         </button>
       </div>
 
-      {/* 顶部工具栏 */}
-      <div className="am-toolbar">
-        <div className="am-toolbar-left">
-          <span className={`am-status-dot ${connected ? 'green' : 'red'}`}></span>
+      {/* ===== 顶部浮动工具栏 ===== */}
+      <div className="am-top-tools">
+        <div className="am-status">
+          <span className={`am-dot ${connected ? 'on' : 'off'}`} />
           <span className="am-status-text">{connected ? '在线' : '离线'}</span>
-          {user && <span className="am-user">· {user.username}</span>}
         </div>
-        <div className="am-toolbar-right">
-          <button className="am-tool-btn" onClick={() => setShowSettings(!showSettings)} title="设置">⚙️</button>
+        <div className="am-tools-right">
           {activeTab === 'recognize' && (
             <>
-              <button className={`am-tool-btn ${camera.active ? 'active' : ''}`} onClick={() => camera.active ? camera.stop() : camera.start()} title="摄像头">📹</button>
-              <button className="am-tool-btn" onClick={async () => { await camera.switchCamera(); showToast(camera.facingMode === 'user' ? '已切换到前置摄像头' : '已切换到后置摄像头'); }} title="切换前后摄像头">🔄</button>
-              <button className={`am-tool-btn ${torchOn ? 'active' : ''}`} onClick={toggleTorch} title="闪光灯">🔦</button>
-              <button className="am-tool-btn" onClick={() => showToast('已获取位置')} title="定位">📍</button>
+              <button className="am-icon-btn" onClick={() => camera.active ? camera.stop() : camera.start()} title="摄像头">📹</button>
+              <button className="am-icon-btn" onClick={async () => { await camera.switchCamera(); showToast(camera.facingMode === 'user' ? '前置摄像头' : '后置摄像头'); }} title="切换">🔄</button>
+              <button className={`am-icon-btn ${torchOn ? 'on' : ''}`} onClick={toggleTorch} title="闪光灯">🔦</button>
+              <button className="am-icon-btn" onClick={() => setShowChat(!showChat)} title="聊天">{showChat ? '💬' : '👁️'}</button>
             </>
           )}
           {activeTab === 'navigate' && (
             <>
-              <button className="am-tool-btn" onClick={() => showToast('已获取位置')} title="定位">📍</button>
-              <button className="am-tool-btn" onClick={() => setShowSettings(!showSettings)} title="设置">⚙️</button>
+              <button className="am-icon-btn" onClick={() => setShowFavorites(!showFavorites)} title="收藏">⭐</button>
+              <button className="am-icon-btn" onClick={() => showToast('已获取位置')} title="定位">📍</button>
             </>
+          )}
+          {activeTab === 'sos' && (
+            <button className="am-icon-btn" onClick={() => showToast('设置')} title="设置">⚙️</button>
           )}
         </div>
       </div>
 
-      {/* 主内容区 */}
-      <div className="am-content">
-        {/* ===== 识别Tab ===== */}
-        {activeTab === 'recognize' && (
-          <div className="am-recognize">
-            {/* 摄像头预览(小窗,模拟眼镜视角) */}
-            <div className="am-cam-preview">
-              <video ref={camera.videoRef} playsInline muted autoPlay />
-              {!camera.active && (
-                <div className="am-cam-off">
-                  <div className="icon">📷</div>
-                  <div>摄像头启动中...</div>
-                </div>
-              )}
-              {camera.active && <div className="am-cam-badge">● REC · {camera.facingMode === 'user' ? '前置' : '后置'}摄像头</div>}
-            </div>
-
-            {/* 聊天消息列表 */}
-            <div className="am-chat">
+      {/* ===== 主内容浮层 ===== */}
+      <div className="am-content-layer">
+        {/* 识别页 - 聊天浮层 */}
+        {activeTab === 'recognize' && showChat && (
+          <div className="am-chat-panel">
+            <div className="am-chat-list">
               {messages.length === 0 ? (
                 <div className="am-chat-empty">
-                  <div className="icon">💬</div>
                   <div>说"快速分析"或按住下方按钮说话</div>
-                  <div className="hint">支持: 快速分析 / 阅读文字 / 红绿灯识别</div>
+                  <div className="hint">支持: 快速分析 / 阅读文字 / 红绿灯</div>
                 </div>
               ) : (
                 messages.map((msg, i) => (
                   <div key={i} className={`am-msg ${msg.role}`}>
                     <div className="am-msg-bubble">{msg.text}</div>
-                    <div className="am-msg-time">{msg.time}</div>
                   </div>
                 ))
               )}
               <div ref={messagesEndRef} />
             </div>
+          </div>
+        )}
 
-            {/* 快捷功能按钮 */}
-            <div className="am-quick-actions">
-              <button className="am-quick-btn" onClick={() => handleQuickAction('analyze')} disabled={busy}>
-                <span className="icon">⚡</span><span>快速分析</span>
-              </button>
-              <button className="am-quick-btn" onClick={() => handleQuickAction('travel')} disabled={busy}>
-                <span className="icon">🚶</span><span>出行模式</span>
-              </button>
-              <button className="am-quick-btn" onClick={() => handleQuickAction('read')} disabled={busy}>
-                <span className="icon">📖</span><span>阅读文字</span>
-              </button>
-              <button className="am-quick-btn" onClick={() => handleQuickAction('traffic')} disabled={busy}>
-                <span className="icon">🚦</span><span>红绿灯</span>
-              </button>
+        {/* 导航页 - 收藏浮层 */}
+        {activeTab === 'navigate' && showFavorites && favorites.length > 0 && (
+          <div className="am-fav-panel">
+            <div className="am-fav-title">⭐ 收藏位置</div>
+            <div className="am-fav-list">
+              {favorites.map((fav, i) => (
+                <button key={i} className="am-fav-item" onClick={() => { handleNavigate(fav.name); setShowFavorites(false); }}>
+                  📍 {fav.name || fav.username}
+                </button>
+              ))}
             </div>
           </div>
         )}
 
-        {/* ===== 导航Tab ===== */}
-        {activeTab === 'navigate' && (
-          <div className="am-navigate">
-            {/* 3D地图 */}
-            <div className="am-map">
-              <MapView location={location} route={mapRoute} pois={mapPois} className="am-map-view" />
-            </div>
-
-            {/* 收藏位置 */}
-            {favorites.length > 0 && (
-              <div className="am-favorites">
-                <div className="am-fav-title">⭐ 收藏位置</div>
-                <div className="am-fav-list">
-                  {favorites.map((fav, i) => (
-                    <button key={i} className="am-fav-item" onClick={() => handleNavigate(fav.name)}>
-                      📍 {fav.name || fav.username}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ===== SOS紧急呼救Tab ===== */}
+        {/* SOS页 - 联系人浮层 */}
         {activeTab === 'sos' && (
-          <div className="am-sos">
-            <div className="am-sos-hero">
-              <button className="am-sos-btn" onClick={handleSos} disabled={busy}>
-                <span className="icon">🆘</span>
-                <span className="text">{busy ? '发送中...' : '紧急呼救'}</span>
-              </button>
-              <div className="am-sos-tip">点击按钮立即向紧急联系人发送您的位置</div>
-            </div>
-
-            <div className="am-sos-contacts">
+          <div className="am-sos-panel">
+            <div className="am-sos-contacts-card">
               <div className="am-contacts-title">紧急联系人</div>
               {contacts.length === 0 ? (
                 <div className="am-contacts-empty">
                   <div>暂无联系人</div>
-                  <div className="hint">请在Web端家属管理中添加紧急联系人</div>
+                  <div className="hint">请在Web端家属管理中添加</div>
                 </div>
               ) : (
                 contacts.map((c, i) => (
@@ -444,53 +356,71 @@ export default function AppMobile() {
         )}
       </div>
 
-      {/* 底部输入区(识别和导航tab共用) - 文本输入 + 按住说话 */}
-      {activeTab !== 'sos' && (
-        <div className="am-press-speak">
-          {/* 文本输入框 */}
-          <div className="am-text-input-row">
-            <input
-              type="text"
-              className="am-text-input"
-              value={textInput}
-              onChange={e => setTextInput(e.target.value)}
-              placeholder={activeTab === 'recognize' ? '输入指令,如"快速分析"' : '输入目的地,如"五一广场"'}
-              onKeyDown={e => {
-                if (e.key === 'Enter' && textInput.trim()) {
-                  handleTextInputSubmit(textInput.trim());
-                  setTextInput('');
-                }
-              }}
-              aria-label="输入框"
-            />
+      {/* ===== 底部浮动操作区 ===== */}
+      <div className="am-bottom-zone">
+        {/* SOS页 - 大圆按钮 */}
+        {activeTab === 'sos' && (
+          <div className="am-sos-bottom">
+            <button className="am-sos-circle" onClick={handleSos} disabled={busy}>
+              <span className="icon">🆘</span>
+              <span className="text">{busy ? '发送中' : '紧急呼救'}</span>
+            </button>
+            <div className="am-sos-tip">点击立即向紧急联系人发送位置</div>
+          </div>
+        )}
+
+        {/* 识别页 - 多个小按钮 */}
+        {activeTab === 'recognize' && (
+          <div className="am-recognize-bottom">
+            <div className="am-quick-row">
+              <button className="am-quick-icon" onClick={() => handleQuickAction('analyze')} disabled={busy}>
+                <span className="icon">⚡</span><span className="label">分析</span>
+              </button>
+              <button className="am-quick-icon" onClick={() => handleQuickAction('travel')} disabled={busy}>
+                <span className="icon">🚶</span><span className="label">出行</span>
+              </button>
+              <button className="am-quick-icon" onClick={() => handleQuickAction('read')} disabled={busy}>
+                <span className="icon">📖</span><span className="label">阅读</span>
+              </button>
+              <button className="am-quick-icon" onClick={() => handleQuickAction('traffic')} disabled={busy}>
+                <span className="icon">🚦</span><span className="label">红绿灯</span>
+              </button>
+              <button className="am-quick-icon primary" onMouseDown={handlePressStart} onMouseUp={handlePressEnd} onTouchStart={handlePressStart} onTouchEnd={handlePressEnd}>
+                <span className="icon">{asr.listening ? '🔴' : '🎤'}</span><span className="label">{asr.listening ? '聆听' : '说话'}</span>
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* 导航页 - 输入框+按住说话 */}
+        {activeTab === 'navigate' && (
+          <div className="am-navigate-bottom">
+            <div className="am-input-row">
+              <input
+                type="text"
+                className="am-input"
+                value={navInput}
+                onChange={e => setNavInput(e.target.value)}
+                placeholder="输入目的地,如五一广场"
+                onKeyDown={e => e.key === 'Enter' && handleNavigate()}
+              />
+              <button className="am-input-send" onClick={() => handleNavigate()} disabled={busy}>搜索</button>
+            </div>
             <button
-              className="am-send-btn"
-              onClick={() => {
-                if (textInput.trim()) {
-                  handleTextInputSubmit(textInput.trim());
-                  setTextInput('');
-                }
-              }}
-              disabled={!textInput.trim()}
-              aria-label="发送"
+              className={`am-press-btn ${asr.listening ? 'listening' : ''}`}
+              onMouseDown={handlePressStart} onMouseUp={handlePressEnd}
+              onTouchStart={handlePressStart} onTouchEnd={handlePressEnd}
             >
-              发送
+              <span className="icon">🎤</span><span>{asr.listening ? '松开发送' : '按住说话'}</span>
             </button>
           </div>
-          {/* 按住说话按钮 */}
-          <button
-            className={`am-press-btn ${asr.listening ? 'listening' : ''}`}
-            onMouseDown={handlePressStart}
-            onMouseUp={handlePressEnd}
-            onTouchStart={handlePressStart}
-            onTouchEnd={handlePressEnd}
-          >
-            <span className="icon">🎤</span>
-            <span className="text">{asr.listening ? '松开发送' : '按住说话'}</span>
-          </button>
-          <div className="am-subtitle" aria-live="polite">{subtitle}</div>
-        </div>
-      )}
+        )}
+
+        {/* 字幕条(识别和导航共用) */}
+        {activeTab !== 'sos' && (
+          <div className="am-subtitle-bar" aria-live="polite">{subtitle}</div>
+        )}
+      </div>
 
       {/* Toast */}
       {toast && <div className="am-toast">{toast}</div>}
