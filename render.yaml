@@ -1,0 +1,47 @@
+# Render Blueprint - 感知方舟全栈部署配置
+# 文档: https://render.com/docs/blueprint-spec
+# 使用方法: 在 Render Dashboard > New > Blueprint 选择本仓库
+# 架构: 前端Vite构建产物由后端Express静态服务托管,单一URL访问
+# 注意: 免费套餐15分钟无请求会休眠,首次唤醒约30秒;如需不休眠+数据持久化请升级Starter($7/月)
+
+services:
+  - type: web
+    name: perception-ark
+    runtime: node
+    plan: free  # 免费套餐,适合初赛评审体验
+    region: singapore  # 新加坡节点,访问中国相对较快
+    branch: main
+    rootDir: perception-ark  # 代码在perception-ark子目录
+    buildCommand: bash -c "cd frontend && npm install && npm run build && cd ../backend && npm install"
+    startCommand: cd backend && npm start
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3001
+      - key: DATA_DIR
+        value: /tmp/ark-data  # 免费套餐使用临时目录(重启会丢失,初赛Demo可接受)
+      # ===== 火山引擎方舟 API (必填,否则使用MOCK模式) =====
+      - key: ARK_API_KEY
+        sync: false  # 在Render界面手动填写,不在配置中暴露
+      - key: ARK_VISION_MODEL
+        sync: false  # 在Render界面填写推理接入点ID(如ep-2026xxxx)
+      - key: ARK_TEXT_MODEL
+        sync: false  # 在Render界面填写推理接入点ID(如ep-2026xxxx)
+      - key: ARK_API_BASE
+        value: https://ark.cn-beijing.volces.com/api/v3
+      # ===== 高德地图 API =====
+      # 后端REST API (导航/POI搜索/逆地理编码)
+      - key: AMAP_API_KEY
+        sync: false
+      # 前端JS API Key (Vite构建时注入,Render界面填写)
+      - key: VITE_AMAP_JS_KEY
+        sync: false
+      # 前端JS API 安全密钥 (Vite构建时注入,Render界面填写)
+      - key: VITE_AMAP_SECURITY_CODE
+        sync: false
+      # ===== Mock模式开关 =====
+      - key: MOCK_MODE
+        value: 'false'  # 配置API Key后使用真实模式
