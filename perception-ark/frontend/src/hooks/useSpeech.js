@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 /**
  * 语音合成 Hook (TTS) - 浏览器原生
  * 支持中文语音播报、流式分句播报
+ * 音色/语速从localStorage读取(设置页可调)
  */
 export function useSpeechSynthesis() {
   const [speaking, setSpeaking] = useState(false);
@@ -15,6 +16,17 @@ export function useSpeechSynthesis() {
   // 跟踪所有playNext的setTimeout,stop()时全部清除
   const playNextTimersRef = useRef([]);
 
+  // 从localStorage读取用户设置的语速和音色(设置页可调)
+  const getSavedRate = () => {
+    const r = parseFloat(localStorage.getItem('ark_tts_rate'));
+    return isNaN(r) ? 0.95 : r;
+  };
+  const getSavedVoice = (voices) => {
+    const name = localStorage.getItem('ark_tts_voice') || '';
+    if (!name || !voices) return null;
+    return voices.find(v => v.name === name) || null;
+  };
+
   useEffect(() => {
     if (!('speechSynthesis' in window)) {
       console.warn('[TTS] 浏览器不支持语音合成');
@@ -25,6 +37,13 @@ export function useSpeechSynthesis() {
     // 加载中文语音
     const loadVoices = () => {
       const voices = window.speechSynthesis.getVoices();
+      // 优先使用用户设置的音色,否则默认中文语音
+      const saved = getSavedVoice(voices);
+      if (saved) {
+        setVoice(saved);
+        console.log('[TTS] 已加载用户音色:', saved.name);
+        return;
+      }
       const cnVoice = voices.find(v => v.lang === 'zh-CN')
         || voices.find(v => v.lang.startsWith('zh'))
         || voices[0];
@@ -39,6 +58,16 @@ export function useSpeechSynthesis() {
     return () => {
       window.speechSynthesis.cancel();
     };
+  }, []);
+
+  // 外部可调用以切换音色(设置页调用)
+  const setVoiceByName = useCallback((name) => {
+    const voices = window.speechSynthesis.getVoices();
+    const v = voices.find(vv => vv.name === name);
+    if (v) {
+      setVoice(v);
+      localStorage.setItem('ark_tts_voice', name);
+    }
   }, []);
 
   const speak = useCallback((text, options = {}) => {
@@ -63,6 +92,9 @@ export function useSpeechSynthesis() {
     // 分句(避免长文本被截断)
     const sentences = text.match(/[^。！？!?.]+[。！？!?.]?/g) || [text];
 
+    // 语速优先级: 调用方传入 > localStorage设置 > 紧急/默认
+    const finalRate = rate || getSavedRate();
+
     sentences.forEach((sentence, idx) => {
       const trimmed = sentence.trim();
       if (!trimmed) return;
@@ -70,7 +102,7 @@ export function useSpeechSynthesis() {
       const utter = new SpeechSynthesisUtterance(trimmed);
       if (voice) utter.voice = voice;
       utter.lang = 'zh-CN';
-      utter.rate = rate || (urgent ? 1.1 : 0.95);
+      utter.rate = urgent ? Math.min(finalRate * 1.1, 1.5) : finalRate;
       utter.pitch = urgent ? 1.2 : 1.0;
       utter.volume = urgent ? 1.0 : 0.9;
 
@@ -138,7 +170,7 @@ export function useSpeechSynthesis() {
     setSpeaking(false);
   }, [supported]);
 
-  return { speak, stop, speaking, supported };
+  return { speak, stop, speaking, supported, setVoiceByName, voice };
 }
 
 /**

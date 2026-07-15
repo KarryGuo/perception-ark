@@ -28,10 +28,21 @@ export default function AppMobile() {
   const [torchOn, setTorchOn] = useState(false);
   const [textInput, setTextInput] = useState('');
   const [showFavorites, setShowFavorites] = useState(false); // 导航页收藏浮层
-  const [activeMode, setActiveMode] = useState(null); // null | 'analyze' | 'travel' | 'read' | 'traffic'
+  const [activeMode, setActiveMode] = useState(null); // null | 'analyze' | 'travel' | 'read' | 'traffic' | 'find'
   const [showTextInput, setShowTextInput] = useState(false); // 识别页文字输入模式
+  const [findTarget, setFindTarget] = useState(''); // 寻物目标
+  const [showFindInput, setShowFindInput] = useState(false); // 寻物目标输入浮层
+  const [navHistory, setNavHistory] = useState(() => { // 导航历史搜索记录
+    try { return JSON.parse(localStorage.getItem('ark_nav_history') || '[]'); }
+    catch { return []; }
+  });
+  const [showNavHistory, setShowNavHistory] = useState(false); // 历史搜索浮层
+  const [showSettings, setShowSettings] = useState(false); // 设置浮层
+  const [ttsRate, setTtsRate] = useState(() => parseFloat(localStorage.getItem('ark_tts_rate')) || 0.95);
+  const [ttsVoiceName, setTtsVoiceName] = useState(() => localStorage.getItem('ark_tts_voice') || '');
+  const [availableVoices, setAvailableVoices] = useState([]);
 
-  const { speak, stop: stopSpeak } = useSpeechSynthesis();
+  const { speak, stop: stopSpeak, setVoiceByName, voice: currentVoice } = useSpeechSynthesis();
   const asr = useSpeechRecognition();
   const camera = useCamera();
   const { location } = useGeolocation();
@@ -44,6 +55,23 @@ export default function AppMobile() {
   useEffect(() => {
     if (!camera.active && !camera.error) camera.start();
   }, [camera.active, camera.error]);
+
+  // 加载可用语音列表(设置页用)
+  useEffect(() => {
+    const load = () => {
+      const voices = window.speechSynthesis?.getVoices() || [];
+      // 优先显示中文语音
+      const cn = voices.filter(v => v.lang.startsWith('zh'));
+      setAvailableVoices(cn.length > 0 ? cn : voices);
+    };
+    load();
+    if (window.speechSynthesis) {
+      window.speechSynthesis.onvoiceschanged = load;
+    }
+  }, []);
+
+  // ===== 摇一摇开启出行模式 (定义提前到 showToast 之后) =====
+  // (见下方)
 
   // WebSocket事件
   const handleWsEvent = useCallback((event) => {
@@ -95,6 +123,40 @@ export default function AppMobile() {
     setToast(text);
     setTimeout(() => setToast(''), 2500);
   }, []);
+
+  // ===== 摇一摇开启出行模式 =====
+  useEffect(() => {
+    let lastShake = 0;
+    const threshold = 18; // 摇动阈值
+    let lastX = 0, lastY = 0, lastZ = 0;
+    let initialized = false;
+
+    const handleMotion = (e) => {
+      const acc = e.accelerationIncludingGravity;
+      if (!acc || acc.x == null) return;
+      if (!initialized) {
+        lastX = acc.x; lastY = acc.y; lastZ = acc.z;
+        initialized = true;
+        return;
+      }
+      const delta = Math.abs(acc.x - lastX) + Math.abs(acc.y - lastY) + Math.abs(acc.z - lastZ);
+      lastX = acc.x; lastY = acc.y; lastZ = acc.z;
+      const now = Date.now();
+      if (delta > threshold && now - lastShake > 1500) {
+        lastShake = now;
+        // 仅在识别页且未开启出行模式时触发
+        if (activeTab === 'recognize' && activeMode !== 'travel') {
+          speak('检测到摇动，已开启出行模式');
+          showToast('摇一摇 → 出行模式');
+          navigator.vibrate?.([50, 30, 50]);
+          setActiveMode('travel');
+        }
+      }
+    };
+
+    window.addEventListener('devicemotion', handleMotion);
+    return () => window.removeEventListener('devicemotion', handleMotion);
+  }, [activeTab, activeMode, speak, showToast]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -168,15 +230,38 @@ export default function AppMobile() {
   }, [captureImage, addMessage, speak]);
 
   // ===== 模式切换(开启/关闭连续分析) =====
-  const modeNames = { analyze: '快速分析', travel: '出行模式', read: '阅读文字', traffic: '红绿灯识别' };
+  const modeNames = { analyze: '快速分析', travel: '出行模式', read: '阅读文字', traffic: '红绿灯识别', find: '寻物模式' };
   const modeHints = {
     analyze: '正在分析当前场景',
     travel: '正在检测前方障碍物',
     read: '正在识别文字内容',
-    traffic: '正在识别红绿灯状态'
+    traffic: '正在识别红绿灯状态',
+    find: '正在寻找物品'
   };
 
   const toggleMode = useCallback((mode) => {
+    // 寻物模式特殊处理: 需要先说出/输入要找的物品
+    if (mode === 'find') {
+      setActiveMode(prev => {
+        if (prev === 'find') {
+          // 关闭寻物
+          speak('寻物模式已关闭');
+          showToast('寻物模式已关闭');
+          setFindTarget('');
+          return null;
+        } else {
+          // 开启寻物 - 先弹出输入框
+          if (prev) {
+            speak(`${modeNames[prev]}已关闭`);
+          }
+          setShowFindInput(true);
+          speak('请说出或输入要找的物品');
+          return null; // 等用户输入目标后再设为find
+        }
+      });
+      return;
+    }
+
     setActiveMode(prev => {
       if (prev === mode) {
         // 关闭当前模式
@@ -194,6 +279,18 @@ export default function AppMobile() {
         return mode;
       }
     });
+  }, [speak, showToast, addMessage]);
+
+  // 寻物目标确认后开始寻找
+  const startFindMode = useCallback((target) => {
+    const t = target.trim();
+    if (!t) { showToast('请说出要找的物品'); return; }
+    setFindTarget(t);
+    setActiveMode('find');
+    setShowFindInput(false);
+    speak(`开始寻找${t}，找到后会告诉您方位和距离。说结束寻找或再次点击寻物按钮可退出`);
+    showToast(`寻找：${t}`);
+    addMessage('user', `寻找${t}`);
   }, [speak, showToast, addMessage]);
 
   // 连续分析循环 - 当activeMode不为null时,每5秒抓拍并分析一次
@@ -216,24 +313,40 @@ export default function AppMobile() {
 
         let res;
         if (activeMode === 'analyze') {
-          res = await api.scene(img, '请用一段话描述当前场景,包括前方主要物体及大致距离。专为视障者设计,50字以内。');
+          res = await api.scene(img, '请用一段话描述当前场景,包括前方主要物体及大致方位和距离(如"左前方1米有桌椅")。专为视障者设计,50字以内。');
         } else if (activeMode === 'travel') {
           res = await api.safety(img, 'scan');
         } else if (activeMode === 'read') {
           res = await api.social(img, 'ocr');
         } else if (activeMode === 'traffic') {
           res = await api.safety(img, 'scan');
+        } else if (activeMode === 'find') {
+          // 寻物模式: 让视觉模型寻找指定物品,输出方位+距离
+          res = await api.scene(img, `请在画面中寻找"${findTarget}"。如果找到,请用以下格式回答:"找到了,在[左前方/正前方/右前方/左方/右方]约[X]米处"。如果没找到,请只回答"未找到"。30字以内。`);
         }
 
         if (res?.success && res.result) {
           const text = typeof res.result === 'string' ? res.result : String(res.result);
           addMessage('assistant', text);
-          speak(text);
-          setSubtitle(text);
 
-          // 出行模式: 检测到危险时手机震动
-          if (activeMode === 'travel' && /危险|障碍|靠近|前方有|小心|注意|当心|车辆|电动车/.test(text)) {
-            if (navigator.vibrate) navigator.vibrate([300, 150, 300, 150, 300]);
+          // 寻物模式: 找到时紧急播报+震动,未找到时不重复播报
+          if (activeMode === 'find') {
+            if (/找到了|已找到/.test(text)) {
+              speak(text, { urgent: true });
+              setSubtitle(`🔍 ${text}`);
+              if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 200, 100, 500]);
+            } else {
+              // 未找到: 静默,不重复播报"未找到"
+              setSubtitle(`🔍 正在寻找${findTarget}...`);
+            }
+          } else {
+            speak(text);
+            setSubtitle(text);
+
+            // 出行模式: 检测到危险时手机震动
+            if (activeMode === 'travel' && /危险|障碍|靠近|前方有|小心|注意|当心|车辆|电动车/.test(text)) {
+              if (navigator.vibrate) navigator.vibrate([300, 150, 300, 150, 300]);
+            }
           }
         }
       } catch (err) {
@@ -253,7 +366,7 @@ export default function AppMobile() {
         modeIntervalRef.current = null;
       }
     };
-  }, [activeMode, camera, addMessage, speak]);
+  }, [activeMode, camera, addMessage, speak, findTarget]);
 
   // 切换tab时关闭连续分析模式
   useEffect(() => {
@@ -285,6 +398,14 @@ export default function AppMobile() {
     if (!destination) { showToast('请输入目的地'); speak('请告诉我您要去哪里'); return; }
     setBusy(true);
     addMessage('user', `导航到${destination}`);
+    // 保存到历史搜索记录(去重,最多保留10条)
+    setNavHistory(prev => {
+      const filtered = prev.filter(item => item !== destination);
+      const updated = [destination, ...filtered].slice(0, 10);
+      localStorage.setItem('ark_nav_history', JSON.stringify(updated));
+      return updated;
+    });
+    setShowNavHistory(false);
     try { await api.navigate(destination, location?.lat, location?.lng); setNavInput(''); }
     catch (err) { addMessage('assistant', `导航失败: ${err.message}`); speak(`导航失败: ${err.message}`); }
     finally { setBusy(false); }
@@ -315,6 +436,30 @@ export default function AppMobile() {
       showToast(torchOn ? '闪光灯已关' : '闪光灯已开');
     } catch (err) { showToast('闪光灯切换失败'); }
   }, [camera, torchOn, showToast]);
+
+  // ===== 设置页: 语速/音色 =====
+  const handleSaveRate = useCallback((rate) => {
+    localStorage.setItem('ark_tts_rate', String(rate));
+    setTtsRate(rate);
+    speak(`语速已调整为${rate.toFixed(1)}`);
+  }, [speak]);
+
+  const handleSaveVoice = useCallback((name) => {
+    setVoiceByName(name);
+    setTtsVoiceName(name);
+    speak('音色已切换');
+  }, [setVoiceByName, speak]);
+
+  const handleClearNavHistory = useCallback(() => {
+    localStorage.removeItem('ark_nav_history');
+    setNavHistory([]);
+    showToast('历史记录已清除');
+  }, [showToast]);
+
+  // ===== 按钮点击震动反馈 =====
+  const vibrateClick = useCallback(() => {
+    if (navigator.vibrate) navigator.vibrate(10);
+  }, []);
 
   return (
     <div className="am-app">
@@ -356,20 +501,18 @@ export default function AppMobile() {
         <div className="am-tools-right">
           {activeTab === 'recognize' && (
             <>
-              <button className="am-icon-btn" onClick={() => camera.active ? camera.stop() : camera.start()} title="摄像头">📹</button>
-              <button className="am-icon-btn" onClick={async () => { await camera.switchCamera(); showToast(camera.facingMode === 'user' ? '前置摄像头' : '后置摄像头'); }} title="切换">🔄</button>
-              <button className={`am-icon-btn ${torchOn ? 'on' : ''}`} onClick={toggleTorch} title="闪光灯">🔦</button>
+              <button className="am-icon-btn" onClick={() => { vibrateClick(); camera.active ? camera.stop() : camera.start(); }} title="摄像头">📹</button>
+              <button className="am-icon-btn" onClick={async () => { vibrateClick(); await camera.switchCamera(); showToast(camera.facingMode === 'user' ? '前置摄像头' : '后置摄像头'); }} title="切换">🔄</button>
+              <button className={`am-icon-btn ${torchOn ? 'on' : ''}`} onClick={() => { vibrateClick(); toggleTorch(); }} title="闪光灯">🔦</button>
             </>
           )}
           {activeTab === 'navigate' && (
             <>
-              <button className="am-icon-btn" onClick={() => setShowFavorites(!showFavorites)} title="收藏">⭐</button>
-              <button className="am-icon-btn" onClick={() => showToast('已获取位置')} title="定位">📍</button>
+              <button className="am-icon-btn" onClick={() => { vibrateClick(); setShowFavorites(!showFavorites); }} title="收藏">⭐</button>
+              <button className="am-icon-btn" onClick={() => { vibrateClick(); showToast('已获取位置'); }} title="定位">📍</button>
             </>
           )}
-          {activeTab === 'sos' && (
-            <button className="am-icon-btn" onClick={() => showToast('设置')} title="设置">⚙️</button>
-          )}
+          <button className="am-icon-btn" onClick={() => { vibrateClick(); setShowSettings(true); }} title="设置">⚙️</button>
         </div>
       </div>
 
@@ -413,6 +556,103 @@ export default function AppMobile() {
             </div>
           </div>
         )}
+
+        {/* 识别页 - 寻物目标输入浮层 */}
+        {showFindInput && (
+          <div className="am-find-panel">
+            <div className="am-find-card">
+              <div className="am-find-title">🔍 寻物模式</div>
+              <div className="am-find-hint">请说出或输入要找的物品，如：钥匙、手机、水杯</div>
+              <div className="am-find-input-row">
+                <input
+                  type="text"
+                  className="am-find-input"
+                  placeholder="输入物品名称..."
+                  value={findTarget}
+                  onChange={e => setFindTarget(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter' && findTarget.trim()) startFindMode(findTarget); }}
+                  autoFocus
+                />
+                <button
+                  className={`am-find-voice ${asr.listening ? 'listening' : ''}`}
+                  onMouseDown={handlePressStart} onMouseUp={handlePressEnd}
+                  onTouchStart={handlePressStart} onTouchEnd={handlePressEnd}
+                  title="按住说出物品名"
+                >🎤</button>
+              </div>
+              <div className="am-find-actions">
+                <button className="am-find-cancel" onClick={() => { setShowFindInput(false); setFindTarget(''); speak('已取消'); }}>取消</button>
+                <button className="am-find-confirm" onClick={() => startFindMode(findTarget)}>开始寻找</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 导航页 - 历史搜索浮层 */}
+        {activeTab === 'navigate' && showNavHistory && navHistory.length > 0 && (
+          <div className="am-history-panel">
+            <div className="am-history-header">
+              <span className="am-history-title">🕐 历史搜索</span>
+              <button className="am-history-clear" onClick={handleClearNavHistory}>清空</button>
+            </div>
+            <div className="am-history-list">
+              {navHistory.map((item, i) => (
+                <button key={i} className="am-history-item" onClick={() => handleNavigate(item)}>
+                  <span className="am-history-icon">📍</span>
+                  <span className="am-history-text">{item}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* 设置浮层 */}
+        {showSettings && (
+          <div className="am-settings-overlay" onClick={() => setShowSettings(false)}>
+            <div className="am-settings-panel" onClick={e => e.stopPropagation()}>
+              <div className="am-settings-header">
+                <span className="am-settings-title">⚙️ 设置</span>
+                <button className="am-settings-close" onClick={() => setShowSettings(false)}>✕</button>
+              </div>
+              <div className="am-settings-body">
+                {/* 语速调节 */}
+                <div className="am-setting-group">
+                  <label className="am-setting-label">播报语速: <span className="am-setting-value">{ttsRate.toFixed(2)}x</span></label>
+                  <input
+                    type="range" min="0.5" max="1.5" step="0.05"
+                    value={ttsRate}
+                    onChange={e => handleSaveRate(parseFloat(e.target.value))}
+                    className="am-setting-slider"
+                  />
+                  <div className="am-setting-marks"><span>慢</span><span>正常</span><span>快</span></div>
+                </div>
+                {/* 音色选择 */}
+                {availableVoices.length > 0 && (
+                  <div className="am-setting-group">
+                    <label className="am-setting-label">播报音色</label>
+                    <select
+                      className="am-setting-select"
+                      value={ttsVoiceName}
+                      onChange={e => handleSaveVoice(e.target.value)}
+                    >
+                      <option value="">系统默认</option>
+                      {availableVoices.map(v => (
+                        <option key={v.name} value={v.name}>{v.name} ({v.lang})</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                {/* 清除导航历史 */}
+                <div className="am-setting-group">
+                  <label className="am-setting-label">导航历史记录</label>
+                  <button className="am-setting-btn" onClick={handleClearNavHistory}>
+                    清除历史记录 ({navHistory.length}条)
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ===== 底部浮动操作区 ===== */}
@@ -428,7 +668,7 @@ export default function AppMobile() {
           </div>
         )}
 
-        {/* 识别页 - 识别记录 + 四个模式按钮 + 输入框 */}
+        {/* 识别页 - 识别记录 + 五个模式按钮 + 输入框 */}
         {activeTab === 'recognize' && (
           <div className="am-recognize-bottom">
             {/* 识别记录显示(按钮上方) */}
@@ -441,19 +681,27 @@ export default function AppMobile() {
               <div ref={messagesEndRef} />
             </div>
 
-            {/* 四个模式按钮一行 */}
+            {/* 寻物模式提示条 */}
+            {activeMode === 'find' && findTarget && (
+              <div className="am-find-status">🔍 正在寻找：{findTarget}</div>
+            )}
+
+            {/* 五个模式按钮一行 */}
             <div className="am-quick-row">
-              <button className={`am-quick-icon ${activeMode === 'analyze' ? 'active' : ''}`} onClick={() => toggleMode('analyze')}>
+              <button className={`am-quick-icon ${activeMode === 'analyze' ? 'active' : ''}`} onClick={() => { vibrateClick(); toggleMode('analyze'); }}>
                 <span className="icon">⚡</span><span className="label">分析</span>
               </button>
-              <button className={`am-quick-icon ${activeMode === 'travel' ? 'active' : ''}`} onClick={() => toggleMode('travel')}>
+              <button className={`am-quick-icon ${activeMode === 'travel' ? 'active' : ''}`} onClick={() => { vibrateClick(); toggleMode('travel'); }}>
                 <span className="icon">🚶</span><span className="label">出行</span>
               </button>
-              <button className={`am-quick-icon ${activeMode === 'read' ? 'active' : ''}`} onClick={() => toggleMode('read')}>
+              <button className={`am-quick-icon ${activeMode === 'read' ? 'active' : ''}`} onClick={() => { vibrateClick(); toggleMode('read'); }}>
                 <span className="icon">📖</span><span className="label">阅读</span>
               </button>
-              <button className={`am-quick-icon ${activeMode === 'traffic' ? 'active' : ''}`} onClick={() => toggleMode('traffic')}>
+              <button className={`am-quick-icon ${activeMode === 'traffic' ? 'active' : ''}`} onClick={() => { vibrateClick(); toggleMode('traffic'); }}>
                 <span className="icon">🚦</span><span className="label">红绿灯</span>
+              </button>
+              <button className={`am-quick-icon find ${activeMode === 'find' ? 'active' : ''}`} onClick={() => { vibrateClick(); toggleMode('find'); }}>
+                <span className="icon">🔍</span><span className="label">寻物</span>
               </button>
             </div>
 
@@ -497,6 +745,8 @@ export default function AppMobile() {
                 className="am-input"
                 value={navInput}
                 onChange={e => setNavInput(e.target.value)}
+                onFocus={() => setShowNavHistory(true)}
+                onBlur={() => setTimeout(() => setShowNavHistory(false), 200)}
                 placeholder="输入目的地,如五一广场"
                 onKeyDown={e => e.key === 'Enter' && handleNavigate()}
               />

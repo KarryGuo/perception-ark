@@ -503,7 +503,7 @@ export async function runSafetyAgent(imageBase64, mode = 'scan') {
   }
 
   try {
-    const result = await visionUnderstand(imageBase64, '请检查画面中是否存在以下危险：1.靠近的车辆/电动车/自行车 2.地面障碍物(水坑/台阶/坑洞) 3.高空坠物风险 4.其他出行危险。如有危险请说明方向、距离、物体；如无危险请回答"安全"。50字以内。');
+    const result = await visionUnderstand(imageBase64, '请检查画面中是否存在以下危险：1.靠近的车辆/电动车/自行车 2.地面障碍物(水坑/台阶/坑洞) 3.高空坠物风险 4.其他出行危险。如有危险请按以下格式回答:"注意,[左前方/正前方/右前方/左方/右方]约[X]米处有[障碍物名称]，建议[避让方向]绕行"。如无危险请回答"前方安全"。40字以内。');
 
     emitAgentState('A03', true, result);
     if (result.includes('安全') && !result.includes('不安全')) {
@@ -714,6 +714,18 @@ export async function runSocialAgent(imageBase64, mode = 'ocr') {
           upsertHabit('food', 'last_order', result.slice(0, 100));
           emitLog('A05', `已记录OCR内容到习惯库`, 'info');
         } catch (e) { /* 忽略写入失败 */ }
+      }
+      // 长文本智能总结: OCR结果超过100字时,追加AI总结
+      if (result.length > 100) {
+        try {
+          emitLog('A04', `OCR长文本(${result.length}字), 正在生成智能总结...`, 'info');
+          const summary = await visionUnderstand(imageBase64, `以下文字是OCR识别结果,请用一句话总结核心内容(30字以内):\n${result}`);
+          if (summary && summary.length < result.length) {
+            result = `${result}\n\n【内容总结】${summary}`;
+          }
+        } catch (e) {
+          emitLog('A04', `智能总结生成失败: ${e.message}`, 'warn');
+        }
       }
     } else if (mode === 'face') {
       result = await faceDescribe(imageBase64);
