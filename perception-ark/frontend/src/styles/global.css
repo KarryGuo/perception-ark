@@ -1283,10 +1283,11 @@ input:focus-visible,
   width: 100%;
   height: 100%;
 }
-.am-bg-map > div,
-.am-bg-map > div > div {
+/* 全屏模式下覆盖map-container的min-height,让地图撑满 */
+.am-bg-map .map-container {
   width: 100% !important;
   height: 100% !important;
+  min-height: 0 !important;
 }
 .am-bg-sos {
   width: 100%;

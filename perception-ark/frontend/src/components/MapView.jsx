@@ -38,6 +38,12 @@ export default function MapView({ location, route, pois, className }) {
           zooms: [3, 20]
         });
         setStatus('ready');
+        // 延迟触发resize,确保容器尺寸已就绪(全屏沉浸式布局需要)
+        setTimeout(() => {
+          if (mapInstanceRef.current) {
+            try { mapInstanceRef.current.resize(); } catch(e) {}
+          }
+        }, 200);
       })
       .catch((err) => {
         if (!cancelled) {
