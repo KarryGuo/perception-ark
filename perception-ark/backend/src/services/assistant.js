@@ -115,10 +115,21 @@ export async function understandIntent(text, sessionId) {
     for (const pattern of rule.patterns) {
       const match = text.match(pattern);
       if (match) {
+        // 清理entity: 去除语气词/标点/多余问句,保留纯目的地
+        let entity = null;
+        if (rule.extract) {
+          entity = rule.extract(match)
+            .replace(/的|了|吗|。|，|,$/g, '')
+            .replace(/(怎么走|怎么去|怎么走呢|怎么去呢|谢谢|请|请问|麻烦).*/g, '')
+            .replace(/^[，,。.\s]+|[，,。.\s]+$/g, '')
+            .trim();
+          // 清理后为空则视为无目的地
+          if (!entity) entity = null;
+        }
         return {
           intent: rule.intent,
-          entity: rule.extract ? rule.extract(match).replace(/的|了|吗|。|，|$/g, '').trim() : null,
-          reply: null  // action类意图,路由层会生成执行提示
+          entity,
+          reply: null
         };
       }
     }

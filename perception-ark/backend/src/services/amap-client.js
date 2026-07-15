@@ -94,6 +94,7 @@ export async function searchPOI(keyword, lat, lng, radius = 50000) {
         pois = (response.data.pois || []).slice(0, 5).map(poi => ({
           name: poi.name,
           address: poi.address || '',
+          city: poi.cityname || '',
           distance: parseInt(poi.distance || '0'),
           lat: parseFloat(poi.location.split(',')[1]),
           lng: parseFloat(poi.location.split(',')[0])
@@ -125,6 +126,7 @@ export async function searchPOI(keyword, lat, lng, radius = 50000) {
       return {
         name: poi.name,
         address: poi.address || poi.cityname || '',
+        city: poi.cityname || '',
         distance: 0,
         lat: parseFloat(loc[1]),
         lng: parseFloat(loc[0])

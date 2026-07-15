@@ -243,8 +243,17 @@ export async function runNavigationAgent(destination, startLat, startLng) {
       return null;
     }
 
-    const target = pois[0];
-    emitLog('A02', `找到目的地: ${target.name} (距离${target.distance}米)`);
+    // 全局搜索可能返回多个城市的同名地点,优先选用户当前所在城市
+    let target = pois[0];
+    const userCity = sharedContext.currentLocation?.city;
+    if (userCity && pois.length > 1) {
+      const cityMatch = pois.find(p => p.city && p.city.includes(userCity));
+      if (cityMatch) {
+        target = cityMatch;
+        emitLog('A02', `从${pois.length}个结果中匹配到${userCity}的目的地: ${target.name}`);
+      }
+    }
+    emitLog('A02', `找到目的地: ${target.name}${target.city ? `(${target.city})` : ''} (距离${target.distance}米)`);
 
     // 3. 路径规划(需要起点坐标)
     if (!startLatVal || !startLngVal) {

@@ -78,11 +78,17 @@ router.post('/chat', upload.single('image'), async (req, res) => {
     const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
     switch (intent.intent) {
-      case 'navigate':
+      case 'navigate': {
+        const dest = (intent.entity || '').trim();
+        if (!dest) {
+          reply = '您想去哪里呢？请告诉我目的地，比如"带我去五一广场"。';
+          break;
+        }
         action = 'navigate';
-        await runNavigationAgent(intent.entity || '超市', location?.lat, location?.lng);
-        reply = pick(replies.navigate);
+        await runNavigationAgent(dest, location?.lat, location?.lng);
+        reply = pick(replies.navigate).replace(/目的地/g, dest);
         break;
+      }
 
       case 'ocr':
         action = 'ocr';
