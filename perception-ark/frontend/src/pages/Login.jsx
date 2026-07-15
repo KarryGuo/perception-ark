@@ -99,6 +99,20 @@ export default function Login() {
             <a href="#/guide">产品使用说明</a>
           </div>
         </form>
+
+        {/* 评委手机扫码体验 */}
+        <div className="auth-qr">
+          <div className="auth-qr-title">📱 评委手机扫码体验</div>
+          <div className="auth-qr-img">
+            <img
+              src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&margin=8&color=04060C&bgcolor=FFFFFF&data=${encodeURIComponent(window.location.origin + window.location.pathname + '#/demo')}`}
+              alt="扫码体验移动端APP"
+              width="160"
+              height="160"
+            />
+          </div>
+          <div className="auth-qr-tip">扫码一键进入移动端APP</div>
+        </div>
       </div>
     </div>
   );

@@ -1047,6 +1047,34 @@ input:focus-visible,
 }
 .auth-links a:hover { text-decoration: underline; }
 
+/* 登录页二维码 */
+.auth-qr {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--glass-border);
+  text-align: center;
+}
+.auth-qr-title {
+  font-size: .82rem;
+  color: var(--ink-muted);
+  margin-bottom: 12px;
+}
+.auth-qr-img {
+  display: inline-block;
+  padding: 8px;
+  background: #fff;
+  border-radius: 10px;
+}
+.auth-qr-img img {
+  display: block;
+  border-radius: 4px;
+}
+.auth-qr-tip {
+  font-size: .72rem;
+  color: var(--ink-faint);
+  margin-top: 8px;
+}
+
 /* ============================================
    产品使用说明页 · Guide
    ============================================ */
@@ -1132,6 +1160,62 @@ input:focus-visible,
   position: absolute;
   left: 0;
   color: var(--bio-emerald);
+}
+
+/* 评委扫码体验区 */
+.guide-qr-section {
+  margin: 24px 0;
+}
+.guide-qr-card {
+  background: linear-gradient(135deg, rgba(0,255,163,0.06) 0%, rgba(0,229,255,0.04) 100%);
+  border: 1px solid rgba(0,255,163,0.2);
+  border-radius: 16px;
+  padding: 28px 24px;
+  text-align: center;
+}
+.guide-qr-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--bio-emerald);
+  margin-bottom: 8px;
+}
+.guide-qr-desc {
+  font-size: .88rem;
+  color: var(--ink-muted);
+  margin-bottom: 20px;
+  line-height: 1.6;
+}
+.guide-qr-img {
+  display: inline-block;
+  padding: 12px;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 4px 24px rgba(0,255,163,0.15);
+}
+.guide-qr-img img {
+  display: block;
+  border-radius: 4px;
+}
+.guide-qr-tip {
+  font-size: .82rem;
+  color: var(--ink-muted);
+  margin-top: 16px;
+}
+.guide-qr-link {
+  display: inline-block;
+  margin-top: 12px;
+  padding: 10px 24px;
+  background: var(--bio-emerald);
+  color: var(--void);
+  border-radius: 10px;
+  text-decoration: none;
+  font-size: .88rem;
+  font-weight: 600;
+  transition: all .2s;
+}
+.guide-qr-link:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(0,255,163,0.3);
 }
 
 .guide-feature-grid {
@@ -1581,7 +1665,7 @@ input:focus-visible,
 
 /* ===== 底部按住说话 ===== */
 .am-press-speak {
-  padding: 12px 16px;
+  padding: 10px 14px;
   background: var(--void-2);
   border-top: 1px solid var(--gb);
   display: flex;
@@ -1592,6 +1676,44 @@ input:focus-visible,
   bottom: 0;
   z-index: 40;
   backdrop-filter: blur(12px);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.am-text-input-row {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+.am-text-input {
+  flex: 1;
+  padding: 12px 14px;
+  background: var(--void-3);
+  border: 1px solid var(--gb);
+  border-radius: 10px;
+  color: var(--ink);
+  font-size: .88rem;
+  font-family: inherit;
+  min-height: 44px;
+}
+.am-text-input:focus {
+  outline: none;
+  border-color: var(--bio-emerald);
+}
+.am-text-input::placeholder { color: var(--ink-faint); }
+.am-send-btn {
+  padding: 12px 18px;
+  background: var(--bio-emerald);
+  color: var(--void);
+  border: none;
+  border-radius: 10px;
+  font-size: .85rem;
+  font-weight: 600;
+  cursor: pointer;
+  min-height: 44px;
+  min-width: 60px;
+}
+.am-send-btn:disabled {
+  opacity: .4;
+  cursor: not-allowed;
 }
 .am-press-btn {
   width: 100%;

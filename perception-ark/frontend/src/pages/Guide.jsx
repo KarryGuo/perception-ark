@@ -98,11 +98,33 @@ export default function Guide() {
 
         <div className="guide-section">
           <h2>多端访问</h2>
+
+          {/* 评委手机扫码体验区 */}
+          <div className="guide-qr-section">
+            <div className="guide-qr-card">
+              <div className="guide-qr-title">📱 评委手机扫码体验</div>
+              <div className="guide-qr-desc">用手机扫描下方二维码,一键进入移动端APP,模拟盲人眼镜使用</div>
+              <div className="guide-qr-img">
+                <img
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=240x240&margin=8&color=04060C&bgcolor=FFFFFF&data=${encodeURIComponent(window.location.origin + window.location.pathname + '#/demo')}`}
+                  alt="扫码体验移动端APP"
+                  width="200"
+                  height="200"
+                />
+              </div>
+              <div className="guide-qr-tip">扫码后自动登录,直达识别/导航/SOS界面</div>
+              <a href="#/demo" className="guide-qr-link">或在当前设备一键体验 →</a>
+            </div>
+          </div>
+
           <h3>Web端(评委展示)</h3>
           <p>展示眼镜后台工作原理,包括五Agent协同、优先级抢占、实时事件流、地图导航可视化。适合评委了解系统架构和工作流程。</p>
+          <p><a href="#/" style={{ color: 'var(--bio-emerald)' }}>前往Web端 →</a></p>
+
           <h3>H5移动端(用户使用)</h3>
-          <p>精简版界面,聚焦识物和导航核心功能。手机扫码即可访问,适合视障用户日常使用。</p>
+          <p>精简版界面,聚焦识物和导航核心功能。手机扫码即可访问,适合视障用户日常使用。三大模式:识别(场景/文字/人脸/红绿灯)、导航(3D地图+语音)、SOS紧急呼救。</p>
           <p><a href="#/app" style={{ color: 'var(--bio-emerald)' }}>前往H5移动端 →</a></p>
+
           <h3>家属端</h3>
           <p>家属可查看使用者实时位置、活动状态、SOS历史,管理紧急联系人信息。</p>
           <p><a href="#/family" style={{ color: 'var(--bio-emerald)' }}>前往家属端 →</a></p>

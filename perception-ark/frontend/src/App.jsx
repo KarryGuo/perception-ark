@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from './hooks/useAuth.jsx';
+import { api } from './services/api.js';
 import Glasses from './pages/Glasses.jsx';
 import Family from './pages/Family.jsx';
 import Login from './pages/Login.jsx';
@@ -24,6 +25,50 @@ function RequireAuth({ children }) {
   return children;
 }
 
+// 评委一键体验: 自动登录demo账号并跳转APP端
+function DemoEntry() {
+  const { login, user } = useAuth();
+  const [status, setStatus] = useState('loading');
+
+  useEffect(() => {
+    if (user) {
+      window.location.hash = '#/app';
+      return;
+    }
+    (async () => {
+      try {
+        try {
+          await login('demo', 'demo123');
+        } catch {
+          await api.register('demo', 'demo123', 'user');
+          await login('demo', 'demo123');
+        }
+        window.location.hash = '#/app';
+      } catch (err) {
+        setStatus('error');
+      }
+    })();
+  }, [user, login]);
+
+  if (status === 'error') {
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: '#04060C', color: '#fff', fontFamily: 'Noto Sans SC, sans-serif', gap: 16 }}>
+        <div style={{ fontSize: '2rem' }}>⚠️</div>
+        <div>体验入口暂时不可用</div>
+        <a href="#/login" style={{ color: '#00FFA3', padding: '10px 24px', border: '1px solid #00FFA3', borderRadius: 8, textDecoration: 'none' }}>前往登录</a>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: '#04060C', color: '#00FFA3', fontFamily: 'Noto Sans SC, sans-serif', gap: 20 }}>
+      <div style={{ fontSize: '3rem', animation: 'spin 1s linear infinite' }}>⚡</div>
+      <div style={{ fontSize: '1.1rem' }}>正在进入感知方舟...</div>
+      <style>{`@keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }`}</style>
+    </div>
+  );
+}
+
 export default function App() {
   const [route, setRoute] = useState(window.location.hash || '#/');
 
@@ -33,10 +78,11 @@ export default function App() {
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
 
-  // 公开路由: 登录/注册/说明页无需认证
+  // 公开路由: 登录/注册/说明页/评委体验入口
   if (route === '#/login' || route === '#/login/') return <Login />;
   if (route === '#/register' || route === '#/register/') return <Register />;
   if (route === '#/guide' || route === '#/guide/') return <Guide />;
+  if (route === '#/demo' || route === '#/demo/') return <DemoEntry />;
 
   // 受保护路由: 需要登录
   if (route === '#/app' || route === '#/app/') return <RequireAuth><AppMobile /></RequireAuth>;

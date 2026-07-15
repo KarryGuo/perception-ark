@@ -20,13 +20,14 @@ export default function AppMobile() {
   const [subtitle, setSubtitle] = useState('点击下方按钮或按住说话开始使用');
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState('');
-  const [navInput, setNavInput] = useState('');
+  const [navInput, setNavInput] = useState(''); // 保留兼容(收藏位置点击)
   const [mapRoute, setMapRoute] = useState(null);
   const [mapPois, setMapPois] = useState([]);
   const [contacts, setContacts] = useState([]);
   const [favorites, setFavorites] = useState([]);
   const [torchOn, setTorchOn] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [textInput, setTextInput] = useState(''); // 识别页文本输入
 
   const { speak, stop: stopSpeak } = useSpeechSynthesis();
   const asr = useSpeechRecognition();
@@ -119,6 +120,21 @@ export default function AppMobile() {
     const names = { recognize: '识别', navigate: '导航', sos: '紧急呼救' };
     showToast(`已切换到${names[tab]}`);
   }, [showToast]);
+
+  // ===== 文本输入提交(识别和导航共用) =====
+  const handleTextInputSubmit = useCallback((text) => {
+    // 检查tab切换指令
+    if (/打开识别|识别模式/.test(text)) { switchTab('recognize'); return; }
+    if (/打开导航|导航模式/.test(text)) { switchTab('navigate'); return; }
+    if (/紧急呼救|SOS|救命/.test(text)) { switchTab('sos'); return; }
+
+    addMessage('user', text);
+    if (activeTab === 'recognize') {
+      handleRecognizeCommand(text);
+    } else if (activeTab === 'navigate') {
+      handleNavigateCommand(text);
+    }
+  }, [activeTab, switchTab, addMessage, handleRecognizeCommand, handleNavigateCommand]);
 
   // ===== 按住说话 =====
   const handlePressStart = useCallback(() => {
@@ -302,6 +318,7 @@ export default function AppMobile() {
           {activeTab === 'recognize' && (
             <>
               <button className={`am-tool-btn ${camera.active ? 'active' : ''}`} onClick={() => camera.active ? camera.stop() : camera.start()} title="摄像头">📹</button>
+              <button className="am-tool-btn" onClick={async () => { await camera.switchCamera(); showToast(camera.facingMode === 'user' ? '已切换到前置摄像头' : '已切换到后置摄像头'); }} title="切换前后摄像头">🔄</button>
               <button className={`am-tool-btn ${torchOn ? 'active' : ''}`} onClick={toggleTorch} title="闪光灯">🔦</button>
               <button className="am-tool-btn" onClick={() => showToast('已获取位置')} title="定位">📍</button>
             </>
@@ -329,7 +346,7 @@ export default function AppMobile() {
                   <div>摄像头启动中...</div>
                 </div>
               )}
-              {camera.active && <div className="am-cam-badge">● REC · 眼镜视角</div>}
+              {camera.active && <div className="am-cam-badge">● REC · {camera.facingMode === 'user' ? '前置' : '后置'}摄像头</div>}
             </div>
 
             {/* 聊天消息列表 */}
@@ -375,18 +392,6 @@ export default function AppMobile() {
             {/* 3D地图 */}
             <div className="am-map">
               <MapView location={location} route={mapRoute} pois={mapPois} className="am-map-view" />
-            </div>
-
-            {/* 导航输入 */}
-            <div className="am-nav-input">
-              <input
-                type="text"
-                value={navInput}
-                onChange={e => setNavInput(e.target.value)}
-                placeholder="输入目的地,如五一广场"
-                onKeyDown={e => e.key === 'Enter' && handleNavigate()}
-              />
-              <button onClick={() => handleNavigate()} disabled={busy}>搜索</button>
             </div>
 
             {/* 收藏位置 */}
@@ -439,9 +444,40 @@ export default function AppMobile() {
         )}
       </div>
 
-      {/* 底部按住说话(识别和导航tab共用) */}
+      {/* 底部输入区(识别和导航tab共用) - 文本输入 + 按住说话 */}
       {activeTab !== 'sos' && (
         <div className="am-press-speak">
+          {/* 文本输入框 */}
+          <div className="am-text-input-row">
+            <input
+              type="text"
+              className="am-text-input"
+              value={textInput}
+              onChange={e => setTextInput(e.target.value)}
+              placeholder={activeTab === 'recognize' ? '输入指令,如"快速分析"' : '输入目的地,如"五一广场"'}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && textInput.trim()) {
+                  handleTextInputSubmit(textInput.trim());
+                  setTextInput('');
+                }
+              }}
+              aria-label="输入框"
+            />
+            <button
+              className="am-send-btn"
+              onClick={() => {
+                if (textInput.trim()) {
+                  handleTextInputSubmit(textInput.trim());
+                  setTextInput('');
+                }
+              }}
+              disabled={!textInput.trim()}
+              aria-label="发送"
+            >
+              发送
+            </button>
+          </div>
+          {/* 按住说话按钮 */}
           <button
             className={`am-press-btn ${asr.listening ? 'listening' : ''}`}
             onMouseDown={handlePressStart}
