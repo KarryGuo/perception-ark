@@ -1349,7 +1349,7 @@ input:focus-visible,
 /* ===== 顶部浮动工具栏 ===== */
 .am-top-tools {
   position: absolute;
-  top: calc(env(safe-area-inset-top) + 12px);
+  top: calc(env(safe-area-inset-top) + 62px);
   left: 14px;
   right: 14px;
   z-index: 25;
@@ -1414,10 +1414,10 @@ input:focus-visible,
 /* ===== 主内容浮层 ===== */
 .am-content-layer {
   position: absolute;
-  top: calc(env(safe-area-inset-top) + 64px);
+  top: calc(env(safe-area-inset-top) + 110px);
   left: 0;
   right: 0;
-  bottom: 180px;
+  bottom: 200px;
   z-index: 15;
   pointer-events: none;
   display: flex;
@@ -1639,7 +1639,7 @@ input:focus-visible,
   text-align: center;
 }
 
-/* 识别页 - 多个小按钮 */
+/* 识别页 - 四个模式按钮 + 按住说话 + 文字输入 */
 .am-recognize-bottom {
   display: flex;
   flex-direction: column;
@@ -1652,7 +1652,6 @@ input:focus-visible,
 }
 .am-quick-icon {
   flex: 1;
-  max-width: 72px;
   padding: 10px 4px;
   border: 1px solid rgba(255,255,255,0.12);
   background: rgba(0,0,0,0.4);
@@ -1668,22 +1667,85 @@ input:focus-visible,
   gap: 4px;
   transition: all .2s;
 }
-.am-quick-icon:hover:not(:disabled) {
+.am-quick-icon:hover {
   background: rgba(255,255,255,0.18);
   border-color: rgba(255,255,255,0.25);
 }
 .am-quick-icon:active { transform: scale(.93); }
-.am-quick-icon:disabled { opacity: .4; }
 .am-quick-icon .icon { font-size: 1.25rem; }
-.am-quick-icon .label { font-size: .66rem; font-weight: 500; }
-.am-quick-icon.primary {
-  background: rgba(0,255,163,0.15);
-  border-color: rgba(0,255,163,0.35);
+.am-quick-icon .label { font-size: .68rem; font-weight: 500; }
+.am-quick-icon.active {
+  background: rgba(0,255,163,0.2);
+  border-color: rgba(0,255,163,0.5);
   color: var(--bio-emerald);
+  box-shadow: 0 0 12px rgba(0,255,163,0.25);
 }
-.am-quick-icon.primary:hover:not(:disabled) {
-  background: rgba(0,255,163,0.25);
+
+/* 文字输入展开区 */
+.am-text-input-row {
+  display: flex;
+  gap: 8px;
 }
+.am-text-input {
+  flex: 1;
+  padding: 12px 16px;
+  background: rgba(0,0,0,0.5);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 100px;
+  color: var(--ink);
+  font-size: .86rem;
+  font-family: inherit;
+  outline: none;
+  min-height: 46px;
+}
+.am-text-input:focus { border-color: rgba(0,255,163,0.4); }
+.am-text-input::placeholder { color: rgba(255,255,255,0.4); }
+.am-text-send {
+  padding: 12px 20px;
+  background: var(--bio-emerald);
+  color: #000;
+  border: none;
+  border-radius: 100px;
+  font-size: .82rem;
+  font-weight: 600;
+  cursor: pointer;
+  min-height: 46px;
+}
+.am-text-send:active { transform: scale(.95); }
+
+/* 按住说话 + 文字输入icon 行 */
+.am-press-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.am-press-row .am-press-btn {
+  flex: 1;
+}
+.am-text-icon {
+  width: 48px;
+  height: 48px;
+  flex-shrink: 0;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(0,0,0,0.4);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-radius: 50%;
+  color: rgba(255,255,255,0.85);
+  font-size: 1.2rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all .2s;
+}
+.am-text-icon:hover {
+  background: rgba(255,255,255,0.18);
+  border-color: rgba(255,255,255,0.25);
+}
+.am-text-icon:active { transform: scale(.92); }
 
 /* 导航页 - 输入框+按住说话 */
 .am-navigate-bottom {

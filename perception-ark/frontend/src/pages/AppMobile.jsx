@@ -29,6 +29,8 @@ export default function AppMobile() {
   const [textInput, setTextInput] = useState('');
   const [showChat, setShowChat] = useState(true); // 识别页聊天浮层显隐
   const [showFavorites, setShowFavorites] = useState(false); // 导航页收藏浮层
+  const [activeMode, setActiveMode] = useState(null); // null | 'analyze' | 'travel' | 'read' | 'traffic'
+  const [showTextInput, setShowTextInput] = useState(false); // 识别页文字输入展开
 
   const { speak, stop: stopSpeak } = useSpeechSynthesis();
   const asr = useSpeechRecognition();
@@ -37,6 +39,7 @@ export default function AppMobile() {
 
   const messagesEndRef = useRef(null);
   const isPressingRef = useRef(null);
+  const modeIntervalRef = useRef(null); // 连续分析定时器
 
   // 摄像头强制开启
   useEffect(() => {
@@ -165,22 +168,94 @@ export default function AppMobile() {
     } finally { setBusy(false); }
   }, [captureImage, addMessage, speak]);
 
-  const handleQuickAction = useCallback(async (action) => {
-    setBusy(true);
-    const actionNames = { analyze: '快速分析', travel: '出行模式', read: '阅读文字', traffic: '红绿灯识别' };
-    addMessage('user', actionNames[action]);
-    try {
-      const img = await captureImage();
-      if (!img) { setBusy(false); return; }
-      if (action === 'analyze') await api.scene(img, '请用一段话描述当前场景,包括前方物体、路面状况、可能的障碍。专为视障者设计,50字以内。');
-      else if (action === 'travel') await api.safety(img, 'scan');
-      else if (action === 'read') await api.social(img, 'ocr');
-      else if (action === 'traffic') await api.safety(img, 'scan');
-    } catch (err) {
-      addMessage('assistant', `操作失败: ${err.message}`);
-      speak(`操作失败: ${err.message}`);
-    } finally { setBusy(false); }
-  }, [captureImage, addMessage, speak]);
+  // ===== 模式切换(开启/关闭连续分析) =====
+  const modeNames = { analyze: '快速分析', travel: '出行模式', read: '阅读文字', traffic: '红绿灯识别' };
+
+  const toggleMode = useCallback((mode) => {
+    setActiveMode(prev => {
+      if (prev === mode) {
+        // 关闭当前模式
+        speak(`${modeNames[mode]}已关闭`);
+        showToast(`${modeNames[mode]}已关闭`);
+        return null;
+      } else {
+        // 开启新模式(如果之前有模式,先关闭)
+        if (prev) {
+          speak(`${modeNames[prev]}已关闭`);
+        }
+        speak(`${modeNames[mode]}已开启`);
+        showToast(`${modeNames[mode]}已开启`);
+        addMessage('user', `开启${modeNames[mode]}`);
+        return mode;
+      }
+    });
+  }, [speak, showToast, addMessage]);
+
+  // 连续分析循环 - 当activeMode不为null时,每5秒抓拍并分析一次
+  useEffect(() => {
+    if (!activeMode) {
+      if (modeIntervalRef.current) {
+        clearInterval(modeIntervalRef.current);
+        modeIntervalRef.current = null;
+      }
+      return;
+    }
+
+    let running = false;
+    const runOnce = async () => {
+      if (running) return;
+      running = true;
+      try {
+        const img = await camera.capture();
+        if (!img) { running = false; return; }
+
+        let res;
+        if (activeMode === 'analyze') {
+          res = await api.scene(img, '请用一段话描述当前场景,包括前方主要物体及大致距离。专为视障者设计,50字以内。');
+        } else if (activeMode === 'travel') {
+          res = await api.safety(img, 'scan');
+        } else if (activeMode === 'read') {
+          res = await api.social(img, 'ocr');
+        } else if (activeMode === 'traffic') {
+          res = await api.safety(img, 'scan');
+        }
+
+        if (res?.success && res.result) {
+          const text = typeof res.result === 'string' ? res.result : String(res.result);
+          addMessage('assistant', text);
+          speak(text);
+          setSubtitle(text);
+
+          // 出行模式: 检测到危险时手机震动
+          if (activeMode === 'travel' && /危险|障碍|靠近|前方有|小心|注意|当心|车辆|电动车/.test(text)) {
+            if (navigator.vibrate) navigator.vibrate([300, 150, 300, 150, 300]);
+          }
+        }
+      } catch (err) {
+        console.error('[Mode] 分析失败:', err.message);
+      } finally {
+        running = false;
+      }
+    };
+
+    // 立即执行一次,然后每5秒执行
+    runOnce();
+    modeIntervalRef.current = setInterval(runOnce, 5000);
+
+    return () => {
+      if (modeIntervalRef.current) {
+        clearInterval(modeIntervalRef.current);
+        modeIntervalRef.current = null;
+      }
+    };
+  }, [activeMode, camera, addMessage, speak]);
+
+  // 切换tab时关闭连续分析模式
+  useEffect(() => {
+    if (activeTab !== 'recognize' && activeMode) {
+      setActiveMode(null);
+    }
+  }, [activeTab, activeMode]);
 
   // ===== 导航页功能 =====
   const handleNavigateCommand = useCallback(async (text) => {
@@ -369,24 +444,52 @@ export default function AppMobile() {
           </div>
         )}
 
-        {/* 识别页 - 多个小按钮 */}
+        {/* 识别页 - 四个模式按钮 + 按住说话 + 文字输入 */}
         {activeTab === 'recognize' && (
           <div className="am-recognize-bottom">
+            {/* 四个模式按钮一行 */}
             <div className="am-quick-row">
-              <button className="am-quick-icon" onClick={() => handleQuickAction('analyze')} disabled={busy}>
+              <button className={`am-quick-icon ${activeMode === 'analyze' ? 'active' : ''}`} onClick={() => toggleMode('analyze')}>
                 <span className="icon">⚡</span><span className="label">分析</span>
               </button>
-              <button className="am-quick-icon" onClick={() => handleQuickAction('travel')} disabled={busy}>
+              <button className={`am-quick-icon ${activeMode === 'travel' ? 'active' : ''}`} onClick={() => toggleMode('travel')}>
                 <span className="icon">🚶</span><span className="label">出行</span>
               </button>
-              <button className="am-quick-icon" onClick={() => handleQuickAction('read')} disabled={busy}>
+              <button className={`am-quick-icon ${activeMode === 'read' ? 'active' : ''}`} onClick={() => toggleMode('read')}>
                 <span className="icon">📖</span><span className="label">阅读</span>
               </button>
-              <button className="am-quick-icon" onClick={() => handleQuickAction('traffic')} disabled={busy}>
+              <button className={`am-quick-icon ${activeMode === 'traffic' ? 'active' : ''}`} onClick={() => toggleMode('traffic')}>
                 <span className="icon">🚦</span><span className="label">红绿灯</span>
               </button>
-              <button className="am-quick-icon primary" onMouseDown={handlePressStart} onMouseUp={handlePressEnd} onTouchStart={handlePressStart} onTouchEnd={handlePressEnd}>
-                <span className="icon">{asr.listening ? '🔴' : '🎤'}</span><span className="label">{asr.listening ? '聆听' : '说话'}</span>
+            </div>
+
+            {/* 文字输入展开区 */}
+            {showTextInput && (
+              <div className="am-text-input-row">
+                <input
+                  type="text"
+                  className="am-text-input"
+                  value={textInput}
+                  onChange={e => setTextInput(e.target.value)}
+                  placeholder="输入文字指令..."
+                  onKeyDown={e => { if (e.key === 'Enter' && textInput.trim()) { handleTextInputSubmit(textInput.trim()); setTextInput(''); } }}
+                  autoFocus
+                />
+                <button className="am-text-send" onClick={() => { if (textInput.trim()) { handleTextInputSubmit(textInput.trim()); setTextInput(''); } }}>发送</button>
+              </div>
+            )}
+
+            {/* 按住说话(长) + 文字输入icon(右侧) */}
+            <div className="am-press-row">
+              <button
+                className={`am-press-btn ${asr.listening ? 'listening' : ''}`}
+                onMouseDown={handlePressStart} onMouseUp={handlePressEnd}
+                onTouchStart={handlePressStart} onTouchEnd={handlePressEnd}
+              >
+                <span className="icon">🎤</span><span>{asr.listening ? '松开发送' : '按住说话'}</span>
+              </button>
+              <button className="am-text-icon" onClick={() => setShowTextInput(!showTextInput)} title="文字输入">
+                {showTextInput ? '⌨️' : '⌨️'}
               </button>
             </div>
           </div>
