@@ -929,6 +929,15 @@ input:focus-visible,
   margin-bottom: 8px;
 }
 
+.auth-logo-img {
+  width: 72px;
+  height: 72px;
+  object-fit: contain;
+  margin-bottom: 12px;
+  border-radius: 14px;
+  filter: drop-shadow(0 0 12px rgba(0, 255, 163, 0.25));
+}
+
 .auth-brand h1 {
   font-size: 1.6rem;
   font-weight: 700;

@@ -42,7 +42,7 @@ export default function Register() {
     <div className="auth-page">
       <div className="auth-card">
         <div className="auth-brand">
-          <div className="auth-logo">⚡</div>
+          <img src="/logo.png" alt="PerceptionArk" className="auth-logo-img" />
           <h1>注册感知方舟</h1>
           <p>加入感知方舟,开启智能感知之旅</p>
         </div>

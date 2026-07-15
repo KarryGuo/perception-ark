@@ -51,7 +51,7 @@ export default function Login() {
     <div className="auth-page">
       <div className="auth-card">
         <div className="auth-brand">
-          <div className="auth-logo">⚡</div>
+          <img src="/logo.png" alt="PerceptionArk" className="auth-logo-img" />
           <h1>PerceptionArk</h1>
           <p>感知方舟 · AI感知眼镜系统</p>
         </div>
