@@ -17,7 +17,7 @@ export default function AppMobile() {
   const { user, logout } = useAuth();
   const [activeTab, setActiveTab] = useState('recognize');
   const [messages, setMessages] = useState([]);
-  const [subtitle, setSubtitle] = useState('点击下方按钮或按住说话开始使用');
+  const [subtitle, setSubtitle] = useState('');
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState('');
   const [navInput, setNavInput] = useState('');
@@ -131,7 +131,7 @@ export default function AppMobile() {
   const handlePressEnd = useCallback(() => {
     isPressingRef.current = false;
     if (asr.listening) asr.stop();
-    setTimeout(() => setSubtitle('点击下方按钮或按住说话开始使用'), 1000);
+    setTimeout(() => setSubtitle(''), 1000);
   }, [asr]);
 
   useEffect(() => {
@@ -510,11 +510,6 @@ export default function AppMobile() {
               <span className="icon">🎤</span><span>{asr.listening ? '松开发送' : '按住说话'}</span>
             </button>
           </div>
-        )}
-
-        {/* 字幕条(识别和导航共用) */}
-        {activeTab !== 'sos' && (
-          <div className="am-subtitle-bar" aria-live="polite">{subtitle}</div>
         )}
       </div>
 
