@@ -63,7 +63,8 @@ export default function MapView({ location, route, pois, className }) {
     };
   }, []);
 
-  // 位置变化时更新中心点和标记
+  // 位置变化时更新中心点和标记(带阈值过滤,防止地图跳动)
+  const lastCenterRef = useRef(null);
   useEffect(() => {
     const mapInstance = mapInstanceRef.current;
     if (!mapInstance || !location?.lat || !location?.lng) return;
@@ -71,6 +72,15 @@ export default function MapView({ location, route, pois, className }) {
     if (!AMap) return;
 
     const lnglat = new AMap.LngLat(location.lng, location.lat);
+
+    // 移动距离 < 30米不重新setCenter(防止GPS抖动导致地图跳动)
+    if (lastCenterRef.current) {
+      const dLat = location.lat - lastCenterRef.current.lat;
+      const dLng = location.lng - lastCenterRef.current.lng;
+      const moved = Math.sqrt(dLat * dLat + dLng * dLng) * 111000;
+      if (moved < 30) return; // 跳过本次更新
+    }
+    lastCenterRef.current = { lat: location.lat, lng: location.lng };
     mapInstance.setCenter(lnglat);
 
     if (markerRef.current) {
@@ -85,7 +95,7 @@ export default function MapView({ location, route, pois, className }) {
     }
 
     if (location.address) setAddr(location.address);
-  }, [location]);
+  }, [location?.lat, location?.lng]);
 
   // 路径规划结果绘制
   useEffect(() => {

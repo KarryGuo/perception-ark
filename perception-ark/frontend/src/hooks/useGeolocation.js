@@ -3,13 +3,7 @@ import { api } from '../services/api.js';
 import { loadAmapSDK } from '../services/amap.js';
 
 /**
- * 通过高德 AMap.Geolocation 插件定位
- * 综合使用 GPS / 基站 / IP,且自动做 WGS84→GCJ02 坐标转换,
- * 比浏览器原生 navigator.geolocation 在桌面端更准确
- */
-/**
- * 方式1: 高德 Geolocation - GPS/基站定位(最精确,移动端首选)
- * 使用 GeoLocation 优先策略,提高定位精度
+ * 高德 AMap.Geolocation - GPS/基站定位(最精确,移动端首选)
  */
 function locateByAmapGeo() {
   return new Promise((resolve, reject) => {
@@ -46,7 +40,7 @@ function locateByAmapGeo() {
 }
 
 /**
- * 方式2: 浏览器原生高精度定位(手机GPS,精度最高)
+ * 浏览器原生高精度定位(手机GPS,精度最高)
  */
 function locateByBrowserHigh() {
   return new Promise((resolve, reject) => {
@@ -68,7 +62,7 @@ function locateByBrowserHigh() {
 }
 
 /**
- * 方式3: AMap.CitySearch - IP定位(快速兜底,城市级精度)
+ * AMap.CitySearch - IP定位(快速兜底,城市级精度)
  */
 function locateByCitySearch() {
   return new Promise((resolve, reject) => {
@@ -100,28 +94,6 @@ function locateByCitySearch() {
 }
 
 /**
- * 方式4: 浏览器原生定位(低精度兜底)
- */
-function locateByBrowser() {
-  return new Promise((resolve, reject) => {
-    if (!navigator.geolocation) {
-      reject(new Error('浏览器不支持定位'));
-      return;
-    }
-    navigator.geolocation.getCurrentPosition(
-      (pos) => resolve({
-        lat: pos.coords.latitude,
-        lng: pos.coords.longitude,
-        accuracy: pos.coords.accuracy,
-        source: 'browser'
-      }),
-      (err) => reject(err),
-      { enableHighAccuracy: false, timeout: 8000, maximumAge: 300000 }
-    );
-  });
-}
-
-/**
  * 逆地理编码获取真实地址(含省/市/区)
  */
 async function reverseGeocode(lat, lng) {
@@ -139,12 +111,50 @@ async function reverseGeocode(lat, lng) {
 }
 
 /**
- * 应用位置并异步获取详细地址
+ * 计算两点距离(米)
  */
-function useLocationSetter(setLocation, lastLatRef, lastLngRef) {
-  return useCallback(async (pos) => {
-    // 先用坐标设置位置(地图可以立即显示)
-    setLocation({
+function distance(lat1, lng1, lat2, lng2) {
+  const dLat = lat1 - lat2;
+  const dLng = lng1 - lng2;
+  return Math.sqrt(dLat * dLat + dLng * dLng) * 111000;
+}
+
+// ==================== 全局单例 ====================
+// 多组件(Web端Glasses + 移动端AppMobile)共享同一个定位状态,
+// 避免重复发起定位 + 重复watchPosition导致地图跳动
+let globalLocation = null;
+let globalListeners = new Set();
+let globalInitStarted = false;
+let globalWatchStarted = false;
+const lastPosRef = { lat: null, lng: null, accuracy: Infinity };
+const preciseLocatedRef = { value: false };
+
+function notifyListeners() {
+  globalListeners.forEach(fn => fn(globalLocation));
+}
+
+function setGlobalLocation(pos) {
+  globalLocation = pos;
+  notifyListeners();
+}
+
+/**
+ * 应用位置(带稳定性过滤,防止跳动)
+ * 规则:
+ * 1. 第一次定位直接应用
+ * 2. 已有精确定位(accuracy < 1000m)后,不再接受IP级(accuracy > 5000m)结果
+ * 3. 新位置与旧位置移动距离 > 20米 才更新(防止GPS抖动)
+ * 4. 新位置精度必须优于旧位置,或同级别但移动了才更新
+ */
+async function applyLocation(pos) {
+  // 第一次定位直接应用
+  if (lastPosRef.lat === null) {
+    lastPosRef.lat = pos.lat;
+    lastPosRef.lng = pos.lng;
+    lastPosRef.accuracy = pos.accuracy;
+    if (pos.accuracy < 1000) preciseLocatedRef.value = true;
+
+    setGlobalLocation({
       lat: pos.lat,
       lng: pos.lng,
       accuracy: pos.accuracy,
@@ -153,219 +163,195 @@ function useLocationSetter(setLocation, lastLatRef, lastLngRef) {
       province: pos.province || '',
       city: pos.city || ''
     });
-    lastLatRef.current = pos.lat;
-    lastLngRef.current = pos.lng;
 
-    // 异步调用后端逆地理编码获取真实地址(含省市区)
+    // 异步逆地理编码
     try {
       const geo = await reverseGeocode(pos.lat, pos.lng);
-      if (geo) {
-        setLocation({
+      if (geo && lastPosRef.lat === pos.lat) {
+        setGlobalLocation({
           lat: pos.lat,
           lng: pos.lng,
           accuracy: pos.accuracy,
-          source: pos.source,
           address: geo.address,
           province: geo.province,
           city: geo.city,
           district: geo.district,
-          weather: geo.weather
+          weather: geo.weather,
+          source: pos.source
         });
-        console.log('[Geo] 逆地理编码成功:', geo.province, geo.city, geo.district, geo.address);
       }
     } catch (err) {
-      console.warn('[Geo] 逆地理编码失败,保持坐标地址:', err.message);
+      console.warn('[Geo] 逆地理编码失败:', err.message);
     }
-  }, [setLocation]);
+    return;
+  }
+
+  // 已有精确定位后,拒绝IP级结果(防止跳回城市中心)
+  if (preciseLocatedRef.value && pos.accuracy > 5000) {
+    return;
+  }
+
+  // 移动距离过滤: <20米视为抖动(防止地图跳动)
+  const moved = distance(pos.lat, pos.lng, lastPosRef.lat, lastPosRef.lng);
+  if (moved < 20) {
+    // 即使没移动,如果精度显著更好也更新精度信息
+    if (pos.accuracy < lastPosRef.accuracy * 0.5) {
+      lastPosRef.accuracy = pos.accuracy;
+      setGlobalLocation(prev => prev ? { ...prev, accuracy: pos.accuracy } : null);
+    }
+    return;
+  }
+
+  // 移动了 > 20米,接受新位置
+  lastPosRef.lat = pos.lat;
+  lastPosRef.lng = pos.lng;
+  lastPosRef.accuracy = pos.accuracy;
+  if (pos.accuracy < 1000) preciseLocatedRef.value = true;
+
+  setGlobalLocation(prev => prev ? {
+    ...prev,
+    lat: pos.lat,
+    lng: pos.lng,
+    accuracy: pos.accuracy,
+    source: pos.source
+  } : {
+    lat: pos.lat,
+    lng: pos.lng,
+    accuracy: pos.accuracy,
+    address: `${pos.lat.toFixed(5)},${pos.lng.toFixed(5)}`,
+    source: pos.source
+  });
 }
 
 /**
- * 地理位置 Hook
- *
- * 定位策略(精度优先,并行竞速):
- * 1. 同时发起: AMap.Geolocation(GPS/基站) + 浏览器原生GPS + AMap.CitySearch(IP)
- * 2. IP最快返回(1-2秒,城市级±10km) → 立即应用作为初始位置
- * 3. GPS成功返回(5-10秒,街道级±50m) → 替换为精确位置
- * 4. 浏览器GPS作为补充(精度可能更高)
- * 5. 持续watchPosition追踪移动
+ * 初始定位(并行竞速,只接受最佳结果)
+ */
+async function initLocation() {
+  if (globalInitStarted) return;
+  globalInitStarted = true;
+
+  const tasks = [];
+
+  // Task 1: AMap.Geolocation (GPS/基站, 最精确)
+  tasks.push(
+    locateByAmapGeo()
+      .then(async (pos) => {
+        console.log('[Geo] AMap GPS定位成功:', pos);
+        await applyLocation(pos);
+      })
+      .catch(err => console.warn('[Geo] AMap GPS失败:', err.message))
+  );
+
+  // Task 2: 浏览器原生GPS
+  tasks.push(
+    locateByBrowserHigh()
+      .then(async (pos) => {
+        console.log('[Geo] 浏览器GPS定位成功:', pos);
+        await applyLocation(pos);
+      })
+      .catch(err => console.warn('[Geo] 浏览器GPS失败:', err.message))
+  );
+
+  // Task 3: CitySearch IP定位(快速兜底)
+  tasks.push(
+    locateByCitySearch()
+      .then(async (pos) => {
+        console.log('[Geo] IP定位成功:', pos);
+        await applyLocation(pos);
+      })
+      .catch(err => console.warn('[Geo] IP定位失败:', err.message))
+  );
+
+  await Promise.allSettled(tasks);
+}
+
+/**
+ * 启动持续监听(只启动一次,全局共享)
+ */
+function startWatch() {
+  if (globalWatchStarted) return;
+  globalWatchStarted = true;
+
+  // AMap.Geolocation watchPosition
+  loadAmapSDK()
+    .then((AMap) => {
+      if (!AMap.Geolocation) return;
+      const geo = new AMap.Geolocation({
+        enableHighAccuracy: true,
+        timeout: 20000,
+        maximumAge: 0,
+        convert: true
+      });
+      geo.watchPosition((status, result) => {
+        if (status === 'complete') {
+          const lat = result.position.getLat();
+          const lng = result.position.getLng();
+          const accuracy = result.accuracy || 50;
+          applyLocation({ lat, lng, accuracy, source: 'amap-watch' });
+        }
+      });
+    })
+    .catch(() => {});
+
+  // 浏览器原生watchPosition
+  if (navigator.geolocation) {
+    navigator.geolocation.watchPosition(
+      (pos) => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        const accuracy = pos.coords.accuracy || 100;
+        applyLocation({ lat, lng, accuracy, source: 'browser-watch' });
+      },
+      () => {},
+      { enableHighAccuracy: true, timeout: 30000, maximumAge: 5000 }
+    );
+  }
+}
+
+/**
+ * 地理位置 Hook (全局单例版)
+ * - 多组件共享同一个定位状态,不会重复发起定位
+ * - 20米移动阈值过滤GPS抖动,防止地图跳动
+ * - 精确定位后拒绝IP级结果,防止跳回城市中心
  */
 export function useGeolocation() {
-  const [location, setLocation] = useState(null);
+  const [location, setLocalLocation] = useState(globalLocation);
   const [error, setError] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const watchIdRef = useRef(null);
-  const watchGeoRef = useRef(null);
-  const browserWatchIdRef = useRef(null);
-  const lastLatRef = useRef(null);
-  const lastLngRef = useRef(null);
-  const preciseLocatedRef = useRef(false);
-  const bestAccuracyRef = useRef(Infinity); // 记录最佳精度,只接受更精确的更新
+  const [loading, setLoading] = useState(!globalLocation);
 
-  const applyLocation = useLocationSetter(setLocation, lastLatRef, lastLngRef);
-
-  const applyIfBetter = useCallback(async (pos) => {
-    // 只接受精度更高的定位结果
-    if (pos.accuracy < bestAccuracyRef.current) {
-      bestAccuracyRef.current = pos.accuracy;
-      await applyLocation(pos);
-      if (pos.accuracy < 1000) {
-        preciseLocatedRef.current = true;
-      }
-    }
-  }, [applyLocation]);
-
-  const update = useCallback(() => {
-    if (loading) return;
-    setLoading(true);
-    setError(null);
-    bestAccuracyRef.current = Infinity;
-
-    (async () => {
-      // 策略: IP定位先返回作为初始位置, GPS在后台异步替换为精确位置
-      const tasks = [];
-
-      // Task 1: AMap.Geolocation (GPS/基站, 5-10秒, ±50m)
-      tasks.push(
-        locateByAmapGeo()
-          .then(async (pos) => {
-            console.log('[Geo] AMap GPS定位成功:', pos);
-            await applyIfBetter(pos);
-          })
-          .catch(err => console.warn('[Geo] AMap GPS失败:', err.message))
-      );
-
-      // Task 2: 浏览器原生高精度GPS (移动端最佳精度)
-      tasks.push(
-        locateByBrowserHigh()
-          .then(async (pos) => {
-            console.log('[Geo] 浏览器GPS定位成功:', pos);
-            await applyIfBetter(pos);
-          })
-          .catch(err => console.warn('[Geo] 浏览器GPS失败:', err.message))
-      );
-
-      // Task 3: CitySearch IP定位 (1-2秒, ±10km, 快速兜底)
-      tasks.push(
-        locateByCitySearch()
-          .then(async (pos) => {
-            console.log('[Geo] IP定位成功:', pos);
-            await applyIfBetter(pos);
-          })
-          .catch(err => console.warn('[Geo] IP定位失败:', err.message))
-      );
-
-      // 等待所有任务完成(最快1-2秒,最慢10秒)
-      await Promise.allSettled(tasks);
-
-      // 如果所有方式都失败,尝试低精度浏览器定位
-      if (!preciseLocatedRef.current && !lastLatRef.current) {
-        try {
-          const pos = await locateByBrowser();
-          console.log('[Geo] 浏览器低精度定位:', pos);
-          await applyLocation(pos);
-        } catch (err) {
-          console.error('[Geo] 所有定位方式均失败:', err.message);
-          setError(err.message);
-        }
-      }
-      setLoading(false);
-    })();
-  }, [loading, applyLocation, applyIfBetter]);
-
-  // 持续监听位置变化(双源watchPosition,提升移动场景精度)
+  // 订阅全局位置更新
   useEffect(() => {
-    update();
+    const listener = (pos) => {
+      setLocalLocation(pos);
+      if (pos) setLoading(false);
+    };
+    globalListeners.add(listener);
 
-    let cancelled = false;
-
-    // Source 1: AMap.Geolocation watchPosition
-    loadAmapSDK()
-      .then((AMap) => {
-        if (cancelled || !AMap.Geolocation) return;
-        const geo = new AMap.Geolocation({
-          enableHighAccuracy: true,
-          timeout: 20000,
-          maximumAge: 0,
-          convert: true
-        });
-        watchGeoRef.current = geo;
-        watchIdRef.current = geo.watchPosition((status, result) => {
-          if (status === 'complete') {
-            const lat = result.position.getLat();
-            const lng = result.position.getLng();
-            const accuracy = result.accuracy || 50;
-            // 抖动过滤: 移动距离<5米视为抖动
-            if (lastLatRef.current !== null) {
-              const dLat = lat - lastLatRef.current;
-              const dLng = lng - lastLngRef.current;
-              const moved = Math.sqrt(dLat * dLat + dLng * dLng) * 111000;
-              if (moved < 5) return;
-            }
-            lastLatRef.current = lat;
-            lastLngRef.current = lng;
-            preciseLocatedRef.current = true;
-            bestAccuracyRef.current = Math.min(bestAccuracyRef.current, accuracy);
-            setLocation((prev) => prev ? ({
-              ...prev,
-              lat, lng,
-              accuracy,
-              source: 'amap-watch'
-            }) : null);
-          }
-        });
-      })
-      .catch(() => {});
-
-    // Source 2: 浏览器原生watchPosition (移动端GPS精度更高)
-    if (navigator.geolocation) {
-      browserWatchIdRef.current = navigator.geolocation.watchPosition(
-        (pos) => {
-          if (cancelled) return;
-          const lat = pos.coords.latitude;
-          const lng = pos.coords.longitude;
-          const accuracy = pos.coords.accuracy || 100;
-          // 抖动过滤
-          if (lastLatRef.current !== null) {
-            const dLat = lat - lastLatRef.current;
-            const dLng = lng - lastLngRef.current;
-            const moved = Math.sqrt(dLat * dLat + dLng * dLng) * 111000;
-            if (moved < 5) return;
-          }
-          lastLatRef.current = lat;
-          lastLngRef.current = lng;
-          preciseLocatedRef.current = true;
-          // 只接受更高精度的更新
-          if (accuracy < bestAccuracyRef.current) {
-            bestAccuracyRef.current = accuracy;
-            setLocation((prev) => prev ? ({
-              ...prev,
-              lat, lng,
-              accuracy,
-              source: 'browser-watch'
-            }) : null);
-            console.log('[Geo] 浏览器watch更新:', lat.toFixed(5), lng.toFixed(5), '±' + accuracy.toFixed(0) + 'm');
-          }
-        },
-        (err) => {
-          // 静默处理watch错误
-        },
-        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
-      );
+    // 首次挂载: 如果全局还没开始定位,启动
+    if (!globalInitStarted) {
+      setLoading(true);
+      initLocation().finally(() => setLoading(false));
     }
+
+    // 启动持续监听
+    startWatch();
 
     return () => {
-      cancelled = true;
-      if (watchIdRef.current && watchGeoRef.current) {
-        try { watchGeoRef.current.clearWatch(watchIdRef.current); } catch (e) {}
-      }
-      if (browserWatchIdRef.current) {
-        try { navigator.geolocation.clearWatch(browserWatchIdRef.current); } catch (e) {}
-      }
-      watchIdRef.current = null;
-      watchGeoRef.current = null;
-      browserWatchIdRef.current = null;
+      globalListeners.delete(listener);
     };
-  }, [update]);
+  }, []);
+
+  // 手动刷新定位
+  const update = useCallback(() => {
+    setLoading(true);
+    // 重置状态,允许重新定位
+    lastPosRef.lat = null;
+    lastPosRef.lng = null;
+    lastPosRef.accuracy = Infinity;
+    preciseLocatedRef.value = false;
+    globalInitStarted = false;
+    initLocation().finally(() => setLoading(false));
+  }, []);
 
   return { location, error, loading, update };
 }
