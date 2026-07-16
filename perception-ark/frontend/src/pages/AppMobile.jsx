@@ -404,7 +404,11 @@ export default function AppMobile() {
             setSubtitle(text);
           }
         } else {
-          console.warn('[Mode] API返回异常:', res);
+          // API返回null或异常: 静默跳过本轮,不打扰用户(连续分析中可能偶发空结果)
+          if (!res?.success) {
+            console.warn('[Mode] API调用失败:', res);
+          }
+          // result为null时静默处理,等待下一轮分析
         }
       } catch (err) {
         console.error('[Mode] 分析失败:', err.message);
