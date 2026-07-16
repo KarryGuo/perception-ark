@@ -632,36 +632,7 @@ export default function AppMobile() {
           </div>
         )}
 
-        {/* 识别页 - 寻物目标输入浮层(全屏遮罩) */}
-        {showFindInput && (
-          <div className="am-find-panel" onClick={() => { setShowFindInput(false); setFindTarget(''); speak('已取消'); }}>
-            <div className="am-find-card" onClick={e => e.stopPropagation()}>
-              <div className="am-find-title">🔍 寻物模式</div>
-              <div className="am-find-hint">请说出或输入要找的物品，如：钥匙、手机、水杯</div>
-              <div className="am-find-input-row">
-                <input
-                  type="text"
-                  className="am-find-input"
-                  placeholder="输入物品名称..."
-                  value={findTarget}
-                  onChange={e => setFindTarget(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter' && findTarget.trim()) startFindMode(findTarget); }}
-                  autoFocus
-                />
-                <button
-                  className={`am-find-voice ${asr.listening ? 'listening' : ''}`}
-                  onMouseDown={handlePressStart} onMouseUp={handlePressEnd}
-                  onTouchStart={handlePressStart} onTouchEnd={handlePressEnd}
-                  title="按住说出物品名"
-                >🎤</button>
-              </div>
-              <div className="am-find-actions">
-                <button className="am-find-cancel" onClick={() => { setShowFindInput(false); setFindTarget(''); speak('已取消'); }}>取消</button>
-                <button className="am-find-confirm" onClick={() => startFindMode(findTarget)}>开始寻找</button>
-              </div>
-            </div>
-          </div>
-        )}
+        {/* 识别页 - 寻物目标输入浮层已移至底部(am-app直接子元素,避免z-index层级问题) */}
 
         {/* 导航页 - 历史搜索浮层 */}
         {activeTab === 'navigate' && showNavHistory && navHistory.length > 0 && (
@@ -823,6 +794,37 @@ export default function AppMobile() {
           </div>
         )}
       </div>
+
+      {/* ===== 寻物目标输入浮层(全屏遮罩,放在am-app直接子元素确保z-index最高) ===== */}
+      {showFindInput && (
+        <div className="am-find-panel" onClick={() => { setShowFindInput(false); setFindTarget(''); speak('已取消'); }}>
+          <div className="am-find-card" onClick={e => e.stopPropagation()}>
+            <div className="am-find-title">🔍 寻物模式</div>
+            <div className="am-find-hint">请说出或输入要找的物品，如：钥匙、手机、水杯</div>
+            <div className="am-find-input-row">
+              <input
+                type="text"
+                className="am-find-input"
+                placeholder="输入物品名称..."
+                value={findTarget}
+                onChange={e => setFindTarget(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter' && findTarget.trim()) startFindMode(findTarget); }}
+                autoFocus
+              />
+              <button
+                className={`am-find-voice ${asr.listening ? 'listening' : ''}`}
+                onMouseDown={handlePressStart} onMouseUp={handlePressEnd}
+                onTouchStart={handlePressStart} onTouchEnd={handlePressEnd}
+                title="按住说出物品名"
+              >🎤</button>
+            </div>
+            <div className="am-find-actions">
+              <button className="am-find-cancel" onClick={() => { setShowFindInput(false); setFindTarget(''); speak('已取消'); }}>取消</button>
+              <button className="am-find-confirm" onClick={() => startFindMode(findTarget)}>开始寻找</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Toast */}
       {toast && <div className="am-toast">{toast}</div>}
