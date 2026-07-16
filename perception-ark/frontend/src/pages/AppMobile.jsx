@@ -40,7 +40,7 @@ export default function AppMobile() {
   const [ttsRate, setTtsRate] = useState(() => parseFloat(localStorage.getItem('ark_tts_rate')) || 0.95);
   const [navInputMode, setNavInputMode] = useState(false); // 导航页: false=按住说话, true=文字输入
 
-  const { speak, stop: stopSpeak, setVoiceByName, voice: currentVoice } = useSpeechSynthesis();
+  const { speak, stop: stopSpeak, speaking: ttsSpeaking, setVoiceByName, voice: currentVoice } = useSpeechSynthesis();
   const asr = useSpeechRecognition();
   const camera = useCamera();
   const { location } = useGeolocation();
@@ -48,6 +48,7 @@ export default function AppMobile() {
   const messagesEndRef = useRef(null);
   const isPressingRef = useRef(null);
   const modeIntervalRef = useRef(null); // 连续分析定时器
+  const isProcessingRef = useRef(false); // 命令处理中标志(防止TTS音频被ASR重新拾取导致循环)
 
   // 摄像头强制开启
   useEffect(() => {
@@ -177,11 +178,14 @@ export default function AppMobile() {
 
   // ===== 按住说话 =====
   const handlePressStart = useCallback(() => {
+    // 先停止TTS播报,防止麦克风拾取TTS音频形成回声循环
+    stopSpeak();
+    isProcessingRef.current = false;
     isPressingRef.current = true;
     if (!asr.supported) { showToast('当前浏览器不支持语音识别'); return; }
     asr.start();
     setSubtitle('正在聆听...');
-  }, [asr, showToast]);
+  }, [asr, showToast, stopSpeak]);
 
   const handlePressEnd = useCallback(() => {
     isPressingRef.current = false;
@@ -191,15 +195,23 @@ export default function AppMobile() {
 
   useEffect(() => {
     if (!asr.transcript || isPressingRef.current === null) return;
+    // 防护1: TTS正在播报时不处理ASR结果(避免回声循环)
+    if (ttsSpeaking) return;
+    // 防护2: 正在处理上一条命令时不处理新结果
+    if (isProcessingRef.current) return;
     const text = asr.transcript.trim();
     if (!text) return;
+    // 立即清空transcript,防止重复处理
+    asr.reset();
     if (/打开识别|识别模式/.test(text)) { switchTab('recognize'); return; }
     if (/打开导航|导航模式/.test(text)) { switchTab('navigate'); return; }
     if (/紧急呼救|SOS|救命/.test(text)) { switchTab('sos'); return; }
     addMessage('user', text);
+    // 防护3: 标记处理中,阻止后续ASR结果触发
+    isProcessingRef.current = true;
     if (activeTab === 'recognize') handleRecognizeCommand(text);
     else if (activeTab === 'navigate') handleNavigateCommand(text);
-  }, [asr.transcript]);
+  }, [asr.transcript, ttsSpeaking]);
 
   // ===== 识别页功能 =====
   const captureImage = useCallback(async () => {
@@ -277,7 +289,7 @@ export default function AppMobile() {
       addMessage('assistant', errText);
       speak(errText);
       setSubtitle('');
-    } finally { setBusy(false); }
+    } finally { setBusy(false); isProcessingRef.current = false; }
   }, [captureImage, addMessage, speak, location, callWithRetry]);
 
   // ===== 模式切换(开启/关闭连续分析) =====
@@ -455,7 +467,7 @@ export default function AppMobile() {
       const errText = isNetworkErr ? '网络连接异常，服务可能正在启动中，请稍后再试。' : `导航失败: ${err.message}`;
       addMessage('assistant', errText); speak(errText);
     }
-    finally { setBusy(false); }
+    finally { setBusy(false); isProcessingRef.current = false; }
   }, [location, addMessage, speak, callWithRetry]);
 
   // ===== 文本输入提交(必须在handleRecognizeCommand/handleNavigateCommand之后定义) =====
