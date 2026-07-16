@@ -633,21 +633,28 @@ export default function AppMobile() {
               </button>
             </div>
 
-            {/* 统一输入框: 按住说话 / 文字输入 切换 */}
+            {/* 统一输入框: 左侧切换icon + 右侧按住说话/文本输入, 同一圆角矩形 */}
             <div className="am-input-box">
+              {/* 左侧: 切换icon (键盘↔麦克风) */}
+              <button
+                className="am-input-box-toggle"
+                onClick={() => { vibrateClick(); setShowTextInput(!showTextInput); }}
+                title={showTextInput ? '切回语音' : '切到文字'}
+              >
+                {showTextInput ? '🎤' : '⌨️'}
+              </button>
+
+              {/* 右侧: 按住说话 / 文本输入框 */}
               {showTextInput ? (
-                <>
-                  <input
-                    type="text"
-                    className="am-input-box-field"
-                    value={textInput}
-                    onChange={e => setTextInput(e.target.value)}
-                    placeholder="输入文字指令..."
-                    onKeyDown={e => { if (e.key === 'Enter' && textInput.trim()) { handleTextInputSubmit(textInput.trim()); setTextInput(''); } }}
-                    autoFocus
-                  />
-                  <button className="am-input-box-send" onClick={() => { if (textInput.trim()) { handleTextInputSubmit(textInput.trim()); setTextInput(''); } }}>发送</button>
-                </>
+                <input
+                  type="text"
+                  className="am-input-box-field"
+                  value={textInput}
+                  onChange={e => setTextInput(e.target.value)}
+                  placeholder="输入文字指令..."
+                  onKeyDown={e => { if (e.key === 'Enter' && textInput.trim()) { handleTextInputSubmit(textInput.trim()); setTextInput(''); } }}
+                  autoFocus
+                />
               ) : (
                 <button
                   className={`am-input-box-press ${asr.listening ? 'listening' : ''}`}
@@ -657,9 +664,6 @@ export default function AppMobile() {
                   <span className="icon">🎤</span><span>{asr.listening ? '松开发送' : '按住说话'}</span>
                 </button>
               )}
-              <button className="am-input-box-toggle" onClick={() => setShowTextInput(!showTextInput)} title={showTextInput ? '语音输入' : '文字输入'}>
-                {showTextInput ? '🎤' : '⌨️'}
-              </button>
             </div>
           </div>
         )}
