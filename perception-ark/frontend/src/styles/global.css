@@ -1667,7 +1667,7 @@ input:focus-visible,
 }
 
 /* 统一输入框: 按住说话 / 文字输入 切换 */
-/* 识别页 - 统一圆角矩形输入框: 左切换icon + 右按住说话/文本输入 */
+/* 识别页 - 统一圆角矩形输入框: 左按住说话/文本输入 + 右切换icon */
 .am-input-box {
   display: flex;
   align-items: center;
@@ -1676,36 +1676,39 @@ input:focus-visible,
   -webkit-backdrop-filter: blur(20px);
   border: 1px solid rgba(255,255,255,0.12);
   border-radius: 100px;
-  padding: 5px 6px;
-  gap: 4px;
-  min-height: 56px;
+  padding: 6px 6px 6px 18px;
+  gap: 8px;
+  height: 56px;
+  box-sizing: border-box;
+  width: 100%;
 }
-/* 左侧: 切换icon按钮 (无缝衔接, 与大圆角矩形融为一体) */
+/* 右侧: 切换icon按钮 (垂直居中对齐) */
 .am-input-box-toggle {
-  width: 46px;
-  height: 46px;
+  width: 44px;
+  height: 44px;
   flex-shrink: 0;
   border: none;
   background: rgba(255,255,255,0.08);
   border-radius: 50%;
   color: rgba(255,255,255,0.85);
-  font-size: 1.15rem;
+  font-size: 1.1rem;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   transition: all .2s;
   font-family: inherit;
+  box-sizing: border-box;
 }
 .am-input-box-toggle:hover {
   background: rgba(255,255,255,0.16);
 }
 .am-input-box-toggle:active { transform: scale(.92); }
 
-/* 右侧: 按住说话按钮 (占据剩余空间, 无独立边框) */
+/* 左侧: 按住说话按钮 (占据剩余空间, 无独立边框) */
 .am-input-box-press {
   flex: 1;
-  padding: 13px 20px;
+  min-width: 0;
   border: none;
   background: transparent;
   color: rgba(255,255,255,0.85);
@@ -1721,7 +1724,8 @@ input:focus-visible,
   user-select: none;
   -webkit-user-select: none;
   -webkit-touch-callout: none;
-  min-height: 46px;
+  height: 44px;
+  box-sizing: border-box;
 }
 .am-input-box-press .icon { font-size: 1.1rem; }
 .am-input-box-press:active, .am-input-box-press.listening {
@@ -1735,17 +1739,19 @@ input:focus-visible,
   50% { opacity: 1; }
 }
 
-/* 右侧: 文字输入框 (占据剩余空间, 无独立边框, 与大圆角矩形融为一体) */
+/* 左侧: 文字输入框 (占据剩余空间, 透明背景与容器融为一体) */
 .am-input-box-field {
   flex: 1;
-  padding: 13px 16px;
+  min-width: 0;
+  padding: 0 8px;
   background: transparent;
   border: none;
-  color: var(--ink);
+  color: rgba(255,255,255,0.9);
   font-size: .88rem;
   font-family: inherit;
   outline: none;
-  min-height: 46px;
+  height: 44px;
+  box-sizing: border-box;
 }
 .am-input-box-field::placeholder { color: rgba(255,255,255,0.4); }
 .am-input-box:focus-within {
@@ -2365,10 +2371,10 @@ input:focus-visible,
   .am-quick-icon .label { font-size: .62rem; }
 
   /* 统一输入框更紧凑 */
-  .am-input-box { padding: 4px 5px; min-height: 50px; }
+  .am-input-box { padding: 5px 5px 5px 14px; height: 50px; }
   .am-input-box-toggle { width: 40px; height: 40px; font-size: 1rem; }
-  .am-input-box-press { padding: 11px 14px; font-size: .82rem; min-height: 40px; }
-  .am-input-box-field { padding: 11px 12px; font-size: .82rem; min-height: 40px; }
+  .am-input-box-press { font-size: .82rem; height: 40px; }
+  .am-input-box-field { padding: 0 6px; font-size: .82rem; height: 40px; }
 
   /* 导航页输入框 */
   .am-nav-press-btn { padding: 13px 14px; font-size: .82rem; min-height: 48px; }
@@ -2409,8 +2415,8 @@ input:focus-visible,
   .am-quick-icon .label { font-size: .58rem; }
   .am-quick-icon .icon { font-size: 1rem; }
   .am-quick-row { gap: 4px; }
-  .am-input-box-press { font-size: .76rem; padding: 10px 10px; }
-  .am-input-box-field { font-size: .76rem; padding: 10px 10px; }
+  .am-input-box-press { font-size: .76rem; }
+  .am-input-box-field { font-size: .76rem; }
   .am-top-tab { padding: 8px 12px; font-size: .76rem; }
   .am-msg-bubble { font-size: .72rem; padding: 7px 10px; }
 }
@@ -2420,10 +2426,10 @@ input:focus-visible,
   .am-quick-icon { padding: 12px 6px; }
   .am-quick-icon .icon { font-size: 1.35rem; }
   .am-quick-icon .label { font-size: .74rem; }
-  .am-input-box { min-height: 60px; }
+  .am-input-box { height: 60px; }
   .am-input-box-toggle { width: 50px; height: 50px; font-size: 1.25rem; }
-  .am-input-box-press { padding: 15px 22px; font-size: .92rem; min-height: 50px; }
-  .am-input-box-field { padding: 15px 18px; font-size: .92rem; min-height: 50px; }
+  .am-input-box-press { font-size: .92rem; height: 50px; }
+  .am-input-box-field { padding: 0 10px; font-size: .92rem; height: 50px; }
   .am-msg-list { max-height: 180px; }
   .am-msg-bubble { font-size: .85rem; padding: 10px 14px; }
 }
@@ -2435,9 +2441,9 @@ input:focus-visible,
   .am-quick-icon { padding: 6px 4px; }
   .am-quick-icon .icon { font-size: 1rem; }
   .am-quick-icon .label { font-size: .6rem; }
-  .am-input-box { min-height: 44px; padding: 3px 5px; }
+  .am-input-box { height: 44px; padding: 3px 5px 3px 14px; }
   .am-input-box-toggle { width: 38px; height: 38px; font-size: 1rem; }
-  .am-input-box-press { padding: 8px 14px; font-size: .8rem; min-height: 38px; }
-  .am-input-box-field { padding: 8px 12px; font-size: .8rem; min-height: 38px; }
+  .am-input-box-press { font-size: .8rem; height: 38px; }
+  .am-input-box-field { padding: 0 8px; font-size: .8rem; height: 38px; }
   .am-bottom-zone { padding: 0 12px calc(env(safe-area-inset-bottom) + 8px); gap: 6px; }
 }
