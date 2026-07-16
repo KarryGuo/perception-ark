@@ -164,7 +164,7 @@ export async function understandIntent(text, sessionId) {
 - ocr/face/scene/safety/memory/fall: entity为null,reply简短告知正在执行
 - chat: 普通对话,entity为null,reply为自然温暖回复(50字以内)
 - 只返回JSON,不要任何其他文字`,
-      { timeout: 20000, maxTokens: 200, temperature: 0.5 }
+      { timeout: 10000, maxTokens: 200, temperature: 0.5 }
     );
 
     const match = result.match(/\{[\s\S]+\}/);

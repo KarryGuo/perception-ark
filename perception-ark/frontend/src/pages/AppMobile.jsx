@@ -204,6 +204,20 @@ export default function AppMobile() {
     return await camera.capture();
   }, [camera, showToast, speak]);
 
+  // ===== 带重试的API调用(应对Render免费版冷启动/超时) =====
+  const callWithRetry = useCallback(async (fn, retries = 2) => {
+    for (let i = 0; i <= retries; i++) {
+      try {
+        return await fn();
+      } catch (err) {
+        if (i === retries) throw err;
+        // 首次失败可能是冷启动,等待2秒后重试
+        if (i === 0) setSubtitle('服务启动中，请稍候...');
+        await new Promise(r => setTimeout(r, 2000));
+      }
+    }
+  }, []);
+
   const handleRecognizeCommand = useCallback(async (text) => {
     setBusy(true);
     setSubtitle('正在思考...');
@@ -215,7 +229,7 @@ export default function AppMobile() {
         if (!img) {
           resultText = '摄像头未开启，无法分析前方场景，请先开启摄像头。';
         } else {
-          const res = await api.scene(img, '请用一段话描述当前场景,包括前方主要物体及大致方位和距离(如"左前方1米有桌椅")。专为视障者设计,50字以内。');
+          const res = await callWithRetry(() => api.scene(img, '请用一段话描述当前场景,包括前方主要物体及大致方位和距离(如"左前方1米有桌椅")。专为视障者设计,50字以内。'));
           if (res?.success && res.result) resultText = String(res.result);
         }
       } else if (/阅读|文字|读/.test(text)) {
@@ -223,7 +237,7 @@ export default function AppMobile() {
         if (!img) {
           resultText = '摄像头未开启，无法识别文字。';
         } else {
-          const res = await api.social(img, 'ocr');
+          const res = await callWithRetry(() => api.social(img, 'ocr'));
           if (res?.success && res.result) resultText = String(res.result);
         }
       } else if (/红绿灯|红灯|绿灯|信号灯/.test(text)) {
@@ -231,13 +245,13 @@ export default function AppMobile() {
         if (!img) {
           resultText = '摄像头未开启，无法识别红绿灯。';
         } else {
-          const res = await api.safety(img, 'scan');
+          const res = await callWithRetry(() => api.safety(img, 'scan'));
           if (res?.success && res.result) resultText = String(res.result);
         }
       } else {
         // 通用问答 - 调用小舟智能助手(意图识别+多轮对话,支持纯文字+可选图片)
         const loc = location ? { lat: location.lat, lng: location.lng } : null;
-        const res = await api.assistantChat(text, { imageFile: img, location: loc });
+        const res = await callWithRetry(() => api.assistantChat(text, { imageFile: img, location: loc }));
         if (res?.success && res.reply) resultText = res.reply;
       }
       // 统一处理回复
@@ -252,12 +266,16 @@ export default function AppMobile() {
         setSubtitle(fallback);
       }
     } catch (err) {
-      const errText = `处理失败: ${err.message}`;
+      // 网络错误/超时给出友好提示
+      const isNetworkErr = /ERR_HTTP2|NETWORK|Failed to fetch|fetch/i.test(err.message);
+      const errText = isNetworkErr
+        ? '网络连接异常，服务可能正在启动中，请稍后再试。'
+        : `处理失败: ${err.message}`;
       addMessage('assistant', errText);
       speak(errText);
       setSubtitle('');
     } finally { setBusy(false); }
-  }, [captureImage, addMessage, speak, location]);
+  }, [captureImage, addMessage, speak, location, callWithRetry]);
 
   // ===== 模式切换(开启/关闭连续分析) =====
   const modeNames = { analyze: '快速分析', travel: '出行模式', read: '阅读文字', traffic: '红绿灯识别', find: '寻物模式' };
@@ -419,15 +437,19 @@ export default function AppMobile() {
   const handleNavigateCommand = useCallback(async (text) => {
     setBusy(true);
     try {
-      const res = await api.navigate(text, location?.lat, location?.lng);
+      const res = await callWithRetry(() => api.navigate(text, location?.lat, location?.lng));
       if (res?.success && res.result) {
         const resultText = typeof res.result === 'string' ? res.result : JSON.stringify(res.result);
         addMessage('assistant', resultText);
         speak(resultText);
       }
-    } catch (err) { addMessage('assistant', `导航失败: ${err.message}`); speak(`导航失败: ${err.message}`); }
+    } catch (err) {
+      const isNetworkErr = /ERR_HTTP2|NETWORK|Failed to fetch|fetch/i.test(err.message);
+      const errText = isNetworkErr ? '网络连接异常，服务可能正在启动中，请稍后再试。' : `导航失败: ${err.message}`;
+      addMessage('assistant', errText); speak(errText);
+    }
     finally { setBusy(false); }
-  }, [location, addMessage, speak]);
+  }, [location, addMessage, speak, callWithRetry]);
 
   // ===== 文本输入提交(必须在handleRecognizeCommand/handleNavigateCommand之后定义) =====
   const handleTextInputSubmit = useCallback((text) => {
