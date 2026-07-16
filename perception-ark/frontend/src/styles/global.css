@@ -1436,27 +1436,84 @@ input:focus-visible,
   flex-direction: column;
 }
 .am-content-layer > * { pointer-events: auto; }
+
+/* 聊天消息项: 头像+内容, 左右分栏 */
 .am-msg {
   display: flex;
-  flex-direction: column;
-  max-width: 82%;
+  gap: 8px;
+  max-width: 88%;
+  align-items: flex-start;
 }
-.am-msg.user { align-self: flex-end; align-items: flex-end; }
-.am-msg.assistant { align-self: flex-start; align-items: flex-start; }
+.am-msg.user {
+  align-self: flex-end;
+  flex-direction: row-reverse;
+}
+.am-msg.assistant {
+  align-self: flex-start;
+}
+
+/* 头像 */
+.am-msg-avatar {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.1);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  border: 1px solid rgba(255,255,255,0.08);
+}
+.am-msg.user .am-msg-avatar {
+  background: rgba(0,255,163,0.15);
+  border-color: rgba(0,255,163,0.3);
+}
+.am-msg.assistant .am-msg-avatar {
+  background: rgba(123,97,255,0.15);
+  border-color: rgba(123,97,255,0.3);
+}
+
+/* 消息内容区(时间+气泡) */
+.am-msg-content {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  max-width: calc(100% - 40px);
+}
+.am-msg.user .am-msg-content { align-items: flex-end; }
+.am-msg.assistant .am-msg-content { align-items: flex-start; }
+
+/* 时间戳 */
+.am-msg-time {
+  font-size: .62rem;
+  color: rgba(255,255,255,0.4);
+  font-family: 'Space Grotesk', monospace;
+  padding: 0 4px;
+}
+
+/* 消息气泡 */
 .am-msg-bubble {
-  padding: 9px 13px;
+  padding: 9px 14px;
   border-radius: 16px;
-  font-size: .84rem;
+  font-size: .82rem;
   line-height: 1.5;
   word-break: break-word;
+  overflow-wrap: break-word;
 }
 .am-msg.user .am-msg-bubble {
-  color: rgba(0,255,163,0.9);
+  background: rgba(0,255,163,0.15);
+  border: 1px solid rgba(0,255,163,0.25);
+  color: rgba(220,255,240,0.95);
   border-bottom-right-radius: 5px;
-  text-align: right;
 }
 .am-msg.assistant .am-msg-bubble {
-  color: rgba(255,255,255,0.92);
+  background: rgba(123,97,255,0.12);
+  border: 1px solid rgba(123,97,255,0.22);
+  color: rgba(235,235,255,0.95);
   border-bottom-left-radius: 5px;
 }
 
@@ -1622,12 +1679,12 @@ input:focus-visible,
 
 /* 识别记录列表(按钮上方) */
 .am-msg-list {
-  max-height: 160px;
+  max-height: 50vh;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 4px 0;
+  gap: 10px;
+  padding: 6px 2px;
 }
 
 .am-quick-row {
@@ -2394,8 +2451,9 @@ input:focus-visible,
   .am-status { padding: 5px 10px; font-size: .68rem; }
 
   /* 消息列表 */
-  .am-msg-list { max-height: 140px; }
+  .am-msg-list { max-height: 45vh; }
   .am-msg-bubble { font-size: .78rem; padding: 8px 12px; }
+  .am-msg-avatar { width: 28px; height: 28px; font-size: .9rem; }
 
   /* SOS按钮 */
   .am-sos-circle { width: 130px; height: 130px; }
@@ -2432,13 +2490,13 @@ input:focus-visible,
   .am-input-box-toggle { width: 50px; height: 50px; font-size: 1.25rem; }
   .am-input-box-press { font-size: .92rem; height: 50px; }
   .am-input-box-field { padding: 0 10px; font-size: .92rem; height: 50px; }
-  .am-msg-list { max-height: 180px; }
+  .am-msg-list { max-height: 55vh; }
   .am-msg-bubble { font-size: .85rem; padding: 10px 14px; }
 }
 
 /* 横屏适配 (高度<450px) */
 @media (max-height: 450px) and (orientation: landscape) {
-  .am-msg-list { max-height: 80px; }
+  .am-msg-list { max-height: 40vh; }
   .am-quick-row { gap: 5px; }
   .am-quick-icon { padding: 6px 4px; }
   .am-quick-icon .icon { font-size: 1rem; }

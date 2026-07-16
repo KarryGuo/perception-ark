@@ -599,13 +599,21 @@ export default function AppMobile() {
         {/* 识别页 - 识别记录 + 五个模式按钮 + 输入框 */}
         {activeTab === 'recognize' && (
           <div className="am-recognize-bottom">
-            {/* 识别记录显示(按钮上方) */}
+            {/* 识别记录显示(按钮上方) - 聊天式左右分栏 */}
             <div className="am-msg-list">
-              {messages.slice(-5).map((msg, i) => (
-                <div key={i} className={`am-msg ${msg.role}`}>
-                  <div className="am-msg-bubble">{msg.text}</div>
-                </div>
-              ))}
+              {messages.slice(-20).map((msg, i) => {
+                const isUser = msg.role === 'user';
+                const showTime = i === 0 || messages[messages.length - 20 + i - 1]?.time !== msg.time;
+                return (
+                  <div key={i} className={`am-msg ${isUser ? 'user' : 'assistant'}`}>
+                    <div className="am-msg-avatar">{isUser ? '👤' : '🤖'}</div>
+                    <div className="am-msg-content">
+                      {showTime && <div className="am-msg-time">{msg.time}</div>}
+                      <div className="am-msg-bubble">{msg.text}</div>
+                    </div>
+                  </div>
+                );
+              })}
               <div ref={messagesEndRef} />
             </div>
 
