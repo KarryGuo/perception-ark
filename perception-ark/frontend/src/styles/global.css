@@ -1752,10 +1752,12 @@ input:focus-visible,
   outline: none;
   height: 44px;
   box-sizing: border-box;
+  caret-color: rgba(255,255,255,0.7);
 }
 .am-input-box-field::placeholder { color: rgba(255,255,255,0.4); }
+.am-input-box-field:focus { outline: none; }
 .am-input-box:focus-within {
-  border-color: rgba(0,255,163,0.4);
+  border-color: rgba(255,255,255,0.25);
 }
 
 /* 导航页 - 统一输入框: 按住说话(左长) + 切换按钮(右), 点击切换为文字输入 */
