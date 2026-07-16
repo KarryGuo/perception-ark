@@ -1472,8 +1472,15 @@ input:focus-visible,
   border-color: rgba(0,255,163,0.3);
 }
 .am-msg.assistant .am-msg-avatar {
-  background: rgba(123,97,255,0.15);
+  background-image: url('/logo.png');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-color: rgba(123,97,255,0.15);
   border-color: rgba(123,97,255,0.3);
+}
+.am-msg.assistant .am-msg-avatar img {
+  display: none;
 }
 
 /* 消息内容区(时间+气泡) */
@@ -1679,13 +1686,16 @@ input:focus-visible,
 
 /* 识别记录列表(按钮上方) */
 .am-msg-list {
-  max-height: 50vh;
+  max-height: 40vh;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
   gap: 10px;
   padding: 6px 2px;
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE10+ */
 }
+.am-msg-list::-webkit-scrollbar { display: none; } /* Chrome/Safari/Edge */
 
 .am-quick-row {
   display: flex;
@@ -1713,7 +1723,12 @@ input:focus-visible,
   background: rgba(255,255,255,0.18);
   border-color: rgba(255,255,255,0.25);
 }
-.am-quick-icon:active { transform: scale(.93); }
+.am-quick-icon:active {
+  transform: scale(.88);
+  background: rgba(0,255,163,0.25);
+  border-color: rgba(0,255,163,0.5);
+  box-shadow: 0 0 20px rgba(0,255,163,0.35);
+}
 .am-quick-icon .icon { font-size: 1.25rem; }
 .am-quick-icon .label { font-size: .68rem; font-weight: 500; }
 .am-quick-icon.active {
@@ -2451,7 +2466,7 @@ input:focus-visible,
   .am-status { padding: 5px 10px; font-size: .68rem; }
 
   /* 消息列表 */
-  .am-msg-list { max-height: 45vh; }
+  .am-msg-list { max-height: 40vh; }
   .am-msg-bubble { font-size: .78rem; padding: 8px 12px; }
   .am-msg-avatar { width: 28px; height: 28px; font-size: .9rem; }
 

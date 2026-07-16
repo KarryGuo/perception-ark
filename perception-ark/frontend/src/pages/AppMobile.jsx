@@ -200,16 +200,26 @@ export default function AppMobile() {
 
   const handleRecognizeCommand = useCallback(async (text) => {
     setBusy(true);
+    setSubtitle('正在识别...');
     try {
       const img = await captureImage();
-      if (!img) { setBusy(false); return; }
-      if (/快速分析|分析|描述/.test(text)) await api.scene(img, '请用一段话描述当前场景,包括前方物体、路面状况、可能的障碍。专为视障者设计,50字以内。');
-      else if (/阅读|文字|读/.test(text)) await api.social(img, 'ocr');
-      else if (/红绿灯|红灯|绿灯|信号灯/.test(text)) await api.safety(img, 'scan');
-      else await api.scene(img, '请用一段话描述当前场景,专为视障者设计,50字以内。');
+      if (!img) { setBusy(false); setSubtitle(''); return; }
+      let res;
+      if (/快速分析|分析|描述/.test(text)) res = await api.scene(img, '请用一段话描述当前场景,包括前方主要物体及大致方位和距离(如"左前方1米有桌椅")。专为视障者设计,50字以内。');
+      else if (/阅读|文字|读/.test(text)) res = await api.social(img, 'ocr');
+      else if (/红绿灯|红灯|绿灯|信号灯/.test(text)) res = await api.safety(img, 'scan');
+      else res = await api.scene(img, '请用一段话描述当前场景,专为视障者设计,50字以内。');
+      // 处理返回结果
+      if (res?.success && res.result) {
+        const resultText = typeof res.result === 'string' ? res.result : String(res.result);
+        addMessage('assistant', resultText);
+        speak(resultText);
+        setSubtitle(resultText);
+      }
     } catch (err) {
       addMessage('assistant', `识别失败: ${err.message}`);
       speak(`识别失败: ${err.message}`);
+      setSubtitle('');
     } finally { setBusy(false); }
   }, [captureImage, addMessage, speak]);
 
@@ -323,18 +333,28 @@ export default function AppMobile() {
               // 未找到: 静默,不重复播报"未找到"
               setSubtitle(`🔍 正在寻找${findTarget}...`);
             }
+          } else if (activeMode === 'travel') {
+            // 出行模式: 检测到障碍物时紧急播报+强烈震动
+            const isDanger = /危险|障碍|靠近|前方有|小心|注意|当心|车辆|电动车|台阶|下坡|上坡|坑|水|盲道|施工|围栏|电线杆|单车/.test(text);
+            if (isDanger) {
+              speak(text, { urgent: true });
+              setSubtitle(`⚠️ ${text}`);
+              // 紧急震动: 长短长长短长
+              if (navigator.vibrate) navigator.vibrate([500, 100, 300, 100, 500, 100, 300, 100, 500]);
+            } else {
+              speak(text);
+              setSubtitle(text);
+            }
           } else {
             speak(text);
             setSubtitle(text);
-
-            // 出行模式: 检测到危险时手机震动
-            if (activeMode === 'travel' && /危险|障碍|靠近|前方有|小心|注意|当心|车辆|电动车/.test(text)) {
-              if (navigator.vibrate) navigator.vibrate([300, 150, 300, 150, 300]);
-            }
           }
+        } else {
+          console.warn('[Mode] API返回异常:', res);
         }
       } catch (err) {
         console.error('[Mode] 分析失败:', err.message);
+        setSubtitle(`分析出错: ${err.message}`);
       } finally {
         running = false;
       }
@@ -362,8 +382,14 @@ export default function AppMobile() {
   // ===== 导航页功能 =====
   const handleNavigateCommand = useCallback(async (text) => {
     setBusy(true);
-    try { await api.navigate(text, location?.lat, location?.lng); }
-    catch (err) { addMessage('assistant', `导航失败: ${err.message}`); speak(`导航失败: ${err.message}`); }
+    try {
+      const res = await api.navigate(text, location?.lat, location?.lng);
+      if (res?.success && res.result) {
+        const resultText = typeof res.result === 'string' ? res.result : JSON.stringify(res.result);
+        addMessage('assistant', resultText);
+        speak(resultText);
+      }
+    } catch (err) { addMessage('assistant', `导航失败: ${err.message}`); speak(`导航失败: ${err.message}`); }
     finally { setBusy(false); }
   }, [location, addMessage, speak]);
 
@@ -390,7 +416,15 @@ export default function AppMobile() {
       return updated;
     });
     setShowNavHistory(false);
-    try { await api.navigate(destination, location?.lat, location?.lng); setNavInput(''); }
+    try {
+      const res = await api.navigate(destination, location?.lat, location?.lng);
+      setNavInput('');
+      if (res?.success && res.result) {
+        const resultText = typeof res.result === 'string' ? res.result : JSON.stringify(res.result);
+        addMessage('assistant', resultText);
+        speak(resultText);
+      }
+    }
     catch (err) { addMessage('assistant', `导航失败: ${err.message}`); speak(`导航失败: ${err.message}`); }
     finally { setBusy(false); }
   }, [navInput, location, addMessage, showToast, speak]);
@@ -606,7 +640,7 @@ export default function AppMobile() {
                 const showTime = i === 0 || messages[messages.length - 20 + i - 1]?.time !== msg.time;
                 return (
                   <div key={i} className={`am-msg ${isUser ? 'user' : 'assistant'}`}>
-                    <div className="am-msg-avatar">{isUser ? '👤' : '🤖'}</div>
+                    <div className="am-msg-avatar">{isUser ? '👤' : ''}</div>
                     <div className="am-msg-content">
                       {showTime && <div className="am-msg-time">{msg.time}</div>}
                       <div className="am-msg-bubble">{msg.text}</div>
