@@ -168,6 +168,9 @@ export default function AppMobile() {
 
   const switchTab = useCallback((tab) => {
     setActiveTab(tab);
+    // 切换tab时关闭所有浮层(寻物输入框、历史搜索等)
+    setShowFindInput(false);
+    setShowNavHistory(false);
     const names = { recognize: '识别', navigate: '导航', sos: '紧急呼救' };
     showToast(`已切换到${names[tab]}`);
   }, [showToast]);
@@ -629,10 +632,10 @@ export default function AppMobile() {
           </div>
         )}
 
-        {/* 识别页 - 寻物目标输入浮层 */}
+        {/* 识别页 - 寻物目标输入浮层(全屏遮罩) */}
         {showFindInput && (
-          <div className="am-find-panel">
-            <div className="am-find-card">
+          <div className="am-find-panel" onClick={() => { setShowFindInput(false); setFindTarget(''); speak('已取消'); }}>
+            <div className="am-find-card" onClick={e => e.stopPropagation()}>
               <div className="am-find-title">🔍 寻物模式</div>
               <div className="am-find-hint">请说出或输入要找的物品，如：钥匙、手机、水杯</div>
               <div className="am-find-input-row">

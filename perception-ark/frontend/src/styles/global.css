@@ -1986,22 +1986,27 @@ input:focus-visible,
   color: var(--bio-amber);
 }
 
-/* ===== 寻物目标输入浮层 ===== */
+/* ===== 寻物目标输入浮层(全屏遮罩+居中卡片) ===== */
 .am-find-panel {
-  position: absolute;
-  top: 50%; left: 50%;
-  transform: translate(-50%, -50%);
-  z-index: 50;
-  width: 90%; max-width: 360px;
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  z-index: 1000;
+  background: rgba(0,0,0,0.6);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
 }
 .am-find-card {
-  background: rgba(13,17,28,0.95);
+  background: rgba(13,17,28,0.98);
   border: 1px solid rgba(255,182,39,0.3);
   border-radius: 20px;
   padding: 24px 20px;
-  backdrop-filter: blur(30px);
-  -webkit-backdrop-filter: blur(30px);
-  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  width: 100%;
+  max-width: 360px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.6);
 }
 .am-find-title {
   font-size: 1.1rem;
