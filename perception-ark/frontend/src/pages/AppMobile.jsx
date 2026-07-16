@@ -633,18 +633,9 @@ export default function AppMobile() {
               </button>
             </div>
 
-            {/* 统一输入框: 左侧切换icon + 右侧按住说话/文本输入, 同一圆角矩形 */}
+            {/* 统一输入框: 左侧按住说话/文本输入 + 右侧切换icon, 同一圆角矩形 */}
             <div className="am-input-box">
-              {/* 左侧: 切换icon (键盘↔麦克风) */}
-              <button
-                className="am-input-box-toggle"
-                onClick={() => { vibrateClick(); setShowTextInput(!showTextInput); }}
-                title={showTextInput ? '切回语音' : '切到文字'}
-              >
-                {showTextInput ? '🎤' : '⌨️'}
-              </button>
-
-              {/* 右侧: 按住说话 / 文本输入框 */}
+              {/* 左侧: 按住说话 / 文本输入框 */}
               {showTextInput ? (
                 <input
                   type="text"
@@ -664,6 +655,15 @@ export default function AppMobile() {
                   <span className="icon">🎤</span><span>{asr.listening ? '松开发送' : '按住说话'}</span>
                 </button>
               )}
+
+              {/* 右侧: 切换icon (键盘↔麦克风) */}
+              <button
+                className="am-input-box-toggle"
+                onClick={() => { vibrateClick(); setShowTextInput(!showTextInput); }}
+                title={showTextInput ? '切回语音' : '切到文字'}
+              >
+                {showTextInput ? '🎤' : '⌨️'}
+              </button>
             </div>
           </div>
         )}
