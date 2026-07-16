@@ -1083,6 +1083,12 @@ input:focus-visible,
   color: var(--ink-faint);
   margin-top: 8px;
 }
+.auth-qr-hint {
+  font-size: .68rem;
+  color: var(--ink-faint);
+  margin-top: 4px;
+  opacity: .6;
+}
 
 /* ============================================
    产品使用说明页 · Guide

@@ -29,42 +29,87 @@ function RequireAuth({ children }) {
 // 评委一键体验: 自动登录demo账号并跳转APP端
 function DemoEntry() {
   const { login, user } = useAuth();
-  const [status, setStatus] = useState('loading');
+  const [status, setStatus] = useState('loading'); // loading | warming | error
+  const [retryCount, setRetryCount] = useState(0);
 
   useEffect(() => {
     if (user) {
       window.location.hash = '#/app';
       return;
     }
+    let cancelled = false;
+
     (async () => {
-      try {
+      // Render免费版后端会休眠,首次请求需要冷启动(30-50秒)
+      // 最多重试3次,每次超时20秒
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (cancelled) return;
         try {
-          await login('demo', 'demo123');
-        } catch {
-          await api.register('demo', 'demo123', 'user');
-          await login('demo', 'demo123');
+          setStatus(attempt === 0 ? 'loading' : 'warming');
+          // 使用Promise.race添加超时控制
+          const loginPromise = (async () => {
+            try {
+              await login('demo', 'demo123');
+            } catch {
+              await api.register('demo', 'demo123', 'user');
+              await login('demo', 'demo123');
+            }
+          })();
+
+          const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('timeout')), 25000)
+          );
+
+          await Promise.race([loginPromise, timeoutPromise]);
+
+          if (!cancelled) {
+            window.location.hash = '#/app';
+          }
+          return;
+        } catch (err) {
+          console.warn(`[Demo] 第${attempt + 1}次尝试失败:`, err.message);
+          if (attempt < 2) {
+            // 等待2秒后重试
+            await new Promise(r => setTimeout(r, 2000));
+          }
         }
-        window.location.hash = '#/app';
-      } catch (err) {
+      }
+      // 3次都失败
+      if (!cancelled) {
         setStatus('error');
       }
     })();
-  }, [user, login]);
+
+    return () => { cancelled = true; };
+  }, [user, login, retryCount]);
+
+  // 手动重试
+  const handleRetry = () => {
+    setStatus('loading');
+    setRetryCount(c => c + 1);
+  };
 
   if (status === 'error') {
     return (
-      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: '#04060C', color: '#fff', fontFamily: 'Noto Sans SC, sans-serif', gap: 16 }}>
+      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: '#04060C', color: '#fff', fontFamily: 'Noto Sans SC, sans-serif', gap: 16, padding: 20 }}>
         <div style={{ fontSize: '2rem' }}>⚠️</div>
-        <div>体验入口暂时不可用</div>
-        <a href="#/login" style={{ color: '#00FFA3', padding: '10px 24px', border: '1px solid #00FFA3', borderRadius: 8, textDecoration: 'none' }}>前往登录</a>
+        <div style={{ fontSize: '1rem', textAlign: 'center' }}>服务正在唤醒中，请稍后重试</div>
+        <div style={{ fontSize: '.8rem', color: '#8893A8', textAlign: 'center' }}>首次访问需要等待服务启动</div>
+        <button onClick={handleRetry} style={{ color: '#00FFA3', padding: '10px 32px', border: '1px solid #00FFA3', borderRadius: 8, background: 'transparent', cursor: 'pointer', fontSize: '.9rem', fontFamily: 'inherit' }}>重新尝试</button>
+        <a href="#/login" style={{ color: '#8893A8', fontSize: '.8rem', marginTop: 8 }}>前往登录页</a>
       </div>
     );
   }
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: '#04060C', color: '#00FFA3', fontFamily: 'Noto Sans SC, sans-serif', gap: 20 }}>
-      <div style={{ fontSize: '3rem', animation: 'spin 1s linear infinite' }}>⚡</div>
-      <div style={{ fontSize: '1.1rem' }}>正在进入感知方舟...</div>
+      <div style={{ fontSize: '3rem', animation: 'spin 1.2s linear infinite' }}>⚡</div>
+      <div style={{ fontSize: '1.1rem' }}>
+        {status === 'warming' ? '服务启动中，请稍候...' : '正在进入感知方舟...'}
+      </div>
+      {status === 'warming' && (
+        <div style={{ fontSize: '.8rem', color: '#8893A8' }}>首次访问需要等待约30秒</div>
+      )}
       <style>{`@keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }`}</style>
     </div>
   );

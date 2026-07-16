@@ -105,13 +105,14 @@ export default function Login() {
           <div className="auth-qr-title">📱 评委手机扫码体验</div>
           <div className="auth-qr-img">
             <img
-              src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&margin=8&color=04060C&bgcolor=FFFFFF&data=${encodeURIComponent(window.location.origin + window.location.pathname + '#/demo')}`}
+              src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&margin=8&color=04060C&bgcolor=FFFFFF&data=${encodeURIComponent(window.location.href.split('#')[0] + '#/demo')}`}
               alt="扫码体验移动端APP"
               width="160"
               height="160"
             />
           </div>
           <div className="auth-qr-tip">扫码一键进入移动端APP</div>
+          <div className="auth-qr-hint">首次访问需等待约30秒服务唤醒</div>
         </div>
       </div>
     </div>
