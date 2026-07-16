@@ -54,6 +54,12 @@ export default function AppMobile() {
     if (!camera.active && !camera.error) camera.start();
   }, [camera.active, camera.error]);
 
+  // 恢复无障碍模式设置(大字体/高对比度)
+  useEffect(() => {
+    if (localStorage.getItem('ark_large_font') === 'true') document.body.classList.add('ark-large-font');
+    if (localStorage.getItem('ark_high_contrast') === 'true') document.body.classList.add('ark-high-contrast');
+  }, []);
+
   // ===== 摇一摇开启出行模式 (定义提前到 showToast 之后) =====
   // (见下方)
 
@@ -200,28 +206,58 @@ export default function AppMobile() {
 
   const handleRecognizeCommand = useCallback(async (text) => {
     setBusy(true);
-    setSubtitle('正在识别...');
+    setSubtitle('正在思考...');
     try {
-      const img = await captureImage();
-      if (!img) { setBusy(false); setSubtitle(''); return; }
-      let res;
-      if (/快速分析|分析|描述/.test(text)) res = await api.scene(img, '请用一段话描述当前场景,包括前方主要物体及大致方位和距离(如"左前方1米有桌椅")。专为视障者设计,50字以内。');
-      else if (/阅读|文字|读/.test(text)) res = await api.social(img, 'ocr');
-      else if (/红绿灯|红灯|绿灯|信号灯/.test(text)) res = await api.safety(img, 'scan');
-      else res = await api.scene(img, '请用一段话描述当前场景,专为视障者设计,50字以内。');
-      // 处理返回结果
-      if (res?.success && res.result) {
-        const resultText = typeof res.result === 'string' ? res.result : String(res.result);
+      const img = await captureImage().catch(() => null);
+      let resultText = '';
+      if (/快速分析|分析|描述|前面有什么|前方|场景/.test(text)) {
+        // 场景分析智能体 - 需要图片
+        if (!img) {
+          resultText = '摄像头未开启，无法分析前方场景，请先开启摄像头。';
+        } else {
+          const res = await api.scene(img, '请用一段话描述当前场景,包括前方主要物体及大致方位和距离(如"左前方1米有桌椅")。专为视障者设计,50字以内。');
+          if (res?.success && res.result) resultText = String(res.result);
+        }
+      } else if (/阅读|文字|读/.test(text)) {
+        // OCR文字识别智能体
+        if (!img) {
+          resultText = '摄像头未开启，无法识别文字。';
+        } else {
+          const res = await api.social(img, 'ocr');
+          if (res?.success && res.result) resultText = String(res.result);
+        }
+      } else if (/红绿灯|红灯|绿灯|信号灯/.test(text)) {
+        // 安全预警智能体 - 红绿灯识别
+        if (!img) {
+          resultText = '摄像头未开启，无法识别红绿灯。';
+        } else {
+          const res = await api.safety(img, 'scan');
+          if (res?.success && res.result) resultText = String(res.result);
+        }
+      } else {
+        // 通用问答 - 调用小舟智能助手(意图识别+多轮对话,支持纯文字+可选图片)
+        const loc = location ? { lat: location.lat, lng: location.lng } : null;
+        const res = await api.assistantChat(text, { imageFile: img, location: loc });
+        if (res?.success && res.reply) resultText = res.reply;
+      }
+      // 统一处理回复
+      if (resultText) {
         addMessage('assistant', resultText);
         speak(resultText);
         setSubtitle(resultText);
+      } else {
+        const fallback = '抱歉，我没有理解您的意思，请再说一遍。';
+        addMessage('assistant', fallback);
+        speak(fallback);
+        setSubtitle(fallback);
       }
     } catch (err) {
-      addMessage('assistant', `识别失败: ${err.message}`);
-      speak(`识别失败: ${err.message}`);
+      const errText = `处理失败: ${err.message}`;
+      addMessage('assistant', errText);
+      speak(errText);
       setSubtitle('');
     } finally { setBusy(false); }
-  }, [captureImage, addMessage, speak]);
+  }, [captureImage, addMessage, speak, location]);
 
   // ===== 模式切换(开启/关闭连续分析) =====
   const modeNames = { analyze: '快速分析', travel: '出行模式', read: '阅读文字', traffic: '红绿灯识别', find: '寻物模式' };
