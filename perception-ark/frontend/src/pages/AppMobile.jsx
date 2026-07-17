@@ -104,6 +104,17 @@ export default function AppMobile() {
           } catch (e) {}
         }
         break;
+      case 'sos_call_120':
+        // 后端判定用户无应答,前端执行拨号120
+        addMessage('assistant', `🚨 已为您拨打120急救电话。位置: ${event.location || '未知'}。请保持冷静，救援正在路上。`);
+        setSubtitle('🚨 正在拨打120...');
+        if (navigator.vibrate) navigator.vibrate([1000, 200, 1000, 200, 1000, 200, 2000]);
+        // 延迟2秒后跳转拨号(等TTS播报完"正在拨打120")
+        setTimeout(() => {
+          try { window.location.href = 'tel:120'; }
+          catch (e) { console.warn('[SOS] tel:120 跳转失败:', e); }
+        }, 2000);
+        break;
     }
   }, [speak]);
 
@@ -213,6 +224,17 @@ export default function AppMobile() {
     if (/打开导航|导航模式/.test(text)) { switchTab('navigate'); return; }
     if (/紧急呼救|SOS|救命/.test(text)) { switchTab('sos'); return; }
 
+    // ===== SOS应答检测(任意页面,说"我没事"/"我很好"/"我没事了"取消120拨打) =====
+    if (/我没事|我很好|我没事了|我没事啦|我好的|我OK|我安全/.test(text)) {
+      handleSosRespond();
+      return;
+    }
+    // 主动取消SOS(说"取消SOS"/"取消呼救")
+    if (/取消SOS|取消呼救|取消急救|取消紧急/.test(text)) {
+      handleSosCancel();
+      return;
+    }
+
     // ===== 导航意图检测(仅在识别页触发跳转) =====
     // 排除含"过/来/回/出"+"去"的误触发(过去/过来/回去/出去)
     if (activeTab === 'recognize') {
@@ -267,7 +289,7 @@ export default function AppMobile() {
     isProcessingRef.current = true;
     if (activeTab === 'recognize') handleRecognizeCommand(text);
     else if (activeTab === 'navigate') handleNavigateCommand(text);
-  }, [asr.transcript, ttsSpeaking]);
+  }, [asr.transcript, ttsSpeaking, activeTab, switchTab, addMessage, handleNavigate, handleRecognizeCommand, handleNavigateCommand, handleSosRespond, handleSosCancel]);
 
   // ===== 识别页功能 =====
   const captureImage = useCallback(async () => {
@@ -716,18 +738,53 @@ export default function AppMobile() {
     else if (activeTab === 'navigate') handleNavigateCommand(text);
   }, [activeTab, switchTab, addMessage, handleRecognizeCommand, handleNavigateCommand, handleNavigate]);
 
-  // ===== SOS紧急呼救 =====
+  // ===== SOS紧急呼救(新流程: 立即发送位置 → 60秒后询问 → 再60秒无应答拨120) =====
   const handleSos = useCallback(async () => {
     setBusy(true);
     addMessage('user', '🆘 紧急呼救');
+    if (navigator.vibrate) navigator.vibrate([500, 100, 500, 100, 500]);
     try {
-      await api.fall(location?.lat, location?.lng);
-      addMessage('assistant', '已发送SOS紧急呼救，紧急联系人将收到您的位置信息。');
+      const res = await api.sosTrigger(location?.lat, location?.lng);
+      if (res?.success && res.result?.triggered) {
+        const r = res.result;
+        if (!r.contactConfigured) {
+          addMessage('assistant', '⚠️ 尚未设置紧急联系人，位置已同步到云端。请在家属端绑定紧急联系人。');
+        } else {
+          addMessage('assistant', `🆘 SOS已发送。位置: ${r.location}。紧急联系人已通知。60秒后将询问您的情况，如无应答将自动拨打120。`);
+        }
+        showToast('SOS已发送，60秒后将询问情况');
+      } else {
+        addMessage('assistant', 'SOS发送失败，请稍后再试或直接拨打120。');
+      }
     } catch (err) {
       addMessage('assistant', `SOS发送失败: ${err.message}`);
       speak(`SOS发送失败: ${err.message}`);
     } finally { setBusy(false); }
-  }, [location, addMessage, speak]);
+  }, [location, addMessage, speak, showToast]);
+
+  // ===== 用户语音应答SOS(说"我没事"/"我很好"等) → 取消120拨打 =====
+  const handleSosRespond = useCallback(async () => {
+    try {
+      const res = await api.sosRespond();
+      if (res?.success && res.result?.responded) {
+        addMessage('assistant', '✓ 已确认您安全，120拨打已取消。');
+        showToast('已取消120拨打');
+      }
+    } catch (err) {
+      console.warn('[SOS] 应答失败:', err);
+    }
+  }, [addMessage, showToast]);
+
+  // ===== 主动取消SOS =====
+  const handleSosCancel = useCallback(async () => {
+    try {
+      await api.sosCancel();
+      addMessage('assistant', '✓ 已取消SOS紧急呼救。');
+      showToast('SOS已取消');
+    } catch (err) {
+      console.warn('[SOS] 取消失败:', err);
+    }
+  }, [addMessage, showToast]);
 
   // ===== 闪光灯 =====
   const toggleTorch = useCallback(async () => {
@@ -877,7 +934,7 @@ export default function AppMobile() {
 
       {/* ===== 底部浮动操作区 ===== */}
       <div className="am-bottom-zone">
-        {/* SOS页 - 大圆按钮 */}
+        {/* SOS页 - 大圆按钮 + 取消按钮 */}
         {activeTab === 'sos' && (
           <div className="am-sos-bottom">
             <button className="am-sos-circle" onClick={handleSos} disabled={busy}>
@@ -885,6 +942,10 @@ export default function AppMobile() {
               <span className="text">{busy ? '发送中' : '紧急呼救'}</span>
             </button>
             <div className="am-sos-tip">点击立即向紧急联系人发送位置</div>
+            <button className="am-sos-cancel-btn" onClick={handleSosCancel}>
+              取消SOS
+            </button>
+            <div className="am-sos-help-tip">说"我没事"可取消120拨打</div>
           </div>
         )}
 

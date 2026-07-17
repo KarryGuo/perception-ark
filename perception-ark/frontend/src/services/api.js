@@ -81,6 +81,18 @@ export const api = {
       body: JSON.stringify({ lat, lng })
     }),
 
+  // 主动SOS(用户点击SOS按钮)
+  sosTrigger: (lat, lng) =>
+    request('/sos/trigger', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lat, lng })
+    }),
+  sosRespond: () =>
+    request('/sos/respond', { method: 'POST' }),
+  sosCancel: () =>
+    request('/sos/cancel', { method: 'POST' }),
+
   // 抢占演示 - 多Agent冲突仲裁可视化
   preemptionDemo: (imageFile) =>
     request('/preemption-demo', { method: 'POST', body: fileToFormData(imageFile) }),

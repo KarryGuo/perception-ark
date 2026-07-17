@@ -3,7 +3,8 @@ import multer from 'multer';
 import {
   runSceneAgent, runNavigationAgent, runSafetyAgent, runSocialAgent,
   runMemoryAgent, triggerFallDetection, triggerDangerPreemption,
-  handleVoiceCommand, getContext, getStats, resetAll, updateLocation
+  handleVoiceCommand, getContext, getStats, resetAll, updateLocation,
+  triggerSosButton, respondSosButton, cancelSosButton
 } from '../agents/orchestrator.js';
 import {
   getAllRoutes, getAllHabits, searchFaces, addFace, forgetAllFaces,
@@ -103,6 +104,38 @@ router.post('/fall', async (req, res) => {
   try {
     const { lat, lng } = req.body;
     const result = await triggerFallDetection(lat, lng);
+    res.json({ success: true, result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ===== 主动SOS(用户点击SOS按钮) =====
+// 触发SOS: 立即发送位置给联系人,60秒后询问,再60秒无应答拨120
+router.post('/sos/trigger', async (req, res) => {
+  try {
+    const { lat, lng } = req.body;
+    const result = await triggerSosButton(lat, lng);
+    res.json({ success: true, result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 用户应答SOS(说"我没事"等) - 取消120拨打
+router.post('/sos/respond', (req, res) => {
+  try {
+    const result = respondSosButton();
+    res.json({ success: true, result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 主动取消SOS
+router.post('/sos/cancel', (req, res) => {
+  try {
+    const result = cancelSosButton();
     res.json({ success: true, result });
   } catch (err) {
     res.status(500).json({ error: err.message });

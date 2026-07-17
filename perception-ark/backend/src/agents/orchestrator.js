@@ -623,6 +623,122 @@ export function cancelFallSos() {
   return false;
 }
 
+// ============================================================
+// 主动SOS(用户点击SOS按钮触发)
+// 流程: 立即发送位置给联系人 → 60秒后语音询问 → 再60秒无应答拨120
+// ============================================================
+let sosButtonTimer1 = null; // 60秒后询问
+let sosButtonTimer2 = null; // 再60秒后拨120
+let sosButtonActive = false; // 主动SOS进行中标志(用户应答时取消)
+
+/**
+ * 主动SOS - 用户点击SOS按钮触发
+ * 立即通知紧急联系人+同步位置,60秒后询问情况,无应答再60秒拨120
+ */
+export async function triggerSosButton(lat, lng) {
+  emitAgentState('A03', true, '🆘 紧急SOS触发');
+  emitLog('A03', '🆘 主动SOS触发(用户点击SOS按钮)', 'warn');
+  sharedContext.userActivity = 'fallen';
+
+  // 清除已有倒计时,防重入
+  if (sosButtonTimer1) { clearTimeout(sosButtonTimer1); sosButtonTimer1 = null; }
+  if (sosButtonTimer2) { clearTimeout(sosButtonTimer2); sosButtonTimer2 = null; }
+  sosButtonActive = true;
+
+  const contact = getEmergencyContact();
+  const sosLocation = describeLocation();
+  const sosLat = lat || sharedContext.currentLocation?.lat || null;
+  const sosLng = lng || sharedContext.currentLocation?.lng || null;
+
+  // 1. 立即推送SOS事件 + 通知联系人
+  emitSos('🆘 SOS TRIGGERED', `紧急联系人 ${contact.name || '未设置'} 已通知 · 位置已同步`);
+  emitSpeak('A03', `紧急SOS已触发。您的位置${sosLocation}已同步${contact.name ? `给紧急联系人${contact.name}` : '到云端'}。1分钟后将询问您的情况，如无应答将自动拨打120。`, { urgent: true });
+  emitSubtitle('🆘 SOS已发送，60秒后询问情况', true);
+
+  // 记录SOS事件到记忆库(立即发送)
+  try {
+    const sosId = addSosEvent({
+      event_type: 'manual',
+      lat: sosLat,
+      lng: sosLng,
+      address: sharedContext.currentLocation?.address || '',
+      contact_name: contact.name || '',
+      contact_phone: contact.phone || ''
+    });
+    if (sosId) updateSosStatus(sosId, 'sent');
+    emitLog('A03', `主动SOS已记录: 位置=${sosLocation}, 联系人=${contact.name || '未设置'}`, 'warn');
+  } catch (e) {
+    emitLog('A03', `SOS事件记录失败: ${e.message}`, 'error');
+  }
+
+  // 2. 60秒后语音询问情况
+  sosButtonTimer1 = setTimeout(() => {
+    if (!sosButtonActive) return;
+    emitSpeak('A03', '您还好吗？请回答我没事，否则1分钟后将自动拨打120急救电话。', { urgent: true });
+    emitSubtitle('⚠️ 60秒内无应答将拨打120', true);
+    emitLog('A03', 'SOS询问: 等待用户应答(60秒倒计时)', 'warn');
+
+    // 3. 再60秒无应答 → 拨打120
+    sosButtonTimer2 = setTimeout(() => {
+      if (!sosButtonActive) return;
+      sosButtonActive = false;
+      emitSpeak('A03', '未检测到应答。正在为您拨打120急救电话，请保持冷静。', { urgent: true });
+      emitSubtitle('🚨 正在拨打120急救电话', true);
+      emitSos('🚨 CALLING 120', '用户无应答 · 自动拨打120急救');
+      emitLog('A03', 'SOS最终阶段: 触发120拨打(用户60秒内无应答)', 'error');
+      // 推送拨打120事件到前端,前端执行 tel:120 跳转
+      emit({
+        type: 'sos_call_120',
+        reason: '用户60秒内无应答',
+        location: sosLocation,
+        lat: sosLat,
+        lng: sosLng
+      });
+    }, 60000);
+  }, 60000);
+
+  return {
+    triggered: true,
+    stage: 'sent',
+    location: sosLocation,
+    contactConfigured: !!contact.name,
+    nextCheckIn: 60,
+    autoCall120After: 120
+  };
+}
+
+/**
+ * 用户应答SOS - 用户说"我没事"/"我没事了"/"我很好"等时调用
+ * 取消120拨打流程
+ */
+export function respondSosButton() {
+  if (!sosButtonActive) return { responded: false, reason: 'no_active_sos' };
+  sosButtonActive = false;
+  if (sosButtonTimer1) { clearTimeout(sosButtonTimer1); sosButtonTimer1 = null; }
+  if (sosButtonTimer2) { clearTimeout(sosButtonTimer2); sosButtonTimer2 = null; }
+  sharedContext.userActivity = 'idle';
+  emitSpeak('A03', '好的，已确认您安全。已取消120拨打。如果需要帮助，随时按SOS按钮。');
+  emitSubtitle('✓ 用户已应答，SOS流程取消', false);
+  emitAgentState('A03', false);
+  emitLog('A03', '主动SOS: 用户已应答,取消120拨打', 'info');
+  return { responded: true, canceled120: true };
+}
+
+/**
+ * 主动取消SOS - 用户点击取消按钮
+ */
+export function cancelSosButton() {
+  sosButtonActive = false;
+  if (sosButtonTimer1) { clearTimeout(sosButtonTimer1); sosButtonTimer1 = null; }
+  if (sosButtonTimer2) { clearTimeout(sosButtonTimer2); sosButtonTimer2 = null; }
+  sharedContext.userActivity = 'idle';
+  emitSpeak('A03', '已取消SOS紧急呼救。');
+  emitSubtitle('✓ SOS已取消', false);
+  emitAgentState('A03', false);
+  emitLog('A03', '主动SOS: 用户手动取消', 'info');
+  return { canceled: true };
+}
+
 /**
  * 安全预警抢占演示 - 基于真实视觉检测
  * 1. 先激活A02导航播报(真实路径规划结果)
@@ -869,6 +985,10 @@ export function resetAll() {
     clearTimeout(fallSosTimer);
     fallSosTimer = null;
   }
+  // 清理主动SOS倒计时
+  sosButtonActive = false;
+  if (sosButtonTimer1) { clearTimeout(sosButtonTimer1); sosButtonTimer1 = null; }
+  if (sosButtonTimer2) { clearTimeout(sosButtonTimer2); sosButtonTimer2 = null; }
   if (speakingReleaseTimer) {
     clearTimeout(speakingReleaseTimer);
     speakingReleaseTimer = null;
