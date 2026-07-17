@@ -35,38 +35,55 @@ export async function visionUnderstand(imageBase64, prompt) {
     throw new Error('未获取到摄像头画面，无法进行视觉分析');
   }
 
+  // 429限流自动重试(最多2次,指数退避)
   const startTime = Date.now();
-  const response = await axios.post(
-    `${API_BASE}/chat/completions`,
-    {
-      model: VISION_MODEL,
-      messages: [
+  let lastErr = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const response = await axios.post(
+        `${API_BASE}/chat/completions`,
         {
-          role: 'user',
-          content: [
-            { type: 'text', text: prompt },
+          model: VISION_MODEL,
+          messages: [
             {
-              type: 'image_url',
-              image_url: { url: `data:image/jpeg;base64,${imageBase64}` }
+              role: 'user',
+              content: [
+                { type: 'text', text: prompt },
+                {
+                  type: 'image_url',
+                  image_url: { url: `data:image/jpeg;base64,${imageBase64}` }
+                }
+              ]
             }
-          ]
+          ],
+          max_tokens: 300,
+          temperature: 0.4
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${API_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          timeout: 15000
         }
-      ],
-      max_tokens: 300,
-      temperature: 0.4
-    },
-    {
-      headers: {
-        'Authorization': `Bearer ${API_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      timeout: 15000
+      );
+      const latency = Date.now() - startTime;
+      const result = response.data.choices[0].message.content;
+      log('A01', `视觉理解完成 (${latency}ms): ${result.slice(0, 60)}...`);
+      return result;
+    } catch (err) {
+      lastErr = err;
+      // 429限流: 指数退避重试
+      if (err.response?.status === 429 && attempt < 2) {
+        const waitMs = 1500 * Math.pow(2, attempt); // 1.5s, 3s
+        log('A01', `视觉模型限流(429), ${waitMs}ms后重试(第${attempt + 1}次)`, 'warn');
+        await new Promise(r => setTimeout(r, waitMs));
+        continue;
+      }
+      break;
     }
-  );
-  const latency = Date.now() - startTime;
-  const result = response.data.choices[0].message.content;
-  log('A01', `视觉理解完成 (${latency}ms): ${result.slice(0, 60)}...`);
-  return result;
+  }
+  throw lastErr;
 }
 
 /**

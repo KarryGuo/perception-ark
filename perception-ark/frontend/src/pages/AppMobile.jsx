@@ -300,7 +300,7 @@ export default function AppMobile() {
         if (!img) {
           resultText = '摄像头未开启，无法分析前方场景，请先开启摄像头。';
         } else {
-          const res = await callWithRetry(() => api.scene(img, '请用一段话描述当前场景,包括前方主要物体及大致方位和距离(如"左前方1米有桌椅")。专为视障者设计,50字以内。'));
+          const res = await callWithRetry(() => api.scene(img, '你是视障用户的眼睛。请用一段话描述当前场景,必须包含:\n1.前方主要物体名称\n2.物体的方位(左前方/正前方/右前方/左方/右方)\n3.物体到你的估算距离(单位米,1-5米范围)\n格式示例:"正前方2米有桌椅,右前方3米有门"。40字以内,专为视障者设计,只描述前方可见的主要物体和距离。'));
           if (res?.success && res.result) resultText = String(res.result);
         }
       } else if (/阅读|文字|读/.test(text)) {
@@ -437,7 +437,7 @@ export default function AppMobile() {
 
         let res;
         if (activeMode === 'analyze') {
-          res = await api.scene(img, '请用一段话描述当前场景,包括前方主要物体及大致方位和距离(如"左前方1米有桌椅")。专为视障者设计,50字以内。');
+          res = await api.scene(img, '你是视障用户的眼睛。请用一段话描述当前场景,必须包含:\n1.前方主要物体名称\n2.物体的方位(左前方/正前方/右前方/左方/右方)\n3.物体到你的估算距离(单位米,1-5米范围)\n格式示例:"正前方2米有桌椅,右前方3米有门"。40字以内,专为视障者设计,只描述前方可见的主要物体和距离。');
         } else if (activeMode === 'travel') {
           res = await api.safety(img, 'scan');
         } else if (activeMode === 'read') {
@@ -465,13 +465,29 @@ export default function AppMobile() {
               setSubtitle(`🔍 正在寻找${findTarget}...`);
             }
           } else if (activeMode === 'travel') {
-            // 出行模式: 检测到障碍物时紧急播报+强烈震动
-            const isDanger = /危险|障碍|靠近|前方有|小心|注意|当心|车辆|电动车|台阶|下坡|上坡|坑|水|盲道|施工|围栏|电线杆|单车/.test(text);
+            // 出行模式: 解析距离,实现递进报警
+            // 危险关键词: 任意障碍物相关词
+            const isDanger = /警告|危险|障碍|靠近|前方有|小心|注意|当心|车辆|电动车|自行车|台阶|下坡|上坡|坑|水|盲道|施工|围栏|电线杆|单车|柱子|树|墙|门|立即停止/.test(text);
+            // 从模型回复中提取距离(如"正前方1米有台阶"或"约2米")
+            const distMatch = text.match(/约?\s*([0-9]+(?:\.[0-9]+)?)\s*米/);
+            const distance = distMatch ? parseFloat(distMatch[1]) : null;
+            const isUrgent = /警告|立即停止/.test(text) || (distance != null && distance <= 1);
+
             if (isDanger) {
-              speak(text, { urgent: true });
+              speak(text, { urgent: isUrgent });
               setSubtitle(`⚠️ ${text}`);
-              // 紧急震动: 长短长长短长
-              if (navigator.vibrate) navigator.vibrate([500, 100, 300, 100, 500, 100, 300, 100, 500]);
+              if (navigator.vibrate) {
+                if (isUrgent) {
+                  // 1米内紧急: 持续长震动(强烈警告)
+                  navigator.vibrate([800, 100, 800, 100, 800, 100, 1500]);
+                } else if (distance != null && distance <= 2) {
+                  // 2米内: 中等频率震动
+                  navigator.vibrate([400, 100, 400, 100, 400, 100, 800]);
+                } else {
+                  // 2米外: 短震动提醒
+                  navigator.vibrate([200, 100, 200, 100, 200]);
+                }
+              }
             } else {
               speak(text);
               setSubtitle(text);
@@ -505,9 +521,9 @@ export default function AppMobile() {
       }
     };
 
-    // 立即执行一次,然后每5秒执行
+    // 立即执行一次,然后每8秒执行(降低ARK API限流风险)
     runOnce();
-    modeIntervalRef.current = setInterval(runOnce, 5000);
+    modeIntervalRef.current = setInterval(runOnce, 8000);
 
     return () => {
       if (modeIntervalRef.current) {

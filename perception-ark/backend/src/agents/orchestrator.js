@@ -503,7 +503,7 @@ export async function runSafetyAgent(imageBase64, mode = 'scan') {
   }
 
   try {
-    const result = await visionUnderstand(imageBase64, '请检查画面中是否存在以下危险：1.靠近的车辆/电动车/自行车 2.地面障碍物(水坑/台阶/坑洞) 3.高空坠物风险 4.其他出行危险。如有危险请按以下格式回答:"注意,[左前方/正前方/右前方/左方/右方]约[X]米处有[障碍物名称]，建议[避让方向]绕行"。如无危险请回答"前方安全"。40字以内。');
+    const result = await visionUnderstand(imageBase64, '你是视障用户的安全守护者。请检测前方1-3米范围内的障碍物和危险。必须严格按以下格式之一回答:\n1. 有障碍物时:"[左前方/正前方/右前方/左方/右方][距离]米有[障碍物名称],建议[左/右]绕行"。距离必须是1到3之间的数字(单位米)。\n2. 无障碍物时:"前方安全"。\n3. 障碍物非常近(1米内)时:"警告,[方位]约[距离]米有[障碍物名称],立即停止!"。\n仅输出上述格式,30字以内,不要解释。');
 
     emitAgentState('A03', true, result);
     if (result.includes('安全') && !result.includes('不安全')) {
@@ -512,14 +512,16 @@ export async function runSafetyAgent(imageBase64, mode = 'scan') {
     } else {
       // 检测到危险 - 触发抢占
       emitAlert(result);
-      emitSpeak('A03', `注意！${result}请立即避让！`, { urgent: true });
+      // 1米内紧急情况使用urgent模式
+      const isUrgent = /警告|立即停止|约0|约1米/.test(result);
+      emitSpeak('A03', isUrgent ? `危险！${result}请立即停止前进！` : `注意！${result}请缓慢避让。`, { urgent: isUrgent });
       emitSubtitle(`⚠️ ${result}`, true);
       sharedContext.lastDangerEvent = { time: now(), description: result };
     }
     return result;
   } catch (err) {
     emitLog('A03', `安全扫描失败: ${err.message}`, 'error');
-    emitSpeak('A03', `安全扫描失败：${err.message}`);
+    // 安全扫描失败不播报(避免TTS循环),只记录
     return null;
   } finally {
     setTimeout(() => emitAgentState('A03', false), 3000);
