@@ -2,6 +2,9 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '../hooks/useAuth.jsx';
 import { api } from '../services/api.js';
 
+// 判断是否为移动端(扫码体验默认进AppMobile移动端APP)
+const isMobile = () => typeof window !== 'undefined' && window.innerWidth <= 768;
+
 export default function Login() {
   const { login, user } = useAuth();
   const [username, setUsername] = useState('');
@@ -9,9 +12,13 @@ export default function Login() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
+  // 登录后跳转: 移动端进AppMobile, PC端进Glasses首页
+  const goHome = () => { window.location.hash = isMobile() ? '#/app' : '#/'; };
+
   // 已登录则跳转首页
   useEffect(() => {
-    if (user) window.location.hash = '#/';
+    if (user) goHome();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
   const handleSubmit = async (e) => {
@@ -20,7 +27,7 @@ export default function Login() {
     setLoading(true);
     try {
       await login(username.trim(), password);
-      window.location.hash = '#/';
+      goHome();
     } catch (err) {
       setError(err.message);
     } finally {
@@ -39,7 +46,7 @@ export default function Login() {
         await api.register('demo', 'demo123', 'user');
         await login('demo', 'demo123');
       }
-      window.location.hash = '#/';
+      goHome();
     } catch (err) {
       setError(err.message);
     } finally {
