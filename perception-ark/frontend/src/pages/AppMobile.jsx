@@ -275,21 +275,25 @@ export default function AppMobile() {
         speak(resultText);
         setSubtitle(resultText);
       } else {
-        const fallback = '抱歉，我没有理解您的意思，请再说一遍。';
+        // API返回空结果: 只显示不播报(避免TTS音频被ASR拾取形成循环)
+        const fallback = '抱歉，暂无回复，请稍后再试。';
         addMessage('assistant', fallback);
-        speak(fallback);
         setSubtitle(fallback);
       }
     } catch (err) {
-      // 网络错误/超时给出友好提示
+      // 网络错误/超时: 只显示在聊天中,不播报(避免回声循环)
       const isNetworkErr = /ERR_HTTP2|NETWORK|Failed to fetch|fetch/i.test(err.message);
       const errText = isNetworkErr
         ? '网络连接异常，服务可能正在启动中，请稍后再试。'
         : `处理失败: ${err.message}`;
       addMessage('assistant', errText);
-      speak(errText);
-      setSubtitle('');
-    } finally { setBusy(false); isProcessingRef.current = false; }
+      setSubtitle(errText);
+    } finally {
+      setBusy(false);
+      // 延迟重置处理标志: 等待TTS播报结束后才允许新的ASR结果
+      // 防止TTS音频被ASR拾取→生成新transcript→触发新回复→循环
+      setTimeout(() => { isProcessingRef.current = false; }, 3000);
+    }
   }, [captureImage, addMessage, speak, location, callWithRetry]);
 
   // ===== 模式切换(开启/关闭连续分析) =====
@@ -367,6 +371,7 @@ export default function AppMobile() {
     }
 
     let running = false;
+    let failCount = 0; // 连续失败计数,达到阈值自动关闭模式
     const runOnce = async () => {
       if (running) return;
       running = true;
@@ -389,6 +394,7 @@ export default function AppMobile() {
         }
 
         if (res?.success && res.result) {
+          failCount = 0; // 成功时重置失败计数
           const text = typeof res.result === 'string' ? res.result : String(res.result);
           addMessage('assistant', text);
 
@@ -420,6 +426,7 @@ export default function AppMobile() {
           }
         } else {
           // API返回null或异常: 静默跳过本轮,不打扰用户(连续分析中可能偶发空结果)
+          failCount++;
           if (!res?.success) {
             console.warn('[Mode] API调用失败:', res);
           }
@@ -427,9 +434,18 @@ export default function AppMobile() {
         }
       } catch (err) {
         console.error('[Mode] 分析失败:', err.message);
-        setSubtitle(`分析出错: ${err.message}`);
+        failCount++;
+        // 连续分析中不播报错误,只静默记录(避免TTS被ASR拾取形成循环)
       } finally {
         running = false;
+        // 连续失败3次: 自动关闭模式,避免无意义循环
+        if (failCount >= 3) {
+          const modeName = modeNames[activeMode] || '当前模式';
+          speak(`${modeName}已关闭，服务异常，请稍后再试。`);
+          showToast(`${modeName}已关闭（服务异常）`);
+          setActiveMode(null);
+          failCount = 0;
+        }
       }
     };
 
@@ -465,9 +481,12 @@ export default function AppMobile() {
     } catch (err) {
       const isNetworkErr = /ERR_HTTP2|NETWORK|Failed to fetch|fetch/i.test(err.message);
       const errText = isNetworkErr ? '网络连接异常，服务可能正在启动中，请稍后再试。' : `导航失败: ${err.message}`;
-      addMessage('assistant', errText); speak(errText);
+      addMessage('assistant', errText); setSubtitle(errText);
     }
-    finally { setBusy(false); isProcessingRef.current = false; }
+    finally {
+      setBusy(false);
+      setTimeout(() => { isProcessingRef.current = false; }, 3000);
+    }
   }, [location, addMessage, speak, callWithRetry]);
 
   // ===== 文本输入提交(必须在handleRecognizeCommand/handleNavigateCommand之后定义) =====
