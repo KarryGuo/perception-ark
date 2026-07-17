@@ -906,50 +906,41 @@ export default function AppMobile() {
           </div>
         )}
 
-        {/* 导航页 - 统一输入框: 按住说话(左长) + 搜索(右), 点击搜索切换文字输入 */}
+        {/* 导航页 - 统一输入框(与识别页同设计): 左侧按住说话/文本输入 + 右侧切换icon */}
         {activeTab === 'navigate' && (
           <div className="am-navigate-bottom">
-            <div className="am-nav-input-box">
+            <div className="am-input-box">
+              {/* 左侧: 文本输入框 / 按住说话 */}
               {navInputMode ? (
-                <>
-                  <input
-                    type="text"
-                    className="am-nav-input-field"
-                    value={navInput}
-                    onChange={e => setNavInput(e.target.value)}
-                    onFocus={() => setShowNavHistory(true)}
-                    onBlur={() => setTimeout(() => setShowNavHistory(false), 200)}
-                    placeholder="输入目的地,如五一广场"
-                    onKeyDown={e => { if (e.key === 'Enter' && navInput.trim()) { handleNavigate(); setNavInputMode(false); } }}
-                    autoFocus
-                  />
-                  <button
-                    className="am-nav-send-btn"
-                    onClick={() => { if (navInput.trim()) { handleNavigate(); setNavInputMode(false); } }}
-                    disabled={busy}
-                  >搜索</button>
-                  <button
-                    className="am-nav-toggle-btn"
-                    onClick={() => { vibrateClick(); setNavInputMode(false); setNavInput(''); }}
-                    title="切回语音"
-                  >🎤</button>
-                </>
+                <input
+                  type="text"
+                  className="am-input-box-field"
+                  value={navInput}
+                  onChange={e => setNavInput(e.target.value)}
+                  onFocus={() => setShowNavHistory(true)}
+                  onBlur={() => setTimeout(() => setShowNavHistory(false), 200)}
+                  placeholder="输入目的地,如五一广场"
+                  onKeyDown={e => { if (e.key === 'Enter' && navInput.trim()) { handleNavigate(); setNavInputMode(false); } }}
+                  autoFocus
+                />
               ) : (
-                <>
-                  <button
-                    className={`am-nav-press-btn ${asr.listening ? 'listening' : ''}`}
-                    onMouseDown={handlePressStart} onMouseUp={handlePressEnd}
-                    onTouchStart={handlePressStart} onTouchEnd={handlePressEnd}
-                  >
-                    <span className="icon">🎤</span><span>{asr.listening ? '松开发送' : '按住说话'}</span>
-                  </button>
-                  <button
-                    className="am-nav-toggle-btn"
-                    onClick={() => { vibrateClick(); setNavInputMode(true); }}
-                    title="文字输入"
-                  >⌨️</button>
-                </>
+                <button
+                  className={`am-input-box-press ${asr.listening ? 'listening' : ''}`}
+                  onMouseDown={handlePressStart} onMouseUp={handlePressEnd}
+                  onTouchStart={handlePressStart} onTouchEnd={handlePressEnd}
+                >
+                  <span className="icon">🎤</span><span>{asr.listening ? '松开发送' : '按住说话'}</span>
+                </button>
               )}
+
+              {/* 右侧: 切换icon (键盘↔麦克风) */}
+              <button
+                className="am-input-box-toggle"
+                onClick={() => { vibrateClick(); setNavInputMode(!navInputMode); if (!navInputMode) setNavInput(''); }}
+                title={navInputMode ? '切回语音' : '切到文字'}
+              >
+                {navInputMode ? '🎤' : '⌨️'}
+              </button>
             </div>
           </div>
         )}
