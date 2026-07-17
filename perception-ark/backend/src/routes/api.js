@@ -9,7 +9,7 @@ import {
   getAllRoutes, getAllHabits, searchFaces, addFace, forgetAllFaces,
   getSosEvents, getMemoryStats
 } from '../services/memory-store.js';
-import { reverseGeocode, getWeather } from '../services/amap-client.js';
+import { reverseGeocode, getWeather, searchPOI } from '../services/amap-client.js';
 
 const router = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
@@ -66,6 +66,22 @@ router.post('/navigate', async (req, res) => {
     if (!destination) return res.status(400).json({ error: '缺少目的地' });
     const result = await runNavigationAgent(destination, lat, lng);
     res.json({ success: true, result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ===== POI搜索(实时搜索建议,类似高德输入联想) =====
+router.get('/poi/search', async (req, res) => {
+  try {
+    const { keyword, lat, lng } = req.query;
+    if (!keyword || keyword.trim().length < 1) {
+      return res.json({ success: true, pois: [] });
+    }
+    const latNum = lat ? parseFloat(lat) : null;
+    const lngNum = lng ? parseFloat(lng) : null;
+    const pois = await searchPOI(keyword.trim(), latNum, lngNum);
+    res.json({ success: true, pois });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

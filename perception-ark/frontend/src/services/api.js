@@ -60,6 +60,16 @@ export const api = {
       body: JSON.stringify({ destination, lat, lng })
     }),
 
+  // POI搜索(实时搜索建议,类似高德输入联想)
+  poiSearch: (keyword, lat, lng) => {
+    const params = new URLSearchParams({ keyword });
+    if (lat != null && lng != null) {
+      params.append('lat', String(lat));
+      params.append('lng', String(lng));
+    }
+    return request(`/poi/search?${params.toString()}`);
+  },
+
   // A03 安全预警
   safety: (imageFile, mode = 'scan') =>
     request('/safety', { method: 'POST', body: fileToFormData(imageFile, { mode }) }),

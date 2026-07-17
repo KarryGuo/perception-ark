@@ -2157,6 +2157,111 @@ input:focus-visible,
 .am-history-icon { font-size: .9rem; flex-shrink: 0; }
 .am-history-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* ===== POI搜索建议浮层(类似高德输入联想) ===== */
+.am-poi-panel {
+  position: absolute;
+  bottom: 100%;
+  left: 0; right: 0;
+  margin-bottom: 8px;
+  background: rgba(13,17,28,0.96);
+  border: 1px solid rgba(0,255,163,0.15);
+  border-radius: 16px;
+  padding: 10px;
+  backdrop-filter: blur(30px);
+  -webkit-backdrop-filter: blur(30px);
+  box-shadow: 0 -4px 24px rgba(0,0,0,0.5), 0 0 12px rgba(0,255,163,0.08);
+  max-height: 320px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+.am-poi-panel::-webkit-scrollbar { width: 4px; }
+.am-poi-panel::-webkit-scrollbar-thumb { background: rgba(0,255,163,0.2); border-radius: 2px; }
+.am-poi-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+  padding: 2px 6px 8px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.am-poi-title {
+  font-size: .76rem;
+  color: var(--ink-muted);
+  font-weight: 500;
+  letter-spacing: .02em;
+}
+.am-poi-loading {
+  font-size: .72rem;
+  color: var(--bio-emerald);
+  opacity: .8;
+}
+.am-poi-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.am-poi-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid transparent;
+  border-radius: 10px;
+  color: var(--ink-soft);
+  font-family: inherit;
+  cursor: pointer;
+  transition: all .15s;
+  text-align: left;
+  width: 100%;
+}
+.am-poi-item:hover,
+.am-poi-item:active {
+  background: rgba(0,255,163,0.1);
+  border-color: rgba(0,255,163,0.25);
+  color: var(--ink);
+  transform: scale(.99);
+}
+.am-poi-icon { font-size: 1rem; flex-shrink: 0; }
+.am-poi-info { flex: 1; min-width: 0; overflow: hidden; }
+.am-poi-name {
+  font-size: .86rem;
+  color: var(--ink);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-bottom: 2px;
+}
+.am-poi-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: .72rem;
+  color: var(--ink-muted);
+  overflow: hidden;
+}
+.am-poi-city {
+  flex-shrink: 0;
+  color: var(--bio-emerald);
+  opacity: .8;
+}
+.am-poi-addr {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.am-poi-dist {
+  flex-shrink: 0;
+  font-size: .74rem;
+  color: var(--bio-amber);
+  font-weight: 500;
+  padding: 2px 8px;
+  background: rgba(255,182,39,0.1);
+  border-radius: 10px;
+  white-space: nowrap;
+}
+
 /* ===== 设置独立页面 ===== */
 .settings-page {
   min-height: 100vh;
@@ -2542,6 +2647,11 @@ body.ark-large-font .am-msg-bubble { font-size: .95rem; }
 body.ark-large-font .am-quick-icon .label { font-size: .78rem; }
 body.ark-large-font .am-input-box-press,
 body.ark-large-font .am-input-box-field { font-size: 1rem; }
+body.ark-large-font .am-poi-name { font-size: .96rem; }
+body.ark-large-font .am-poi-addr,
+body.ark-large-font .am-poi-city,
+body.ark-large-font .am-poi-dist,
+body.ark-large-font .am-poi-title { font-size: .82rem; }
 body.ark-large-font .sp-section-title-sm { font-size: 1.05rem; }
 body.ark-large-font .sp-row-label { font-size: 1rem; }
 body.ark-large-font .sp-label { font-size: 1rem; }
@@ -2553,6 +2663,12 @@ body.ark-high-contrast { background: #000; }
 body.ark-high-contrast .am-msg-bubble { color: #fff !important; }
 body.ark-high-contrast .am-quick-icon { background: rgba(0,0,0,0.7); border-color: rgba(255,255,255,0.4); }
 body.ark-high-contrast .am-input-box { background: rgba(0,0,0,0.8); border-color: rgba(255,255,255,0.4); }
+body.ark-high-contrast .am-poi-panel { background: rgba(0,0,0,0.92); border-color: rgba(255,255,255,0.4); }
+body.ark-high-contrast .am-poi-item { background: rgba(0,0,0,0.6); border-color: rgba(255,255,255,0.2); color: #fff; }
+body.ark-high-contrast .am-poi-name { color: #fff; }
+body.ark-high-contrast .am-poi-addr,
+body.ark-high-contrast .am-poi-city,
+body.ark-high-contrast .am-poi-title { color: rgba(255,255,255,0.8); }
 
 /* ============================================
    移动端APP响应式布局 · 自适应手机宽度
@@ -2611,6 +2727,12 @@ body.ark-high-contrast .am-input-box { background: rgba(0,0,0,0.8); border-color
 
   /* 历史搜索 */
   .am-history-item { padding: 9px 10px; font-size: .78rem; }
+
+  /* POI搜索建议 */
+  .am-poi-panel { padding: 8px; max-height: 260px; }
+  .am-poi-item { padding: 9px 10px; }
+  .am-poi-name { font-size: .8rem; }
+  .am-poi-addr, .am-poi-city, .am-poi-dist { font-size: .68rem; }
 }
 
 /* 超小屏 (≤320px) */
@@ -2635,6 +2757,9 @@ body.ark-high-contrast .am-input-box { background: rgba(0,0,0,0.8); border-color
   .am-input-box-field { padding: 0 10px; font-size: .92rem; height: 50px; }
   .am-msg-list { max-height: 55vh; }
   .am-msg-bubble { font-size: .85rem; padding: 10px 14px; }
+  .am-poi-item { padding: 12px 14px; }
+  .am-poi-name { font-size: .94rem; }
+  .am-poi-addr, .am-poi-city, .am-poi-dist { font-size: .8rem; }
 }
 
 /* 横屏适配 (高度<450px) */

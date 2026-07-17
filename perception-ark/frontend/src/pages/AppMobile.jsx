@@ -37,6 +37,8 @@ export default function AppMobile() {
     catch { return []; }
   });
   const [showNavHistory, setShowNavHistory] = useState(false); // 历史搜索浮层
+  const [poiSuggestions, setPoiSuggestions] = useState([]); // POI搜索建议(输入联想)
+  const [poiLoading, setPoiLoading] = useState(false); // POI搜索加载中
   const [ttsRate, setTtsRate] = useState(() => parseFloat(localStorage.getItem('ark_tts_rate')) || 0.95);
   const [navInputMode, setNavInputMode] = useState(false); // 导航页: false=按住说话, true=文字输入
 
@@ -49,6 +51,7 @@ export default function AppMobile() {
   const isPressingRef = useRef(null);
   const modeIntervalRef = useRef(null); // 连续分析定时器
   const isProcessingRef = useRef(false); // 命令处理中标志(防止TTS音频被ASR重新拾取导致循环)
+  const poiSearchTimerRef = useRef(null); // POI搜索debounce定时器
 
   // 摄像头强制开启
   useEffect(() => {
@@ -169,9 +172,12 @@ export default function AppMobile() {
 
   const switchTab = useCallback((tab) => {
     setActiveTab(tab);
-    // 切换tab时关闭所有浮层(寻物输入框、历史搜索等)
+    // 切换tab时关闭所有浮层(寻物输入框、历史搜索、POI建议等)
     setShowFindInput(false);
     setShowNavHistory(false);
+    setPoiSuggestions([]);
+    setPoiLoading(false);
+    if (poiSearchTimerRef.current) { clearTimeout(poiSearchTimerRef.current); poiSearchTimerRef.current = null; }
     const names = { recognize: '识别', navigate: '导航', sos: '紧急呼救' };
     showToast(`已切换到${names[tab]}`);
   }, [showToast]);
@@ -589,6 +595,9 @@ export default function AppMobile() {
       return updated;
     });
     setShowNavHistory(false);
+    setPoiSuggestions([]);
+    setPoiLoading(false);
+    if (poiSearchTimerRef.current) { clearTimeout(poiSearchTimerRef.current); poiSearchTimerRef.current = null; }
     try {
       const res = await api.navigate(destination, location?.lat, location?.lng);
       setNavInput('');
@@ -607,6 +616,43 @@ export default function AppMobile() {
     }
     finally { setBusy(false); }
   }, [navInput, location, addMessage, showToast, speak, drawRouteFromResult, formatNavResult]);
+
+  // ===== POI搜索建议(类似高德输入联想) =====
+  // 清空POI建议
+  const clearPoiSuggestions = useCallback(() => {
+    setPoiSuggestions([]);
+    setPoiLoading(false);
+    if (poiSearchTimerRef.current) { clearTimeout(poiSearchTimerRef.current); poiSearchTimerRef.current = null; }
+  }, []);
+
+  // 输入变化时触发debounce搜索(300ms防抖)
+  const handleNavInputChange = useCallback((value) => {
+    setNavInput(value);
+    // 清除上一次定时器
+    if (poiSearchTimerRef.current) clearTimeout(poiSearchTimerRef.current);
+    const keyword = value.trim();
+    if (!keyword) { setPoiSuggestions([]); setPoiLoading(false); return; }
+    setPoiLoading(true);
+    poiSearchTimerRef.current = setTimeout(async () => {
+      try {
+        const res = await api.poiSearch(keyword, location?.lat, location?.lng);
+        if (res?.success) setPoiSuggestions(res.pois || []);
+        else setPoiSuggestions([]);
+      } catch (err) {
+        setPoiSuggestions([]);
+      } finally {
+        setPoiLoading(false);
+      }
+    }, 300);
+  }, [location]);
+
+  // 点击POI建议项 → 直接开始导航
+  const handlePoiSelect = useCallback((poi) => {
+    clearPoiSuggestions();
+    setNavInput('');
+    setShowNavHistory(false);
+    handleNavigate(poi.name);
+  }, [clearPoiSuggestions, handleNavigate]);
 
   // ===== 文本输入提交(必须在handleRecognizeCommand/handleNavigateCommand/handleNavigate之后定义) =====
   const handleTextInputSubmit = useCallback((text) => {
@@ -909,6 +955,33 @@ export default function AppMobile() {
         {/* 导航页 - 统一输入框(与识别页同设计): 左侧按住说话/文本输入 + 右侧切换icon */}
         {activeTab === 'navigate' && (
           <div className="am-navigate-bottom">
+            {/* POI搜索建议浮层(输入时显示,优先于历史搜索) */}
+            {navInputMode && poiSuggestions.length > 0 && (
+              <div className="am-poi-panel">
+                <div className="am-poi-header">
+                  <span className="am-poi-title">🔍 搜索结果</span>
+                  {poiLoading && <span className="am-poi-loading">搜索中...</span>}
+                </div>
+                <div className="am-poi-list">
+                  {poiSuggestions.map((poi, i) => (
+                    <button key={i} className="am-poi-item" onMouseDown={(e) => { e.preventDefault(); handlePoiSelect(poi); }}>
+                      <span className="am-poi-icon">📍</span>
+                      <div className="am-poi-info">
+                        <div className="am-poi-name">{poi.name}</div>
+                        <div className="am-poi-meta">
+                          {poi.city && <span className="am-poi-city">{poi.city}</span>}
+                          {poi.address && <span className="am-poi-addr">{poi.address}</span>}
+                        </div>
+                      </div>
+                      {poi.distance != null && poi.distance > 0 && (
+                        <span className="am-poi-dist">{poi.distance < 1000 ? `${poi.distance}m` : `${(poi.distance/1000).toFixed(1)}km`}</span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div className="am-input-box">
               {/* 左侧: 文本输入框 / 按住说话 */}
               {navInputMode ? (
@@ -916,11 +989,11 @@ export default function AppMobile() {
                   type="text"
                   className="am-input-box-field"
                   value={navInput}
-                  onChange={e => setNavInput(e.target.value)}
-                  onFocus={() => setShowNavHistory(true)}
-                  onBlur={() => setTimeout(() => setShowNavHistory(false), 200)}
+                  onChange={e => handleNavInputChange(e.target.value)}
+                  onFocus={() => { if (!navInput.trim()) setShowNavHistory(true); }}
+                  onBlur={() => setTimeout(() => { setShowNavHistory(false); }, 200)}
                   placeholder="输入目的地,如五一广场"
-                  onKeyDown={e => { if (e.key === 'Enter' && navInput.trim()) { handleNavigate(); setNavInputMode(false); } }}
+                  onKeyDown={e => { if (e.key === 'Enter' && navInput.trim()) { clearPoiSuggestions(); handleNavigate(); setNavInputMode(false); } }}
                   autoFocus
                 />
               ) : (
@@ -936,7 +1009,7 @@ export default function AppMobile() {
               {/* 右侧: 切换icon (键盘↔麦克风) */}
               <button
                 className="am-input-box-toggle"
-                onClick={() => { vibrateClick(); setNavInputMode(!navInputMode); if (!navInputMode) setNavInput(''); }}
+                onClick={() => { vibrateClick(); setNavInputMode(!navInputMode); if (!navInputMode) { setNavInput(''); clearPoiSuggestions(); } }}
                 title={navInputMode ? '切回语音' : '切到文字'}
               >
                 {navInputMode ? '🎤' : '⌨️'}
