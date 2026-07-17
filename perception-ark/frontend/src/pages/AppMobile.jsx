@@ -207,28 +207,53 @@ export default function AppMobile() {
     if (/打开导航|导航模式/.test(text)) { switchTab('navigate'); return; }
     if (/紧急呼救|SOS|救命/.test(text)) { switchTab('sos'); return; }
 
-    // 导航意图检测: "去XX" / "导航到XX" / "带我去XX" / "我要去XX"
+    // ===== 导航意图检测(仅在识别页触发跳转) =====
     // 排除含"过/来/回/出"+"去"的误触发(过去/过来/回去/出去)
-    let navDestination = null;
-    if (/^(导航[到去]?|带我去|我要去)/.test(text)) {
-      navDestination = text.replace(/^(导航[到去]?|带我去|我要去)/, '').trim();
-    } else {
-      // 匹配"X去YY",其中X不能是过来回出
-      const m = text.match(/([^过来回出])去(.+)/);
-      if (m) navDestination = m[2].trim();
-    }
+    if (activeTab === 'recognize') {
+      let navDestination = null;
 
-    if (navDestination && navDestination.length >= 2) {
-      addMessage('user', text);
-      isProcessingRef.current = true;
-      // 跳转到导航页并开始导航
-      switchTab('navigate');
-      speak(`好的，正在为您导航到${navDestination}`);
-      // 延迟调用导航,等tab切换完成MapView挂载
-      setTimeout(() => {
-        handleNavigate(navDestination);
-      }, 600);
-      return;
+      // 模式1: 明确的导航指令 "导航到XX" / "导航XX" / "带我去XX" / "我要去XX" / "我要导航去XX"
+      if (/^(导航[到去]?|带我去|我要去|我要导航[到去]?|帮我导航[到去]?)/.test(text)) {
+        navDestination = text.replace(/^(导航[到去]?|带我去|我要去|我要导航[到去]?|帮我导航[到去]?)/, '').trim();
+      }
+      // 模式2: "X去YY" X不能是过来回出
+      else {
+        const m = text.match(/([^过来回出])去(.+)/);
+        if (m) navDestination = m[2].trim();
+      }
+      // 模式3: 含"怎么走/怎么去/路线/如何到达"等导航相关关键词
+      if (!navDestination && /怎么走|怎么去|路线|怎么到达|如何去|如何到达/.test(text)) {
+        const m = text.match(/^(.+?)怎么[走去]/) || text.match(/^(.+?)路线/) || text.match(/^(.+?)(?:怎么|如何)到达/);
+        navDestination = m ? m[1].replace(/^(去|到|我要去|我想去|请带我去|带我去)/, '').trim() : text;
+      }
+      // 模式4: "XX在哪" / "XX在哪里"
+      if (!navDestination && /^(.+?)在哪$|^(.+?)在哪里$|^(.+?)在哪个位置$/.test(text)) {
+        const m = text.match(/^(.+?)在哪$|^(.+?)在哪里$|^(.+?)在哪个位置$/);
+        navDestination = m ? m[1].replace(/^(请问|请告诉我|我想知道)/, '').trim() : null;
+      }
+      // 模式5: "找XX" / "搜索XX"
+      if (!navDestination && /^(找|找一下|查找|搜索|查一下)(.+)$/.test(text)) {
+        const m = text.match(/^(?:找|找一下|查找|搜索|查一下)(.+)$/);
+        navDestination = m ? m[1].trim() : null;
+      }
+      // 模式6: "附近XX" / "附近的XX"
+      if (!navDestination && /^附近(?:的)?(.+)$/.test(text)) {
+        const m = text.match(/^附近(?:的)?(.+)$/);
+        navDestination = m ? m[1].trim() : null;
+      }
+
+      // 导航意图命中: 跳转到导航页并开始导航
+      if (navDestination && navDestination.length >= 1) {
+        addMessage('user', text);
+        isProcessingRef.current = true;
+        switchTab('navigate');
+        speak(`好的，正在为您导航到${navDestination}`);
+        // 延迟调用导航,等tab切换完成MapView挂载
+        setTimeout(() => {
+          handleNavigate(navDestination);
+        }, 600);
+        return;
+      }
     }
 
     addMessage('user', text);
@@ -589,20 +614,39 @@ export default function AppMobile() {
     if (/打开导航|导航模式/.test(text)) { switchTab('navigate'); return; }
     if (/紧急呼救|SOS|救命/.test(text)) { switchTab('sos'); return; }
 
-    // 导航意图检测(同语音逻辑)
-    let navDestination = null;
-    if (/^(导航[到去]?|带我去|我要去)/.test(text)) {
-      navDestination = text.replace(/^(导航[到去]?|带我去|我要去)/, '').trim();
-    } else {
-      const m = text.match(/([^过来回出])去(.+)/);
-      if (m) navDestination = m[2].trim();
-    }
-    if (navDestination && navDestination.length >= 2) {
-      addMessage('user', text);
-      switchTab('navigate');
-      speak(`好的，正在为您导航到${navDestination}`);
-      setTimeout(() => handleNavigate(navDestination), 600);
-      return;
+    // ===== 导航意图检测(同语音逻辑) =====
+    if (activeTab === 'recognize') {
+      let navDestination = null;
+      if (/^(导航[到去]?|带我去|我要去|我要导航[到去]?|帮我导航[到去]?)/.test(text)) {
+        navDestination = text.replace(/^(导航[到去]?|带我去|我要去|我要导航[到去]?|帮我导航[到去]?)/, '').trim();
+      } else {
+        const m = text.match(/([^过来回出])去(.+)/);
+        if (m) navDestination = m[2].trim();
+      }
+      if (/怎么走|怎么去|路线|怎么到达|如何去|如何到达/.test(text) && !navDestination) {
+        const m = text.match(/^(.+?)怎么[走去]/) || text.match(/^(.+?)路线/) || text.match(/^(.+?)(?:怎么|如何)到达/);
+        navDestination = m ? m[1].replace(/^(去|到|我要去|我想去|请带我去|带我去)/, '').trim() : text;
+      }
+      if (!navDestination && /^(.+?)在哪$|^(.+?)在哪里$|^(.+?)在哪个位置$/.test(text)) {
+        const m = text.match(/^(.+?)在哪$|^(.+?)在哪里$|^(.+?)在哪个位置$/);
+        navDestination = m ? m[1].replace(/^(请问|请告诉我|我想知道)/, '').trim() : null;
+      }
+      if (!navDestination && /^(找|找一下|查找|搜索|查一下)(.+)$/.test(text)) {
+        const m = text.match(/^(?:找|找一下|查找|搜索|查一下)(.+)$/);
+        navDestination = m ? m[1].trim() : null;
+      }
+      if (!navDestination && /^附近(?:的)?(.+)$/.test(text)) {
+        const m = text.match(/^附近(?:的)?(.+)$/);
+        navDestination = m ? m[1].trim() : null;
+      }
+
+      if (navDestination && navDestination.length >= 1) {
+        addMessage('user', text);
+        switchTab('navigate');
+        speak(`好的，正在为您导航到${navDestination}`);
+        setTimeout(() => handleNavigate(navDestination), 600);
+        return;
+      }
     }
 
     addMessage('user', text);
