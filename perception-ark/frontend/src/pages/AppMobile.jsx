@@ -206,6 +206,31 @@ export default function AppMobile() {
     if (/打开识别|识别模式/.test(text)) { switchTab('recognize'); return; }
     if (/打开导航|导航模式/.test(text)) { switchTab('navigate'); return; }
     if (/紧急呼救|SOS|救命/.test(text)) { switchTab('sos'); return; }
+
+    // 导航意图检测: "去XX" / "导航到XX" / "带我去XX" / "我要去XX"
+    // 排除含"过/来/回/出"+"去"的误触发(过去/过来/回去/出去)
+    let navDestination = null;
+    if (/^(导航[到去]?|带我去|我要去)/.test(text)) {
+      navDestination = text.replace(/^(导航[到去]?|带我去|我要去)/, '').trim();
+    } else {
+      // 匹配"X去YY",其中X不能是过来回出
+      const m = text.match(/([^过来回出])去(.+)/);
+      if (m) navDestination = m[2].trim();
+    }
+
+    if (navDestination && navDestination.length >= 2) {
+      addMessage('user', text);
+      isProcessingRef.current = true;
+      // 跳转到导航页并开始导航
+      switchTab('navigate');
+      speak(`好的，正在为您导航到${navDestination}`);
+      // 延迟调用导航,等tab切换完成MapView挂载
+      setTimeout(() => {
+        handleNavigate(navDestination);
+      }, 600);
+      return;
+    }
+
     addMessage('user', text);
     // 防护3: 标记处理中,阻止后续ASR结果触发
     isProcessingRef.current = true;
@@ -469,14 +494,47 @@ export default function AppMobile() {
   }, [activeTab, activeMode]);
 
   // ===== 导航页功能 =====
+  // 从API返回值中提取polyline绘制路线到地图
+  const drawRouteFromResult = useCallback((result) => {
+    if (!result || typeof result !== 'object') return;
+    if (result.polyline) {
+      try {
+        const coords = result.polyline.split(';').filter(p => p).map(p => {
+          const [lng, lat] = p.split(',').map(parseFloat);
+          return [lng, lat];
+        }).filter(c => !isNaN(c[0]) && !isNaN(c[1]));
+        if (coords.length > 1) {
+          setMapRoute(coords);
+          setMapPois([]);
+        }
+      } catch (e) { console.error('[Nav] 路线绘制失败:', e); }
+    }
+  }, []);
+
+  // 格式化导航结果为可读文本
+  const formatNavResult = useCallback((result) => {
+    if (typeof result === 'string') return result;
+    if (result && result.distance != null && result.duration != null) {
+      const firstStep = result.steps?.[0]?.instruction || '';
+      return `路线已规划：距离${result.distance}米，预计步行${result.duration}分钟。${firstStep ? firstStep + '。' : ''}`;
+    }
+    if (result && result.target) {
+      return `已找到目的地：${result.target.name}。`;
+    }
+    return JSON.stringify(result);
+  }, []);
+
   const handleNavigateCommand = useCallback(async (text) => {
     setBusy(true);
+    setSubtitle('正在规划路线...');
     try {
       const res = await callWithRetry(() => api.navigate(text, location?.lat, location?.lng));
       if (res?.success && res.result) {
-        const resultText = typeof res.result === 'string' ? res.result : JSON.stringify(res.result);
+        drawRouteFromResult(res.result);
+        const resultText = formatNavResult(res.result);
         addMessage('assistant', resultText);
         speak(resultText);
+        setSubtitle(`🧭 ${resultText}`);
       }
     } catch (err) {
       const isNetworkErr = /ERR_HTTP2|NETWORK|Failed to fetch|fetch/i.test(err.message);
@@ -487,22 +545,14 @@ export default function AppMobile() {
       setBusy(false);
       setTimeout(() => { isProcessingRef.current = false; }, 3000);
     }
-  }, [location, addMessage, speak, callWithRetry]);
+  }, [location, addMessage, speak, callWithRetry, drawRouteFromResult, formatNavResult]);
 
-  // ===== 文本输入提交(必须在handleRecognizeCommand/handleNavigateCommand之后定义) =====
-  const handleTextInputSubmit = useCallback((text) => {
-    if (/打开识别|识别模式/.test(text)) { switchTab('recognize'); return; }
-    if (/打开导航|导航模式/.test(text)) { switchTab('navigate'); return; }
-    if (/紧急呼救|SOS|救命/.test(text)) { switchTab('sos'); return; }
-    addMessage('user', text);
-    if (activeTab === 'recognize') handleRecognizeCommand(text);
-    else if (activeTab === 'navigate') handleNavigateCommand(text);
-  }, [activeTab, switchTab, addMessage, handleRecognizeCommand, handleNavigateCommand]);
-
+  // ===== 导航执行(必须在handleTextInputSubmit之前定义) =====
   const handleNavigate = useCallback(async (dest) => {
     const destination = (dest || navInput).trim();
     if (!destination) { showToast('请输入目的地'); speak('请告诉我您要去哪里'); return; }
     setBusy(true);
+    setSubtitle('正在规划路线...');
     addMessage('user', `导航到${destination}`);
     // 保存到历史搜索记录(去重,最多保留10条)
     setNavHistory(prev => {
@@ -516,14 +566,47 @@ export default function AppMobile() {
       const res = await api.navigate(destination, location?.lat, location?.lng);
       setNavInput('');
       if (res?.success && res.result) {
-        const resultText = typeof res.result === 'string' ? res.result : JSON.stringify(res.result);
+        drawRouteFromResult(res.result);
+        const resultText = formatNavResult(res.result);
         addMessage('assistant', resultText);
         speak(resultText);
+        setSubtitle(`🧭 ${resultText}`);
       }
     }
-    catch (err) { addMessage('assistant', `导航失败: ${err.message}`); speak(`导航失败: ${err.message}`); }
+    catch (err) {
+      const isNetworkErr = /ERR_HTTP2|NETWORK|Failed to fetch|fetch/i.test(err.message);
+      const errText = isNetworkErr ? '网络连接异常，服务可能正在启动中，请稍后再试。' : `导航失败: ${err.message}`;
+      addMessage('assistant', errText); setSubtitle(errText);
+    }
     finally { setBusy(false); }
-  }, [navInput, location, addMessage, showToast, speak]);
+  }, [navInput, location, addMessage, showToast, speak, drawRouteFromResult, formatNavResult]);
+
+  // ===== 文本输入提交(必须在handleRecognizeCommand/handleNavigateCommand/handleNavigate之后定义) =====
+  const handleTextInputSubmit = useCallback((text) => {
+    if (/打开识别|识别模式/.test(text)) { switchTab('recognize'); return; }
+    if (/打开导航|导航模式/.test(text)) { switchTab('navigate'); return; }
+    if (/紧急呼救|SOS|救命/.test(text)) { switchTab('sos'); return; }
+
+    // 导航意图检测(同语音逻辑)
+    let navDestination = null;
+    if (/^(导航[到去]?|带我去|我要去)/.test(text)) {
+      navDestination = text.replace(/^(导航[到去]?|带我去|我要去)/, '').trim();
+    } else {
+      const m = text.match(/([^过来回出])去(.+)/);
+      if (m) navDestination = m[2].trim();
+    }
+    if (navDestination && navDestination.length >= 2) {
+      addMessage('user', text);
+      switchTab('navigate');
+      speak(`好的，正在为您导航到${navDestination}`);
+      setTimeout(() => handleNavigate(navDestination), 600);
+      return;
+    }
+
+    addMessage('user', text);
+    if (activeTab === 'recognize') handleRecognizeCommand(text);
+    else if (activeTab === 'navigate') handleNavigateCommand(text);
+  }, [activeTab, switchTab, addMessage, handleRecognizeCommand, handleNavigateCommand, handleNavigate]);
 
   // ===== SOS紧急呼救 =====
   const handleSos = useCallback(async () => {
