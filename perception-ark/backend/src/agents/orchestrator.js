@@ -241,7 +241,7 @@ export async function runNavigationAgent(destination, startLat, startLng) {
 
     if (pois.length === 0) {
       emitSpeak('A02', `未找到"${destination}"，请换个关键词试试。`);
-      return null;
+      return { error: `未找到"${destination}"，请换个关键词试试。` };
     }
 
     // 智能选择模式: 用户说"最近的XX"/"附近XX"时,展示多个结果供选择
@@ -380,7 +380,7 @@ export async function runNavigationAgent(destination, startLat, startLng) {
   } catch (err) {
     emitLog('A02', `导航失败: ${err.message}`, 'error');
     emitSpeak('A02', '导航规划失败，请稍后再试。');
-    return null;
+    return { error: `导航规划失败: ${err.message}` };
   } finally {
     setTimeout(() => {
       emitAgentState('A02', false);

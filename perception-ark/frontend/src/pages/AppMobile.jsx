@@ -514,11 +514,13 @@ export default function AppMobile() {
   // 格式化导航结果为可读文本
   const formatNavResult = useCallback((result) => {
     if (typeof result === 'string') return result;
-    if (result && result.distance != null && result.duration != null) {
+    if (!result) return null;
+    if (result.error) return result.error;  // 后端返回的错误详情
+    if (result.distance != null && result.duration != null) {
       const firstStep = result.steps?.[0]?.instruction || '';
       return `路线已规划：距离${result.distance}米，预计步行${result.duration}分钟。${firstStep ? firstStep + '。' : ''}`;
     }
-    if (result && result.target) {
+    if (result.target) {
       return `已找到目的地：${result.target.name}。`;
     }
     return JSON.stringify(result);
