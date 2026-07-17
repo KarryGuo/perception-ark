@@ -928,6 +928,10 @@ export default function AppMobile() {
                   onChange={e => setTextInput(e.target.value)}
                   placeholder="输入文字指令..."
                   onKeyDown={e => { if (e.key === 'Enter' && textInput.trim()) { handleTextInputSubmit(textInput.trim()); setTextInput(''); } }}
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  spellCheck={false}
                   autoFocus
                 />
               ) : (
@@ -994,6 +998,10 @@ export default function AppMobile() {
                   onBlur={() => setTimeout(() => { setShowNavHistory(false); }, 200)}
                   placeholder="输入目的地,如五一广场"
                   onKeyDown={e => { if (e.key === 'Enter' && navInput.trim()) { clearPoiSuggestions(); handleNavigate(); setNavInputMode(false); } }}
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="off"
+                  spellCheck={false}
                   autoFocus
                 />
               ) : (
@@ -1033,6 +1041,10 @@ export default function AppMobile() {
                 value={findTarget}
                 onChange={e => setFindTarget(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter' && findTarget.trim()) startFindMode(findTarget); }}
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck={false}
                 autoFocus
               />
               <button
