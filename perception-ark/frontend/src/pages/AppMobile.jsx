@@ -289,7 +289,8 @@ export default function AppMobile() {
     isProcessingRef.current = true;
     if (activeTab === 'recognize') handleRecognizeCommand(text);
     else if (activeTab === 'navigate') handleNavigateCommand(text);
-  }, [asr.transcript, ttsSpeaking, activeTab, switchTab, addMessage, handleNavigate, handleRecognizeCommand, handleNavigateCommand, handleSosRespond, handleSosCancel]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [asr.transcript, ttsSpeaking]);
 
   // ===== 识别页功能 =====
   const captureImage = useCallback(async () => {
