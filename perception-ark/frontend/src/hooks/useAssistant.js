@@ -51,7 +51,7 @@ export function useAssistant({ location, onAgentAction, onWeatherReady, enabled 
         asr.stop();
       }
     } else if (ttsMutedRef.current) {
-      // TTS播报结束 - 延迟800ms恢复ASR(等回声完全消散)
+      // TTS播报结束 - 延迟1500ms恢复ASR(等回声完全消散,防回声循环)
       ttsMutedRef.current = false;
       const timer = setTimeout(() => {
         if (asrActiveRef.current && !booting && !thinking && !tts.speaking) {
@@ -59,7 +59,7 @@ export function useAssistant({ location, onAgentAction, onWeatherReady, enabled 
             asr.start();
           }
         }
-      }, 800);
+      }, 1500);
       return () => clearTimeout(timer);
     }
   }, [tts.speaking]);
@@ -183,13 +183,13 @@ export function useAssistant({ location, onAgentAction, onWeatherReady, enabled 
       }
     } catch (err) {
       console.error('[小舟] 发送失败:', err);
+      // API失败只显示不speak(避免TTS音频被ASR拾取形成回声循环)
       const errMsg = `抱歉，我遇到了问题: ${err.message}`;
       addMessage('assistant', errMsg);
-      tts.speak(errMsg);
     } finally {
       setThinking(false);
     }
-  }, [addMessage, location, onAgentAction, tts]);
+  }, [addMessage, location, onAgentAction]);
 
   // ===== 进入对话模式 =====
   const enterDialogue = useCallback(() => {

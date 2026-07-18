@@ -206,17 +206,15 @@ export default function Glasses() {
       if (!img) return;
       await api.scene(img, '请用一段话描述当前场景，包括：路面状况、前方主要物体及大致距离、场景类型。专为视障者设计。50-100字。');
     } catch (err) {
+      // 错误只显示在toast,不speak(避免TTS音频被小舟助手麦克风捕获形成回声循环)
       showToast(`场景感知失败: ${err.message}`);
-      speak(`场景感知失败: ${err.message}`);
     } finally { setBusy(false); }
-  }, [captureImage, showToast, speak]);
+  }, [captureImage, showToast]);
 
   const handleNavigation = useCallback(async (destination) => {
     const dest = (destination || voiceInput || '').trim();
     if (!dest) {
-      // 视障用户看不到toast,必须TTS播报
       showToast('请告诉我目的地');
-      speak('请告诉我您要去哪里，例如说带我去五一广场');
       return;
     }
     setBusy(true);
@@ -224,10 +222,10 @@ export default function Glasses() {
       await api.navigate(dest, location?.lat, location?.lng);
       if (voiceInput) setVoiceInput('');
     } catch (err) {
+      // 错误只显示,不speak(避免回声循环)
       showToast(`导航失败: ${err.message}`);
-      speak(`导航失败: ${err.message}`);
     } finally { setBusy(false); }
-  }, [voiceInput, location, showToast, speak]);
+  }, [voiceInput, location, showToast]);
 
   const handleSafety = useCallback(async () => {
     setBusy(true);
@@ -236,9 +234,8 @@ export default function Glasses() {
       await api.safety(img, 'scan');
     } catch (err) {
       showToast(`安全扫描失败: ${err.message}`);
-      speak(`安全扫描失败: ${err.message}`);
     } finally { setBusy(false); }
-  }, [captureImage, showToast, speak]);
+  }, [captureImage, showToast]);
 
   const handleOCR = useCallback(async () => {
     setBusy(true);
@@ -248,9 +245,8 @@ export default function Glasses() {
       await api.social(img, 'ocr');
     } catch (err) {
       showToast(`OCR识别失败: ${err.message}`);
-      speak(`文字识别失败: ${err.message}`);
     } finally { setBusy(false); }
-  }, [captureImage, showToast, speak]);
+  }, [captureImage, showToast]);
 
   const handleFace = useCallback(async () => {
     setBusy(true);
@@ -260,9 +256,8 @@ export default function Glasses() {
       await api.social(img, 'face');
     } catch (err) {
       showToast(`人脸识别失败: ${err.message}`);
-      speak(`人脸识别失败: ${err.message}`);
     } finally { setBusy(false); }
-  }, [captureImage, showToast, speak]);
+  }, [captureImage, showToast]);
 
   const handleMemory = useCallback(async () => {
     setBusy(true);
@@ -270,9 +265,8 @@ export default function Glasses() {
       await api.memory('检索最近记忆');
     } catch (err) {
       showToast(`记忆检索失败: ${err.message}`);
-      speak(`记忆检索失败: ${err.message}`);
     } finally { setBusy(false); }
-  }, [showToast, speak]);
+  }, [showToast]);
 
   // ===== 小舟action回调: 收到action后前端直接调用对应Agent API =====
   // 不依赖WebSocket事件推送,确保地图路线绘制和Agent调用可靠执行
@@ -336,11 +330,10 @@ export default function Glasses() {
       }
     } catch (err) {
       console.error('[Agent Action] 调用失败:', action, err.message);
+      // 错误只显示,不speak(避免TTS音频被小舟助手麦克风捕获形成回声循环)
       showToast(`能力调用失败: ${err.message}`);
-      // 视障用户看不到toast,用TTS播报错误
-      speak(`操作失败: ${err.message}`);
     }
-  }, [location, captureImage, showToast, speak]);
+  }, [location, captureImage, showToast]);
 
   // 用useEffect同步ref,避免渲染过程中修改ref(React 18并发渲染安全)
   useEffect(() => {
@@ -354,10 +347,10 @@ export default function Glasses() {
     try {
       await api.fall(location?.lat, location?.lng);
     } catch (err) {
+      // 错误只显示,不speak(避免回声循环)
       showToast(`跌倒告警失败: ${err.message}`);
-      speak(`跌倒告警失败: ${err.message}`);
     } finally { setBusy(false); }
-  }, [location, showToast, speak]);
+  }, [location, showToast]);
 
   useEffect(() => {
     handleFallRef.current = handleFallImpl;
@@ -375,7 +368,6 @@ export default function Glasses() {
   const handleVoiceCommand = useCallback(async () => {
     if (!voiceInput.trim()) {
       showToast('请输入或说出指令，或唤醒小舟"小舟小舟"');
-      speak('请说出指令，或说小舟小舟唤醒我');
       return;
     }
     setBusy(true);
@@ -384,10 +376,10 @@ export default function Glasses() {
       await api.voice(voiceInput, img, location);
       setVoiceInput('');
     } catch (err) {
+      // 错误只显示,不speak(避免回声循环)
       showToast(`指令执行失败: ${err.message}`);
-      speak(`指令执行失败: ${err.message}`);
     } finally { setBusy(false); }
-  }, [voiceInput, camera, location, showToast, speak]);
+  }, [voiceInput, camera, location, showToast]);
 
   // ===== 摄像头开关 =====
   const toggleCamera = useCallback(async () => {
