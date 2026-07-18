@@ -29,7 +29,12 @@ export default function Login() {
       await login(username.trim(), password);
       goHome();
     } catch (err) {
-      setError(err.message);
+      // 401可能是后端重启数据丢失(账号不存在),给友好提示
+      if (/用户名或密码错误|Unauthorized|401/.test(err.message)) {
+        setError(`账号或密码错误。若您之前已注册,可能因服务器重启数据被清除,请点击"评委快速体验"或重新注册。`);
+      } else {
+        setError(err.message);
+      }
     } finally {
       setLoading(false);
     }
