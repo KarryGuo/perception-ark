@@ -21,11 +21,23 @@ export function AuthProvider({ children }) {
     // 验证token有效性
     api.me()
       .then(res => {
-        if (res.success) setUser(res.user);
-        else localStorage.removeItem('ark_token');
+        if (res.success) {
+          setUser(res.user);
+        } else {
+          // token无效或账号不存在(后端重启数据丢失),清除token跳转登录
+          localStorage.removeItem('ark_token');
+          // 避免在登录页本身跳转造成循环
+          if (window.location.hash !== '#/login' && window.location.hash !== '#/demo') {
+            window.location.hash = '#/login';
+          }
+        }
       })
       .catch(() => {
+        // 网络错误或401/404: 清除token
         localStorage.removeItem('ark_token');
+        if (window.location.hash !== '#/login' && window.location.hash !== '#/demo') {
+          window.location.hash = '#/login';
+        }
       })
       .finally(() => setLoading(false));
   }, []);
