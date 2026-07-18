@@ -536,8 +536,9 @@ export default function AppMobile() {
         // 连续失败3次: 自动关闭模式,避免无意义循环
         if (failCount >= 3) {
           const modeName = modeNames[activeMode] || '当前模式';
-          speak(`${modeName}已关闭，服务异常，请稍后再试。`);
+          // 不speak(避免TTS音频被ASR拾取形成回声循环),只显示toast
           showToast(`${modeName}已关闭（服务异常）`);
+          addMessage('assistant', `${modeName}已关闭，服务异常，请稍后再试。`);
           setActiveMode(null);
           failCount = 0;
         }
@@ -758,10 +759,10 @@ export default function AppMobile() {
         addMessage('assistant', 'SOS发送失败，请稍后再试或直接拨打120。');
       }
     } catch (err) {
+      // 不speak(避免TTS音频被ASR拾取形成回声循环),只显示在聊天中
       addMessage('assistant', `SOS发送失败: ${err.message}`);
-      speak(`SOS发送失败: ${err.message}`);
     } finally { setBusy(false); }
-  }, [location, addMessage, speak, showToast]);
+  }, [location, addMessage, showToast]);
 
   // ===== 用户语音应答SOS(说"我没事"/"我很好"等) → 取消120拨打 =====
   const handleSosRespond = useCallback(async () => {

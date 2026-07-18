@@ -209,7 +209,8 @@ export async function runSceneAgent(imageBase64, userQuery = '') {
     return result;
   } catch (err) {
     emitLog('A01', `场景感知失败: ${err.message}`, 'error');
-    emitSpeak('A01', '抱歉，当前场景分析失败，请稍后再试。');
+    // 不emitSpeak(避免TTS音频被ASR拾取形成回声循环),只推送subtitle到前端显示
+    emitSubtitle(`⚠️ 场景分析失败: ${err.message}`);
     return null;
   } finally {
     setTimeout(() => emitAgentState('A01', false), 1000);
@@ -379,7 +380,8 @@ export async function runNavigationAgent(destination, startLat, startLng) {
     return route;
   } catch (err) {
     emitLog('A02', `导航失败: ${err.message}`, 'error');
-    emitSpeak('A02', '导航规划失败，请稍后再试。');
+    // 不emitSpeak(避免回声循环),只推送subtitle
+    emitSubtitle(`⚠️ 导航规划失败: ${err.message}`);
     return { error: `导航规划失败: ${err.message}` };
   } finally {
     setTimeout(() => {
@@ -479,7 +481,8 @@ export async function selectPoiAndNavigate(selection, startLat, startLng) {
     return { target, route };
   } catch (err) {
     emitLog('A02', `选择导航失败: ${err.message}`, 'error');
-    emitSpeak('A02', '导航失败，请稍后再试。');
+    // 不emitSpeak(避免回声循环)
+    emitSubtitle(`⚠️ 导航失败: ${err.message}`);
     return null;
   } finally {
     setTimeout(() => {
@@ -804,7 +807,8 @@ export async function triggerDangerPreemption(imageBase64) {
     } catch (err) {
       emitLog('A03', `视觉检测失败: ${err.message}`, 'error');
       emitAgentState('A03', false);
-      emitSpeak('A03', `安全检测失败：${err.message}`);
+      // 不emitSpeak(避免回声循环),只推送subtitle
+      emitSubtitle(`⚠️ 安全检测失败: ${err.message}`);
     }
   }, 1500);
 }
@@ -868,7 +872,8 @@ export async function runSocialAgent(imageBase64, mode = 'ocr') {
     return speakText;
   } catch (err) {
     emitLog('A04', `社交辅助失败: ${err.message}`, 'error');
-    emitSpeak('A04', '识别失败，请稍后再试。');
+    // 不emitSpeak(避免回声循环)
+    emitSubtitle(`⚠️ 识别失败: ${err.message}`);
     return null;
   } finally {
     setTimeout(() => emitAgentState('A04', false), 2000);
