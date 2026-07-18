@@ -492,43 +492,166 @@ export async function selectPoiAndNavigate(selection, startLat, startLng) {
 }
 
 // ============================================================
+// JSON结构化解析工具 - 从VLM文本回复中提取JSON对象
+// 模型可能返回 ```json ... ``` 或直接返回JSON,或夹杂其他文字
+// ============================================================
+function safeParseJson(text) {
+  if (!text || typeof text !== 'string') return null;
+  // 尝试从markdown代码块提取
+  const codeBlock = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (codeBlock) {
+    try { return JSON.parse(codeBlock[1].trim()); } catch (e) { /* continue */ }
+  }
+  // 尝试直接解析
+  try { return JSON.parse(text.trim()); } catch (e) { /* continue */ }
+  // 尝试提取最外层 { ... }
+  const braceMatch = text.match(/\{[\s\S]*\}/);
+  if (braceMatch) {
+    try { return JSON.parse(braceMatch[0]); } catch (e) { /* continue */ }
+  }
+  return null;
+}
+
+// 方位→空间音频参数映射 (用于前端3D空间音频定位)
+// pan: -1(最左) ~ 0(正中) ~ 1(最右)
+const DIR_PAN_MAP = {
+  '左方': -0.9, '左边': -0.9, '左侧': -0.9,
+  '左前方': -0.6, '左前': -0.6,
+  '正前方': 0, '前方': 0, '正前': 0,
+  '右前方': 0.6, '右前': 0.6,
+  '右方': 0.9, '右边': 0.9, '右侧': 0.9,
+  '后方': 0, '身后': 0, '正后方': 0
+};
+
+// ============================================================
 // A03 安全预警 Agent
+// 输出JSON格式: {safe, direction, distance, object, action, urgent}
+// 前端可直接解析JSON驱动震动分级/空间音频/UI,不再依赖脆弱正则
 // ============================================================
 export async function runSafetyAgent(imageBase64, mode = 'scan') {
-  emitAgentState('A03', true, '安全扫描中...');
-  emitLog('A03', '安全预警 Agent 启动');
+  emitAgentState('A03', true, mode === 'traffic' ? '红绿灯识别中...' : '安全扫描中...');
+  emitLog('A03', `安全预警 Agent 启动 · 模式: ${mode}`);
 
   if (!imageBase64) {
     emitAgentState('A03', false);
-    emitSpeak('A03', '未获取到摄像头画面，无法进行安全扫描。请先启动摄像头。');
     emitSubtitle('⚠️ 未获取到摄像头画面，无法进行安全扫描');
     return null;
   }
 
   try {
-    const result = await visionUnderstand(imageBase64, '你是视障用户的安全守护者。请检测前方1-3米范围内的障碍物和危险。必须严格按以下格式之一回答:\n1. 有障碍物时:"[左前方/正前方/右前方/左方/右方][距离]米有[障碍物名称],建议[左/右]绕行"。距离必须是1到3之间的数字(单位米)。\n2. 无障碍物时:"前方安全"。\n3. 障碍物非常近(1米内)时:"警告,[方位]约[距离]米有[障碍物名称],立即停止!"。\n仅输出上述格式,30字以内,不要解释。');
-
-    emitAgentState('A03', true, result);
-    if (result.includes('安全') && !result.includes('不安全')) {
-      emitSpeak('A03', result);
-      emitSubtitle(`🛡️ ${result}`);
+    let safetyPrompt;
+    if (mode === 'traffic') {
+      safetyPrompt = `你是视障用户的红绿灯识别助手。请识别前方是否有红绿灯及其状态。
+必须严格输出JSON(不要输出其他任何文字):
+{"safe":boolean,"traffic_light":"red|green|yellow|none","direction":"左前方|正前方|右前方|左方|右方","distance":number,"crosswalk":boolean,"object":"交通信号灯","action":"建议行动","urgent":boolean}
+规则:
+- 看到红灯: safe=false, traffic_light="red", urgent=true, action="红灯请停下等待"
+- 看到绿灯: safe=true, traffic_light="green", urgent=false, action="绿灯可以通行"
+- 看到黄灯: safe=false, traffic_light="yellow", urgent=true, action="黄灯请停下等待"
+- 未看到红绿灯: {"safe":true,"traffic_light":"none"}
+- 有斑马线但无红绿灯: safe=true, crosswalk=true
+- distance单位为米(数字)
+- 只输出JSON,不要markdown,不要解释`;
     } else {
-      // 检测到危险 - 触发抢占
-      emitAlert(result);
-      // 1米内紧急情况使用urgent模式
-      const isUrgent = /警告|立即停止|约0|约1米/.test(result);
-      emitSpeak('A03', isUrgent ? `危险！${result}请立即停止前进！` : `注意！${result}请缓慢避让。`, { urgent: isUrgent });
-      emitSubtitle(`⚠️ ${result}`, true);
-      sharedContext.lastDangerEvent = { time: now(), description: result };
+      const isTravel = mode === 'travel';
+      safetyPrompt = `你是视障用户的安全守护者。检测前方1-5米范围内是否有障碍物或危险${isTravel ? '，同时留意红绿灯状态' : ''}。
+必须严格输出JSON(不要输出其他任何文字):
+{"safe":boolean,"direction":"左前方|正前方|右前方|左方|右方","distance":number,"object":"障碍物名称"${isTravel ? ',"traffic_light":"red|green|yellow|none"' : ''},"action":"建议行动","urgent":boolean}
+规则:
+- 无障碍物且安全时: {"safe":true}
+- 障碍物3米以外: safe=false, urgent=false, action建议"注意[方向]绕行"
+- 障碍物1-3米: safe=false, urgent=false, action建议"[方向]避让"
+- 障碍物1米内/快速接近/有车辆驶来: safe=false, urgent=true, action必须为"立即停止"
+- 台阶/坡道/水坑/施工围栏/盲道中断视为障碍
+- distance单位为米(数字),direction必须是规定值之一
+${isTravel ? '- 看到红灯时: traffic_light="red", urgent=true, action="红灯请停下"; 绿灯: traffic_light="green", safe=true\n' : ''}- 只输出JSON,不要markdown,不要解释`;
     }
-    return result;
+
+    const rawResult = await visionUnderstand(imageBase64, safetyPrompt);
+    const parsed = safeParseJson(rawResult);
+
+    if (!parsed) {
+      emitLog('A03', `安全检测JSON解析失败,原文: ${rawResult.slice(0, 80)}`, 'warn');
+      const isSafe = /前方安全|安全|无障碍/.test(rawResult) && !/不安全|警告|危险|障碍/.test(rawResult);
+      if (isSafe) {
+        emitSubtitle(mode === 'traffic' ? '🚦 未检测到红绿灯' : '🛡️ 前方安全');
+        return { safe: true, raw: rawResult };
+      }
+      const distMatch = rawResult.match(/([0-9]+(?:\.[0-9]+)?)\s*米/);
+      const dist = distMatch ? parseFloat(distMatch[1]) : 2;
+      const isUrgent = /警告|立即停止|危险|红灯/.test(rawResult) || dist <= 1;
+      const direction = /左/.test(rawResult) ? '左前方' : /右/.test(rawResult) ? '右前方' : '正前方';
+      const isRedLight = /红灯/.test(rawResult);
+      const isGreenLight = /绿灯/.test(rawResult);
+      return emitSafetyResult({
+        safe: false, direction, distance: dist,
+        object: isRedLight ? '红灯' : isGreenLight ? '绿灯' : '障碍物',
+        action: isUrgent ? '立即停止' : '注意避让', urgent: isUrgent,
+        traffic_light: isRedLight ? 'red' : isGreenLight ? 'green' : undefined,
+        raw: rawResult
+      });
+    }
+
+    return emitSafetyResult(parsed, mode);
   } catch (err) {
     emitLog('A03', `安全扫描失败: ${err.message}`, 'error');
-    // 安全扫描失败不播报(避免TTS循环),只记录
     return null;
   } finally {
-    setTimeout(() => emitAgentState('A03', false), 3000);
+    setTimeout(() => emitAgentState('A03', false), 2000);
   }
+}
+
+// 统一的安全结果输出函数: 推送speak/alert/structured事件
+function emitSafetyResult(parsed, mode = 'scan') {
+  const { safe, direction, distance, object, action, urgent, traffic_light } = parsed;
+  const pan = DIR_PAN_MAP[direction] ?? 0;
+
+  if (safe) {
+    if (traffic_light === 'green') {
+      const text = '🚦 绿灯，可以通行';
+      emitSubtitle(text);
+      emitSpeak('A03', '绿灯，可以通行', { urgent: false });
+      emit({ type: 'safety_result', safe: true, traffic_light: 'green', pan: 0 });
+      return { ...parsed, pan };
+    }
+    emitSubtitle(mode === 'traffic' ? '🚦 路口安全' : '🛡️ 前方安全');
+    return { ...parsed, pan };
+  }
+
+  let speakText;
+  if (traffic_light === 'red') {
+    speakText = '红灯，请停下等待';
+    emitAlert(speakText);
+    emitSpeak('A03', speakText, { urgent: true });
+    emitSubtitle(`🚦 ${speakText}`, true);
+  } else if (traffic_light === 'yellow') {
+    speakText = '黄灯，请减速停下';
+    emitAlert(speakText);
+    emitSpeak('A03', speakText, { urgent: true });
+    emitSubtitle(`🚦 ${speakText}`, true);
+  } else {
+    const distText = distance != null ? `${distance}米` : '附近';
+    speakText = urgent
+      ? `危险！${direction || '正前方'}约${distText}有${object || '障碍物'}，${action || '立即停止'}！`
+      : `注意，${direction || '正前方'}约${distText}有${object || '障碍物'}，${action || '注意避让'}。`;
+    emitAlert(speakText);
+    emitSpeak('A03', speakText, { urgent: !!urgent });
+    emitSubtitle(urgent ? `🚨 ${speakText}` : `⚠️ ${speakText}`, !!urgent);
+  }
+
+  emit({
+    type: 'safety_result',
+    safe: false,
+    direction: direction || '正前方',
+    distance: distance || 2,
+    object: object || '障碍物',
+    urgent: !!urgent || traffic_light === 'red' || traffic_light === 'yellow',
+    traffic_light: traffic_light || undefined,
+    pan
+  });
+
+  sharedContext.lastDangerEvent = { time: now(), description: speakText, ...parsed };
+  return { ...parsed, pan };
 }
 
 // 紧急联系人配置: 优先从users表读取(家属端绑定),环境变量作为兜底

@@ -4,15 +4,12 @@ import { useCamera } from '../hooks/useCamera.js';
 import { useSpeechSynthesis, useSpeechRecognition } from '../hooks/useSpeech.js';
 import { useGeolocation } from '../hooks/useGeolocation.js';
 import { useAuth } from '../hooks/useAuth.jsx';
+import { useSpatialAudio } from '../hooks/useSpatialAudio.js';
 import { api } from '../services/api.js';
 import MapView from '../components/MapView.jsx';
 
-/**
- * 感知方舟 · 移动端APP (沉浸式全屏版)
- * - 识别: 全屏摄像头背景 + 浮动透明按钮 + 聊天浮层
- * - 导航: 全屏3D地图 + 浮动工具栏 + 底部输入
- * - SOS:  全屏背景 + 浮动紧急按钮 + 联系人列表
- */
+const WAKE_WORDS = ['小舟小舟', '小周小周', '小舟'];
+
 export default function AppMobile() {
   const { user, logout } = useAuth();
   const [activeTab, setActiveTab] = useState('recognize');
@@ -41,8 +38,21 @@ export default function AppMobile() {
   const [poiLoading, setPoiLoading] = useState(false); // POI搜索加载中
   const [ttsRate, setTtsRate] = useState(() => parseFloat(localStorage.getItem('ark_tts_rate')) || 0.95);
   const [navInputMode, setNavInputMode] = useState(false); // 导航页: false=按住说话, true=文字输入
+  const [voiceWakeActive, setVoiceWakeActive] = useState(true); // 语音唤醒免手动开关
+  const [wakeDialogue, setWakeDialogue] = useState(false); // 唤醒后对话模式
+  const [firstUse, setFirstUse] = useState(() => !localStorage.getItem('ark_first_use_done'));
+  const [tutorialStep, setTutorialStep] = useState(0);
+  const [persistentError, setPersistentError] = useState(null); // 持久错误显示
+  const [trafficLightFast, setTrafficLightFast] = useState(null); // 前端快速红绿灯检测结果
+  const trafficCanvasRef = useRef(null);
+  const wakeListeningRef = useRef(false);
+  const wakeAsrRef = useRef(null);
+  const dialogueTimeoutRef = useRef(null);
+  const wakePendingRef = useRef('');
+  const handleVoiceInputRef = useRef(null);
 
   const { speak, stop: stopSpeak, speaking: ttsSpeaking, setVoiceByName, voice: currentVoice } = useSpeechSynthesis();
+  const spatialAudio = useSpatialAudio();
   const asr = useSpeechRecognition();
   const camera = useCamera();
   const { location } = useGeolocation();
@@ -53,16 +63,66 @@ export default function AppMobile() {
   const isProcessingRef = useRef(false); // 命令处理中标志(防止TTS音频被ASR重新拾取导致循环)
   const poiSearchTimerRef = useRef(null); // POI搜索debounce定时器
 
-  // 摄像头强制开启
+  // 大字体默认开启
   useEffect(() => {
-    if (!camera.active && !camera.error) camera.start();
-  }, [camera.active, camera.error]);
-
-  // 恢复无障碍模式设置(大字体/高对比度)
-  useEffect(() => {
-    if (localStorage.getItem('ark_large_font') === 'true') document.body.classList.add('ark-large-font');
+    if (localStorage.getItem('ark_large_font') === null) {
+      localStorage.setItem('ark_large_font', 'true');
+      document.body.classList.add('ark-large-font');
+    } else if (localStorage.getItem('ark_large_font') === 'true') {
+      document.body.classList.add('ark-large-font');
+    }
     if (localStorage.getItem('ark_high_contrast') === 'true') document.body.classList.add('ark-high-contrast');
   }, []);
+
+  // 摄像头启动(带降级处理)
+  const startCamera = useCallback(async () => {
+    if (camera.active) return true;
+    const ok = await camera.start();
+    if (!ok) {
+      setPersistentError(camera.error || '摄像头无法启动，请检查权限，可使用纯语音模式');
+      speak('摄像头未授权，将使用纯语音模式。您仍可通过语音使用导航和紧急呼救。', { rate: 0.9 });
+      return false;
+    }
+    setPersistentError(null);
+    return true;
+  }, [camera, speak]);
+
+  // 摄像头首次启动(首次引导后或非首次)
+  useEffect(() => {
+    if (firstUse) return;
+    if (!camera.active && !camera.error) {
+      startCamera();
+    }
+  }, [firstUse, camera.active, camera.error, startCamera]);
+
+  // 首次使用引导教程步骤文本
+  const tutorialSteps = [
+    { title: '欢迎使用感知方舟', text: '感知方舟是专为视障朋友设计的智能出行助手。我将引导您完成基础设置。', speakText: '欢迎使用感知方舟。感知方舟是专为视障朋友设计的智能出行助手。我将引导您完成基础设置。' },
+    { title: '语音唤醒', text: '您无需动手操作，只需说出"小舟小舟"即可随时唤醒我，说出您的需求。', speakText: '您无需动手操作。只需说出小舟小舟，即可随时唤醒我，说出您的需求。' },
+    { title: '三大核心功能', text: '识别模式帮您了解周围环境和寻找物品；导航模式带您到达目的地；紧急呼救在需要时自动通知亲友。', speakText: '识别模式帮您了解周围环境和寻找物品。导航模式带您到达目的地。紧急呼救在需要时自动通知亲友。' },
+    { title: '空间感知与安全', text: '我会通过空间音效提示危险方向，通过不同震动强度提示距离。越近震动越急促。', speakText: '我会通过空间音效提示危险方向，通过不同震动强度提示距离。越近震动越急促。' },
+    { title: '开始使用', text: '设置已完成。请授权摄像头权限以获得最佳体验。现在请说出"小舟小舟"开始使用吧！', speakText: '设置已完成。请授权摄像头权限以获得最佳体验。现在请说出小舟小舟开始使用吧！' }
+  ];
+
+  // 启动语音唤醒监听(非首次使用且非引导中)
+  useEffect(() => {
+    if (firstUse) return;
+    const t = setTimeout(() => startWakeListener(), 1500);
+    return () => {
+      clearTimeout(t);
+      stopWakeListener();
+      if (dialogueTimeoutRef.current) clearTimeout(dialogueTimeoutRef.current);
+    };
+  }, [firstUse, startWakeListener, stopWakeListener]);
+
+  // 引导教程语音
+  useEffect(() => {
+    if (!firstUse) return;
+    const step = tutorialSteps[tutorialStep];
+    if (step) {
+      setTimeout(() => speak(step.speakText, { rate: 0.9 }), 500);
+    }
+  }, [firstUse, tutorialStep, speak]);
 
   // ===== 摇一摇开启出行模式 (定义提前到 showToast 之后) =====
   // (见下方)
@@ -105,18 +165,34 @@ export default function AppMobile() {
         }
         break;
       case 'sos_call_120':
-        // 后端判定用户无应答,前端执行拨号120
         addMessage('assistant', `🚨 已为您拨打120急救电话。位置: ${event.location || '未知'}。请保持冷静，救援正在路上。`);
         setSubtitle('🚨 正在拨打120...');
         if (navigator.vibrate) navigator.vibrate([1000, 200, 1000, 200, 1000, 200, 2000]);
-        // 延迟2秒后跳转拨号(等TTS播报完"正在拨打120")
         setTimeout(() => {
           try { window.location.href = 'tel:120'; }
           catch (e) { console.warn('[SOS] tel:120 跳转失败:', e); }
         }, 2000);
         break;
+      case 'safety_result':
+        if (!event.safe) {
+          if (navigator.vibrate) {
+            if (event.urgent) navigator.vibrate([300, 80, 300, 80, 300, 80, 500]);
+            else if (event.distance <= 2) navigator.vibrate([150, 80, 150]);
+            else navigator.vibrate(80);
+          }
+          const dir = event.direction || '正前方';
+          const distText = event.distance != null ? `${event.distance}米` : '附近';
+          const speakText = event.urgent
+            ? `危险！${dir}约${distText}有${event.object}，立即停止！`
+            : `注意，${dir}约${distText}有${event.object}。`;
+          spatialAudio.speakDirectional(speakText, dir, { urgent: !!event.urgent });
+          setSubtitle(event.urgent ? `🚨 ${speakText}` : `⚠️ ${speakText}`, !!event.urgent);
+        }
+        break;
+      case 'agent_log':
+        break;
     }
-  }, [speak]);
+  }, [speak, spatialAudio]);
 
   const { connected } = useWebSocket(handleWsEvent);
 
@@ -128,6 +204,168 @@ export default function AppMobile() {
     setToast(text);
     setTimeout(() => setToast(''), 2500);
   }, []);
+
+  const completeTutorial = useCallback(() => {
+    localStorage.setItem('ark_first_use_done', '1');
+    setFirstUse(false);
+  }, []);
+
+  const startWakeListener = useCallback(() => {
+    if (!voiceWakeActive || wakeListeningRef.current) return;
+    try {
+      const WakeRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!WakeRecognition) return;
+      const recognition = new WakeRecognition();
+      recognition.lang = 'zh-CN';
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.maxAlternatives = 1;
+      wakeAsrRef.current = recognition;
+      wakePendingRef.current = '';
+      recognition.onresult = (e) => {
+        let interim = '';
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          interim += e.results[i][0].transcript;
+        }
+        const text = interim.replace(/\s/g, '');
+        const detected = WAKE_WORDS.find(w => text.includes(w));
+        if (detected) {
+          try { recognition.stop(); } catch(ex) {}
+          wakeListeningRef.current = false;
+          setWakeDialogue(true);
+          spatialAudio.beep('正前方', 0.12, 880);
+          speak('我在，请说', { rate: 1.05, onEnd: () => {
+            setTimeout(() => {
+              const CmdRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+              if (!CmdRec) return;
+              const cmdRec = new CmdRec();
+              cmdRec.lang = 'zh-CN';
+              cmdRec.continuous = false;
+              cmdRec.interimResults = true;
+              cmdRec.maxAlternatives = 1;
+              let gotResult = false;
+              cmdRec.onresult = (ev) => {
+                for (let i = ev.resultIndex; i < ev.results.length; i++) {
+                  const t = ev.results[i][0].transcript.trim();
+                  if (ev.results[i].isFinal && t) {
+                    gotResult = true;
+                    handleVoiceInputRef.current?.(t);
+                    setWakeDialogue(false);
+                    setTimeout(() => startWakeListener(), 800);
+                  } else {
+                    setSubtitle(`👂 ${t}`);
+                  }
+                }
+              };
+              cmdRec.onerror = () => {
+                setWakeDialogue(false); setSubtitle('');
+                setTimeout(() => startWakeListener(), 1000);
+              };
+              cmdRec.onend = () => {
+                if (!gotResult) {
+                  setWakeDialogue(false); setSubtitle('');
+                  setTimeout(() => startWakeListener(), 1000);
+                }
+              };
+              cmdRec.start();
+              if (dialogueTimeoutRef.current) clearTimeout(dialogueTimeoutRef.current);
+              dialogueTimeoutRef.current = setTimeout(() => {
+                try { cmdRec.abort(); } catch(ex) {}
+                setWakeDialogue(false); setSubtitle('');
+                startWakeListener();
+              }, 8000);
+            }, 300);
+          }});
+          setSubtitle('🎤 我在，请说...');
+          wakePendingRef.current = '';
+        }
+      };
+      recognition.onerror = () => {
+        wakeListeningRef.current = false;
+        setTimeout(() => { if (voiceWakeActive) startWakeListener(); }, 3000);
+      };
+      recognition.onend = () => {
+        wakeListeningRef.current = false;
+        if (voiceWakeActive && !wakeDialogue) {
+          setTimeout(() => startWakeListener(), 800);
+        }
+      };
+      recognition.start();
+      wakeListeningRef.current = true;
+    } catch (e) {
+      console.warn('[Wake] 唤醒词初始化失败:', e);
+    }
+  }, [voiceWakeActive, speak, spatialAudio]);
+
+  const stopWakeListener = useCallback(() => {
+    if (wakeAsrRef.current) {
+      try { wakeAsrRef.current.abort(); } catch(e) {}
+      wakeAsrRef.current = null;
+    }
+    wakeListeningRef.current = false;
+  }, []);
+
+  const vibrateSafety = useCallback((urgent, distance) => {
+    if (!navigator.vibrate) return;
+    if (urgent) {
+      navigator.vibrate([300, 80, 300, 80, 300, 80, 500]);
+    } else if (distance != null && distance <= 2) {
+      navigator.vibrate([150, 80, 150]);
+    } else {
+      navigator.vibrate(80);
+    }
+  }, []);
+
+  const detectTrafficLightFast = useCallback((imageFile) => {
+    return new Promise((resolve) => {
+      if (!imageFile) { resolve(null); return; }
+      const img = new Image();
+      const url = URL.createObjectURL(imageFile);
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        if (!trafficCanvasRef.current) trafficCanvasRef.current = document.createElement('canvas');
+        const canvas = trafficCanvasRef.current;
+        const cw = 120, ch = 90;
+        canvas.width = cw; canvas.height = ch;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, cw, ch);
+        try {
+          const data = ctx.getImageData(0, 0, cw, ch).data;
+          let rCount=0, yCount=0, gCount=0;
+          for (let i=0; i<data.length; i+=4) {
+            const r=data[i], g=data[i+1], b=data[i+2];
+            const brightness = (r+g+b)/3;
+            if (brightness < 90) continue;
+            if (r > 190 && g < 110 && b < 110) rCount++;
+            else if (r > 180 && g > 140 && b < 90) yCount++;
+            else if (r < 110 && g > 160 && b < 110) gCount++;
+          }
+          const total = rCount + yCount + gCount;
+          if (total < 25) { resolve(null); return; }
+          if (rCount > gCount*1.5 && rCount > yCount*1.2) resolve({color:'red', fast:true});
+          else if (gCount > rCount*1.3 && gCount > yCount*1.2) resolve({color:'green', fast:true});
+          else resolve(null);
+        } catch(e) { resolve(null); }
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+      img.src = url;
+    });
+  }, []);
+
+  const handleSafetyResult = useCallback((data) => {
+    if (data.safe) {
+      setTrafficLightFast(null);
+      return;
+    }
+    vibrateSafety(data.urgent, data.distance);
+    const dir = data.direction || '正前方';
+    const distText = data.distance != null ? `${data.distance}米` : '附近';
+    const speakText = data.urgent
+      ? `危险！${dir}约${distText}有${data.object}，立即停止！`
+      : `注意，${dir}约${distText}有${data.object}。`;
+    spatialAudio.speakDirectional(speakText, dir, { urgent: !!data.urgent });
+    setSubtitle(data.urgent ? `🚨 ${speakText}` : `⚠️ ${speakText}`, !!data.urgent);
+  }, [vibrateSafety, spatialAudio]);
 
   // ===== 摇一摇开启出行模式 =====
   useEffect(() => {
@@ -183,7 +421,6 @@ export default function AppMobile() {
 
   const switchTab = useCallback((tab) => {
     setActiveTab(tab);
-    // 切换tab时关闭所有浮层(寻物输入框、历史搜索、POI建议等)
     setShowFindInput(false);
     setShowNavHistory(false);
     setPoiSuggestions([]);
@@ -450,7 +687,7 @@ export default function AppMobile() {
     }
 
     let running = false;
-    let failCount = 0; // 连续失败计数,达到阈值自动关闭模式
+    let failCount = 0;
     const runOnce = async () => {
       if (running) return;
       running = true;
@@ -458,96 +695,134 @@ export default function AppMobile() {
         const img = await camera.capture();
         if (!img) { running = false; return; }
 
+        if (activeMode === 'traffic') {
+          const fastResult = await detectTrafficLightFast(img);
+          if (fastResult) {
+            const colorText = fastResult.color === 'red' ? '红灯' : fastResult.color === 'green' ? '绿灯' : '黄灯';
+            const fastSpeak = `前方${colorText}`;
+            setTrafficLightFast(fastResult);
+            setSubtitle(`🚦 ${fastSpeak}`);
+            if (fastResult.color === 'red') {
+              speak(fastSpeak, { urgent: true });
+              if (navigator.vibrate) navigator.vibrate([300, 80, 300, 80, 300]);
+            }
+            running = false;
+            return;
+          }
+        }
+
         let res;
         if (activeMode === 'analyze') {
           res = await api.scene(img, '你是视障用户的眼睛。请用一段话描述当前场景,必须包含:\n1.前方主要物体名称\n2.物体的方位(左前方/正前方/右前方/左方/右方)\n3.物体到你的估算距离(单位米,1-5米范围)\n格式示例:"正前方2米有桌椅,右前方3米有门"。40字以内,专为视障者设计,只描述前方可见的主要物体和距离。');
         } else if (activeMode === 'travel') {
-          res = await api.safety(img, 'scan');
+          res = await api.safety(img, 'travel');
         } else if (activeMode === 'read') {
           res = await api.social(img, 'ocr');
         } else if (activeMode === 'traffic') {
-          res = await api.safety(img, 'scan');
+          res = await api.safety(img, 'traffic');
         } else if (activeMode === 'find') {
-          // 寻物模式: 让视觉模型寻找指定物品,输出方位+距离
           res = await api.scene(img, `请在画面中寻找"${findTarget}"。如果找到,请用以下格式回答:"找到了,在[左前方/正前方/右前方/左方/右方]约[X]米处"。如果没找到,请只回答"未找到"。30字以内。`);
         }
 
         if (res?.success && res.result) {
-          failCount = 0; // 成功时重置失败计数
-          const text = typeof res.result === 'string' ? res.result : String(res.result);
-          addMessage('assistant', text);
+          failCount = 0;
+          const raw = res.result;
+          let parsed = null;
+          if (typeof raw === 'string') {
+            try { parsed = JSON.parse(raw); } catch(e) { parsed = null; }
+          } else if (typeof raw === 'object') {
+            parsed = raw;
+          }
 
-          // 寻物模式: 找到时紧急播报+震动,未找到时不重复播报
-          if (activeMode === 'find') {
-            if (/找到了|已找到/.test(text)) {
-              speak(text, { urgent: true });
-              setSubtitle(`🔍 ${text}`);
-              if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 200, 100, 500]);
+          if ((activeMode === 'travel' || activeMode === 'traffic') && parsed && typeof parsed === 'object' && 'safe' in parsed) {
+            setTrafficLightFast(null);
+            if (parsed.safe) {
+              if (activeMode === 'traffic') setSubtitle('🚦 路口安全');
+              else setSubtitle('🛡️ 前方安全');
             } else {
-              // 未找到: 静默,不重复播报"未找到"
-              setSubtitle(`🔍 正在寻找${findTarget}...`);
-            }
-          } else if (activeMode === 'travel') {
-            // 出行模式: 解析距离,实现递进报警
-            // 危险关键词: 任意障碍物相关词
-            const isDanger = /警告|危险|障碍|靠近|前方有|小心|注意|当心|车辆|电动车|自行车|台阶|下坡|上坡|坑|水|盲道|施工|围栏|电线杆|单车|柱子|树|墙|门|立即停止/.test(text);
-            // 从模型回复中提取距离(如"正前方1米有台阶"或"约2米")
-            const distMatch = text.match(/约?\s*([0-9]+(?:\.[0-9]+)?)\s*米/);
-            const distance = distMatch ? parseFloat(distMatch[1]) : null;
-            const isUrgent = /警告|立即停止/.test(text) || (distance != null && distance <= 1);
-
-            if (isDanger) {
-              speak(text, { urgent: isUrgent });
-              setSubtitle(`⚠️ ${text}`);
+              const dir = parsed.direction || '正前方';
+              const distText = parsed.distance != null ? `${parsed.distance}米` : '附近';
+              let speakText;
+              if (parsed.traffic_light) {
+                const cText = parsed.traffic_light === 'red' ? '红灯，请停下' : parsed.traffic_light === 'green' ? '绿灯，可以通行' : '黄灯，请谨慎';
+                speakText = cText;
+                setSubtitle(`🚦 ${cText}`);
+              } else {
+                speakText = parsed.urgent
+                  ? `危险！${dir}约${distText}有${parsed.object}，${parsed.action || '立即停止'}！`
+                  : `注意，${dir}约${distText}有${parsed.object}。`;
+                setSubtitle(parsed.urgent ? `🚨 ${speakText}` : `⚠️ ${speakText}`, !!parsed.urgent);
+              }
+              spatialAudio.speakDirectional(speakText, dir, { urgent: !!parsed.urgent });
               if (navigator.vibrate) {
-                if (isUrgent) {
-                  // 1米内紧急: 持续长震动(强烈警告)
-                  navigator.vibrate([800, 100, 800, 100, 800, 100, 1500]);
-                } else if (distance != null && distance <= 2) {
-                  // 2米内: 中等频率震动
-                  navigator.vibrate([400, 100, 400, 100, 400, 100, 800]);
-                } else {
-                  // 2米外: 短震动提醒
-                  navigator.vibrate([200, 100, 200, 100, 200]);
+                if (parsed.urgent) navigator.vibrate([300, 80, 300, 80, 300, 80, 500]);
+                else if (parsed.distance <= 2) navigator.vibrate([150, 80, 150]);
+                else navigator.vibrate(80);
+              }
+            }
+          } else {
+            const text = typeof raw === 'string' ? raw : String(raw);
+            addMessage('assistant', text);
+
+            if (activeMode === 'find') {
+              if (/找到了|已找到/.test(text)) {
+                const dirMatch = text.match(/在(左前方|正前方|右前方|左方|右方)/);
+                const dir = dirMatch ? dirMatch[1] : '正前方';
+                spatialAudio.speakDirectional(text, dir, { urgent: true });
+                setSubtitle(`🔍 ${text}`);
+                if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 200, 100, 500]);
+              } else {
+                setSubtitle(`🔍 正在寻找${findTarget}...`);
+              }
+            } else if (activeMode === 'travel') {
+              const isDanger = /警告|危险|障碍|靠近|前方有|小心|注意|当心|车辆|台阶|坑|施工|围栏|柱子|墙|立即停止/.test(text);
+              const distMatch = text.match(/约?\s*([0-9]+(?:\.[0-9]+)?)\s*米/);
+              const distance = distMatch ? parseFloat(distMatch[1]) : null;
+              const isUrgent = /警告|立即停止/.test(text) || (distance != null && distance <= 1);
+              const dirMatch = text.match(/(左前方|正前方|右前方|左方|右方)/);
+              const dir = dirMatch ? dirMatch[1] : '正前方';
+              if (isDanger) {
+                spatialAudio.speakDirectional(text, dir, { urgent: isUrgent });
+                setSubtitle(`⚠️ ${text}`);
+                if (navigator.vibrate) {
+                  if (isUrgent) navigator.vibrate([300, 80, 300, 80, 300, 80, 500]);
+                  else if (distance != null && distance <= 2) navigator.vibrate([150, 80, 150]);
+                  else navigator.vibrate(80);
                 }
+              } else {
+                speak(text);
+                setSubtitle(text);
               }
             } else {
               speak(text);
               setSubtitle(text);
             }
-          } else {
-            speak(text);
-            setSubtitle(text);
           }
         } else {
-          // API返回null或异常: 静默跳过本轮,不打扰用户(连续分析中可能偶发空结果)
           failCount++;
           if (!res?.success) {
             console.warn('[Mode] API调用失败:', res);
           }
-          // result为null时静默处理,等待下一轮分析
         }
       } catch (err) {
         console.error('[Mode] 分析失败:', err.message);
         failCount++;
-        // 连续分析中不播报错误,只静默记录(避免TTS被ASR拾取形成循环)
       } finally {
         running = false;
-        // 连续失败3次: 自动关闭模式,避免无意义循环
         if (failCount >= 3) {
           const modeName = modeNames[activeMode] || '当前模式';
-          // 不speak(避免TTS音频被ASR拾取形成回声循环),只显示toast
           showToast(`${modeName}已关闭（服务异常）`);
           addMessage('assistant', `${modeName}已关闭，服务异常，请稍后再试。`);
           setActiveMode(null);
+          setPersistentError(`${modeName}服务暂时异常，请检查网络后重试`);
           failCount = 0;
         }
       }
     };
 
-    // 立即执行一次,然后每8秒执行(降低ARK API限流风险)
+    const interval = (activeMode === 'travel' || activeMode === 'traffic') ? 2500 : 5000;
     runOnce();
-    modeIntervalRef.current = setInterval(runOnce, 8000);
+    modeIntervalRef.current = setInterval(runOnce, interval);
 
     return () => {
       if (modeIntervalRef.current) {
@@ -819,6 +1094,89 @@ export default function AppMobile() {
     if (navigator.vibrate) navigator.vibrate(10);
   }, []);
 
+  const nextTutorialStep = useCallback(() => {
+    if (tutorialStep < 4) {
+      setTutorialStep(prev => prev + 1);
+    } else {
+      localStorage.setItem('ark_first_use_done', '1');
+      setFirstUse(false);
+      startCamera();
+      setTimeout(() => startWakeListener(), 1000);
+      speak('欢迎使用感知方舟，我是您的智能助手小舟。说出小舟小舟即可唤醒我。', { rate: 0.9 });
+    }
+  }, [tutorialStep, startCamera, startWakeListener, speak]);
+
+  const handleVoiceInput = useCallback((text) => {
+    if (!text) return;
+    const clean = text.trim();
+    if (!clean) return;
+    stopSpeak();
+    spatialAudio.stop();
+    if (dialogueTimeoutRef.current) { clearTimeout(dialogueTimeoutRef.current); dialogueTimeoutRef.current = null; }
+    if (/打开识别|识别模式/.test(clean)) { switchTab('recognize'); speak('已切换到识别模式'); return; }
+    if (/打开导航|导航模式/.test(clean)) { switchTab('navigate'); speak('已切换到导航模式'); return; }
+    if (/紧急呼救|SOS|救命|求救/.test(clean)) { switchTab('sos'); speak('已进入紧急呼救'); handleSos(); return; }
+    if (/我没事|我很好|我没事了|我安全|我好的/.test(clean)) { handleSosRespond(); return; }
+    if (/取消SOS|取消呼救|取消急救/.test(clean)) { handleSosCancel(); return; }
+    if (/打开摄像头|开启摄像头/.test(clean)) { startCamera(); speak('正在开启摄像头'); return; }
+    if (/关闭摄像头/.test(clean)) { camera.stop(); speak('摄像头已关闭'); return; }
+    if (/停止|别说了|安静|闭嘴|停一下/.test(clean)) { stopSpeak(); spatialAudio.stop(); setSubtitle(''); return; }
+    if (/帮助|怎么用|使用说明|教程|引导/.test(clean)) { setTutorialStep(0); setFirstUse(true); return; }
+
+    const modeMap = { '出行模式': 'travel', '开始出行': 'travel', '开启出行': 'travel', '出行': 'travel', '红绿灯识别': 'traffic', '红绿灯': 'traffic', '快速分析': 'analyze', '分析': 'analyze', '阅读': 'read', '阅读模式': 'read', '朗读': 'read', '寻物': 'find' };
+    for (const [kw, mode] of Object.entries(modeMap)) {
+      if (clean.includes(kw)) {
+        if (activeMode === mode) { setActiveMode(null); speak('已关闭'); }
+        else if (mode === 'find') { setFindTarget(''); setShowFindInput(true); speak('请告诉我要找什么物品'); }
+        else { setActiveMode(mode); speak(`已开启${kw}`); }
+        return;
+      }
+    }
+    if (/关闭(模式|分析|检测|出行|红绿灯)/.test(clean)) { setActiveMode(null); setShowFindInput(false); speak('已关闭'); return; }
+
+    if (activeTab === 'recognize' || activeTab === 'navigate') {
+      let navDestination = null;
+      if (/^(导航[到去]?|带我去|我要去|我要导航[到去]?|帮我导航[到去]?)/.test(clean)) {
+        navDestination = clean.replace(/^(导航[到去]?|带我去|我要去|我要导航[到去]?|帮我导航[到去]?)/, '').trim();
+      } else {
+        const m = clean.match(/([^过来回出])去(.+)/);
+        if (m) navDestination = m[2].trim();
+      }
+      if (!navDestination && /怎么走|怎么去|路线|怎么到达|如何去/.test(clean)) {
+        const m = clean.match(/^(.+?)怎么[走去]/) || clean.match(/^(.+?)路线/);
+        navDestination = m ? m[1].replace(/^(去|到|我要去|我想去|请带我去|带我去)/, '').trim() : clean;
+      }
+      if (!navDestination && /^(.+?)在哪/.test(clean)) {
+        const m = clean.match(/^(.+?)在哪/);
+        navDestination = m ? m[1].replace(/^(请问|请告诉我)/, '').trim() : null;
+      }
+      if (!navDestination && /^(找|找一下|查找|搜索|查一下)(.+)$/.test(clean)) {
+        const m = clean.match(/^(?:找|找一下|查找|搜索|查一下)(.+)$/);
+        navDestination = m ? m[1].trim() : null;
+      }
+      if (!navDestination && /^附近(?:的)?(.+)$/.test(clean)) {
+        const m = clean.match(/^附近(?:的)?(.+)$/);
+        navDestination = m ? m[1].trim() : null;
+      }
+      if (navDestination && navDestination.length >= 1 && navDestination.length < 50) {
+        addMessage('user', clean);
+        if (activeTab !== 'navigate') switchTab('navigate');
+        speak(`好的，正在为您导航到${navDestination}`);
+        setTimeout(() => handleNavigate(navDestination), 600);
+        return;
+      }
+    }
+
+    addMessage('user', clean);
+    isProcessingRef.current = true;
+    if (activeTab === 'recognize') handleRecognizeCommand(clean);
+    else if (activeTab === 'navigate') handleNavigateCommand(clean);
+  }, [switchTab, handleSos, handleSosRespond, handleSosCancel, startCamera, camera, activeMode, activeTab, addMessage, speak, stopSpeak, spatialAudio, handleNavigate, handleRecognizeCommand, handleNavigateCommand]);
+
+  useEffect(() => {
+    handleVoiceInputRef.current = handleVoiceInput;
+  }, [handleVoiceInput]);
+
   return (
     <div className="am-app">
       {/* ===== 全屏背景层 ===== */}
@@ -838,14 +1196,14 @@ export default function AppMobile() {
       </div>
 
       {/* ===== 顶部浮动Tab栏 ===== */}
-      <div className="am-top-tabs">
-        <button className={`am-tab-pill ${activeTab === 'recognize' ? 'active' : ''}`} onClick={() => switchTab('recognize')}>
+      <div className="am-top-tabs" role="tablist" aria-label="主导航">
+        <button className={`am-tab-pill ${activeTab === 'recognize' ? 'active' : ''}`} onClick={() => switchTab('recognize')} role="tab" aria-selected={activeTab === 'recognize'} aria-label="识别模式">
           <span>识别</span>
         </button>
-        <button className={`am-tab-pill ${activeTab === 'navigate' ? 'active' : ''}`} onClick={() => switchTab('navigate')}>
+        <button className={`am-tab-pill ${activeTab === 'navigate' ? 'active' : ''}`} onClick={() => switchTab('navigate')} role="tab" aria-selected={activeTab === 'navigate'} aria-label="导航模式">
           <span>导航</span>
         </button>
-        <button className={`am-tab-pill danger ${activeTab === 'sos' ? 'active' : ''}`} onClick={() => switchTab('sos')}>
+        <button className={`am-tab-pill danger ${activeTab === 'sos' ? 'active' : ''}`} onClick={() => switchTab('sos')} role="tab" aria-selected={activeTab === 'sos'} aria-label="紧急呼救">
           <span>SOS</span>
         </button>
       </div>
@@ -858,18 +1216,18 @@ export default function AppMobile() {
         </div>
         {activeTab === 'recognize' && (
           <>
-            <button className="am-icon-btn" onClick={() => { vibrateClick(); camera.active ? camera.stop() : camera.start(); }} title="摄像头">📹</button>
-            <button className="am-icon-btn" onClick={async () => { vibrateClick(); await camera.switchCamera(); showToast(camera.facingMode === 'user' ? '前置摄像头' : '后置摄像头'); }} title="切换">🔄</button>
-            <button className={`am-icon-btn ${torchOn ? 'on' : ''}`} onClick={() => { vibrateClick(); toggleTorch(); }} title="闪光灯">🔦</button>
+            <button className="am-icon-btn" onClick={() => { vibrateClick(); if (camera.active) { camera.stop(); setPersistentError(null); } else startCamera(); }} title="摄像头开关" aria-label={camera.active ? '关闭摄像头' : '开启摄像头'}>📹</button>
+            <button className="am-icon-btn" onClick={async () => { vibrateClick(); await camera.switchCamera(); showToast(camera.facingMode === 'user' ? '前置摄像头' : '后置摄像头'); }} title="切换摄像头" aria-label="切换前后摄像头">🔄</button>
+            <button className={`am-icon-btn ${torchOn ? 'on' : ''}`} onClick={() => { vibrateClick(); toggleTorch(); }} title="闪光灯开关" aria-label={torchOn ? '关闭闪光灯' : '开启闪光灯'}>🔦</button>
           </>
         )}
         {activeTab === 'navigate' && (
           <>
-            <button className="am-icon-btn" onClick={() => { vibrateClick(); setShowFavorites(!showFavorites); }} title="收藏">⭐</button>
-            <button className="am-icon-btn" onClick={() => { vibrateClick(); showToast('已获取位置'); }} title="定位">📍</button>
+            <button className="am-icon-btn" onClick={() => { vibrateClick(); setShowFavorites(!showFavorites); }} title="收藏位置" aria-label="收藏的位置">⭐</button>
+            <button className="am-icon-btn" onClick={() => { vibrateClick(); showToast('已获取位置'); }} title="定位" aria-label="获取当前位置">📍</button>
           </>
         )}
-        <button className="am-icon-btn" onClick={goSettings} title="设置">⚙️</button>
+        <button className="am-icon-btn" onClick={goSettings} title="设置" aria-label="打开设置">⚙️</button>
       </div>
 
       {/* ===== 主内容浮层 ===== */}
@@ -1145,7 +1503,64 @@ export default function AppMobile() {
       )}
 
       {/* Toast */}
-      {toast && <div className="am-toast">{toast}</div>}
+      {toast && <div className="am-toast" role="status" aria-live="polite">{toast}</div>}
+
+      {/* 实时字幕条(常驻显示) */}
+      {subtitle && (
+        <div className={`am-subtitle-bar ${subtitle.includes('🚨') ? 'urgent' : subtitle.includes('⚠️') ? 'warning' : ''}`} role="status" aria-live="assertive" aria-atomic="true">
+          {subtitle}
+        </div>
+      )}
+
+      {/* 语音唤醒状态指示器 */}
+      {voiceWakeActive && !firstUse && (
+        <div className={`am-wake-indicator ${wakeDialogue ? 'active' : ''}`} aria-label={wakeDialogue ? '正在聆听' : '语音唤醒已就绪，说小舟小舟唤醒'}>
+          <span className="am-wake-dot" />
+          <span className="am-wake-text">{wakeDialogue ? '聆听中...' : '🎙️ 说"小舟小舟"唤醒'}</span>
+        </div>
+      )}
+
+      {/* 红绿灯快速检测指示 */}
+      {trafficLightFast && activeMode === 'traffic' && (
+        <div className={`am-traffic-light-overlay ${trafficLightFast.color}`} role="alert" aria-live="assertive">
+          <div className="am-tl-circle" />
+          <div className="am-tl-text">{trafficLightFast.color === 'red' ? '红灯 停下' : trafficLightFast.color === 'green' ? '绿灯 通行' : '黄灯 谨慎'}</div>
+        </div>
+      )}
+
+      {/* 持久错误提示条 */}
+      {persistentError && (
+        <div className="am-error-banner" role="alert">
+          <span className="am-error-icon">⚠️</span>
+          <span className="am-error-text">{persistentError}</span>
+          <button className="am-error-dismiss" onClick={() => setPersistentError(null)} aria-label="关闭提示">✕</button>
+        </div>
+      )}
+
+      {/* 首次使用引导教程浮层 */}
+      {firstUse && (
+        <div className="am-tutorial-overlay" role="dialog" aria-modal="true" aria-label="使用引导">
+          <div className="am-tutorial-card">
+            <div className="am-tutorial-step-indicator">
+              {tutorialSteps.map((_, i) => (
+                <div key={i} className={`am-tutorial-dot ${i === tutorialStep ? 'active' : ''} ${i < tutorialStep ? 'done' : ''}`} />
+              ))}
+            </div>
+            <div className="am-tutorial-icon">{['👋','🎤','🧭','🔊','🚀'][tutorialStep]}</div>
+            <h2 className="am-tutorial-title">{tutorialSteps[tutorialStep]?.title}</h2>
+            <p className="am-tutorial-text">{tutorialSteps[tutorialStep]?.text}</p>
+            <div className="am-tutorial-actions">
+              {tutorialStep > 0 && (
+                <button className="am-tutorial-btn secondary" onClick={() => setTutorialStep(prev => prev - 1)} aria-label="上一步">上一步</button>
+              )}
+              <button className="am-tutorial-btn primary" onClick={nextTutorialStep} aria-label={tutorialStep === 4 ? '开始使用' : '下一步'}>
+                {tutorialStep === 4 ? '开始使用' : '下一步'}
+              </button>
+            </div>
+            <button className="am-tutorial-skip" onClick={() => { completeTutorial(); startCamera(); setTimeout(() => startWakeListener(), 1000); speak('已跳过教程，欢迎使用感知方舟。说出小舟小舟即可唤醒我。', { rate: 0.9 }); }} aria-label="跳过教程">跳过</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
