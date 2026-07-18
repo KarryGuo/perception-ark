@@ -528,9 +528,10 @@ const DIR_PAN_MAP = {
 // 输出JSON格式: {safe, direction, distance, object, action, urgent}
 // 前端可直接解析JSON驱动震动分级/空间音频/UI,不再依赖脆弱正则
 // ============================================================
-export async function runSafetyAgent(imageBase64, mode = 'scan') {
+export async function runSafetyAgent(imageBase64, mode = 'scan', opts = {}) {
+  const silent = opts.silent === true;
   emitAgentState('A03', true, mode === 'traffic' ? '红绿灯识别中...' : '安全扫描中...');
-  emitLog('A03', `安全预警 Agent 启动 · 模式: ${mode}`);
+  if (!silent) emitLog('A03', `安全预警 Agent 启动 · 模式: ${mode}`);
 
   if (!imageBase64) {
     emitAgentState('A03', false);

@@ -737,27 +737,29 @@ export default function AppMobile() {
           if ((activeMode === 'travel' || activeMode === 'traffic') && parsed && typeof parsed === 'object' && 'safe' in parsed) {
             setTrafficLightFast(null);
             if (parsed.safe) {
-              if (activeMode === 'traffic') setSubtitle('🚦 路口安全');
+              if (parsed.traffic_light === 'green') setSubtitle('🚦 绿灯，可以通行');
+              else if (activeMode === 'traffic') setSubtitle('🚦 路口安全');
               else setSubtitle('🛡️ 前方安全');
             } else {
               const dir = parsed.direction || '正前方';
               const distText = parsed.distance != null ? `${parsed.distance}米` : '附近';
-              let speakText;
+              let displayText;
               if (parsed.traffic_light) {
                 const cText = parsed.traffic_light === 'red' ? '红灯，请停下' : parsed.traffic_light === 'green' ? '绿灯，可以通行' : '黄灯，请谨慎';
-                speakText = cText;
-                setSubtitle(`🚦 ${cText}`);
+                displayText = `🚦 ${cText}`;
               } else {
-                speakText = parsed.urgent
-                  ? `危险！${dir}约${distText}有${parsed.object}，${parsed.action || '立即停止'}！`
-                  : `注意，${dir}约${distText}有${parsed.object}。`;
-                setSubtitle(parsed.urgent ? `🚨 ${speakText}` : `⚠️ ${speakText}`, !!parsed.urgent);
+                displayText = parsed.urgent
+                  ? `🚨 危险！${dir}约${distText}有${parsed.object}，${parsed.action || '立即停止'}！`
+                  : `⚠️ 注意，${dir}约${distText}有${parsed.object}。`;
               }
-              spatialAudio.speakDirectional(speakText, dir, { urgent: !!parsed.urgent });
-              if (navigator.vibrate) {
-                if (parsed.urgent) navigator.vibrate([300, 80, 300, 80, 300, 80, 500]);
-                else if (parsed.distance <= 2) navigator.vibrate([150, 80, 150]);
-                else navigator.vibrate(80);
+              setSubtitle(displayText, !!parsed.urgent);
+              if (!connected) {
+                spatialAudio.speakDirectional(parsed.traffic_light ? displayText.replace(/^[🚦⚠️🚨]\s*/, '') : displayText.replace(/^[⚠️🚨]\s*/, ''), dir, { urgent: !!parsed.urgent });
+                if (navigator.vibrate) {
+                  if (parsed.urgent) navigator.vibrate([300, 80, 300, 80, 300, 80, 500]);
+                  else if (parsed.distance <= 2) navigator.vibrate([150, 80, 150]);
+                  else navigator.vibrate(80);
+                }
               }
             }
           } else {
