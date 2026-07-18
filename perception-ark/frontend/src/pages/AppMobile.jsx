@@ -61,7 +61,162 @@ export default function AppMobile() {
   const isPressingRef = useRef(null);
   const modeIntervalRef = useRef(null); // 连续分析定时器
   const isProcessingRef = useRef(false); // 命令处理中标志(防止TTS音频被ASR重新拾取导致循环)
-  const poiSearchTimerRef = useRef(null); // POI搜索debounce定时器
+  const poiSearchTimerRef = useRef(null);
+  const wakeStartRef = useRef(null);
+  const wakeStopRef = useRef(null);
+
+  const vibrateSafety = useCallback((urgent, distance) => {
+    if (!navigator.vibrate) return;
+    if (urgent) {
+      navigator.vibrate([300, 80, 300, 80, 300, 80, 500]);
+    } else if (distance != null && distance <= 2) {
+      navigator.vibrate([150, 80, 150]);
+    } else {
+      navigator.vibrate(80);
+    }
+  }, []);
+
+  const detectTrafficLightFast = useCallback((imageFile) => {
+    return new Promise((resolve) => {
+      if (!imageFile) { resolve(null); return; }
+      const img = new Image();
+      const url = URL.createObjectURL(imageFile);
+      img.onload = () => {
+        URL.revokeObjectURL(url);
+        if (!trafficCanvasRef.current) trafficCanvasRef.current = document.createElement('canvas');
+        const canvas = trafficCanvasRef.current;
+        const cw = 120, ch = 90;
+        canvas.width = cw; canvas.height = ch;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, cw, ch);
+        try {
+          const data = ctx.getImageData(0, 0, cw, ch).data;
+          let rCount=0, yCount=0, gCount=0;
+          for (let i=0; i<data.length; i+=4) {
+            const r=data[i], g=data[i+1], b=data[i+2];
+            const brightness = (r+g+b)/3;
+            if (brightness < 90) continue;
+            if (r > 190 && g < 110 && b < 110) rCount++;
+            else if (r > 180 && g > 140 && b < 90) yCount++;
+            else if (r < 110 && g > 160 && b < 110) gCount++;
+          }
+          const total = rCount + yCount + gCount;
+          if (total < 25) { resolve(null); return; }
+          if (rCount > gCount*1.5 && rCount > yCount*1.2) resolve({color:'red', fast:true});
+          else if (gCount > rCount*1.3 && gCount > yCount*1.2) resolve({color:'green', fast:true});
+          else resolve(null);
+        } catch(e) { resolve(null); }
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+      img.src = url;
+    });
+  }, []);
+
+  const completeTutorial = useCallback(() => {
+    localStorage.setItem('ark_first_use_done', '1');
+    setFirstUse(false);
+  }, []);
+
+  const startWakeListener = useCallback(() => {
+    if (!voiceWakeActive || wakeListeningRef.current) return;
+    try {
+      const WakeRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!WakeRecognition) return;
+      const recognition = new WakeRecognition();
+      recognition.lang = 'zh-CN';
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognition.maxAlternatives = 1;
+      wakeAsrRef.current = recognition;
+      wakePendingRef.current = '';
+      recognition.onresult = (e) => {
+        let interim = '';
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          interim += e.results[i][0].transcript;
+        }
+        const text = interim.replace(/\s/g, '');
+        const detected = WAKE_WORDS.find(w => text.includes(w));
+        if (detected) {
+          try { recognition.stop(); } catch(ex) {}
+          wakeListeningRef.current = false;
+          setWakeDialogue(true);
+          spatialAudio.beep('正前方', 0.12, 880);
+          speak('我在，请说', { rate: 1.05, onEnd: () => {
+            setTimeout(() => {
+              const CmdRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+              if (!CmdRec) return;
+              const cmdRec = new CmdRec();
+              cmdRec.lang = 'zh-CN';
+              cmdRec.continuous = false;
+              cmdRec.interimResults = true;
+              cmdRec.maxAlternatives = 1;
+              let gotResult = false;
+              cmdRec.onresult = (ev) => {
+                for (let i = ev.resultIndex; i < ev.results.length; i++) {
+                  const t = ev.results[i][0].transcript.trim();
+                  if (ev.results[i].isFinal && t) {
+                    gotResult = true;
+                    handleVoiceInputRef.current?.(t);
+                    setWakeDialogue(false);
+                    setTimeout(() => wakeStartRef.current?.(), 800);
+                  } else {
+                    setSubtitle(`👂 ${t}`);
+                  }
+                }
+              };
+              cmdRec.onerror = () => {
+                setWakeDialogue(false); setSubtitle('');
+                setTimeout(() => wakeStartRef.current?.(), 1000);
+              };
+              cmdRec.onend = () => {
+                if (!gotResult) {
+                  setWakeDialogue(false); setSubtitle('');
+                  setTimeout(() => wakeStartRef.current?.(), 1000);
+                }
+              };
+              cmdRec.start();
+              if (dialogueTimeoutRef.current) clearTimeout(dialogueTimeoutRef.current);
+              dialogueTimeoutRef.current = setTimeout(() => {
+                try { cmdRec.abort(); } catch(ex) {}
+                setWakeDialogue(false); setSubtitle('');
+                wakeStartRef.current?.();
+              }, 8000);
+            }, 300);
+          }});
+          setSubtitle('🎤 我在，请说...');
+          wakePendingRef.current = '';
+        }
+      };
+      recognition.onerror = () => {
+        wakeListeningRef.current = false;
+        setTimeout(() => { if (voiceWakeActive) wakeStartRef.current?.(); }, 3000);
+      };
+      recognition.onend = () => {
+        wakeListeningRef.current = false;
+        if (voiceWakeActive && !wakeDialogue) {
+          setTimeout(() => wakeStartRef.current?.(), 800);
+        }
+      };
+      recognition.start();
+      wakeListeningRef.current = true;
+    } catch (e) {
+      console.warn('[Wake] 唤醒词初始化失败:', e);
+    }
+  }, [voiceWakeActive, speak, spatialAudio]);
+
+  const stopWakeListener = useCallback(() => {
+    if (wakeAsrRef.current) {
+      try { wakeAsrRef.current.abort(); } catch(e) {}
+      wakeAsrRef.current = null;
+    }
+    wakeListeningRef.current = false;
+    if (dialogueTimeoutRef.current) { clearTimeout(dialogueTimeoutRef.current); dialogueTimeoutRef.current = null; }
+  }, []);
+
+  useEffect(() => {
+    wakeStartRef.current = startWakeListener;
+    wakeStopRef.current = stopWakeListener;
+  }, [startWakeListener, stopWakeListener]);
 
   // 大字体默认开启
   useEffect(() => {
@@ -107,13 +262,13 @@ export default function AppMobile() {
   // 启动语音唤醒监听(非首次使用且非引导中)
   useEffect(() => {
     if (firstUse) return;
-    const t = setTimeout(() => startWakeListener(), 1500);
+    const t = setTimeout(() => wakeStartRef.current?.(), 1500);
     return () => {
       clearTimeout(t);
-      stopWakeListener();
+      wakeStopRef.current?.();
       if (dialogueTimeoutRef.current) clearTimeout(dialogueTimeoutRef.current);
     };
-  }, [firstUse, startWakeListener, stopWakeListener]);
+  }, [firstUse]);
 
   // 引导教程语音
   useEffect(() => {
@@ -204,168 +359,6 @@ export default function AppMobile() {
     setToast(text);
     setTimeout(() => setToast(''), 2500);
   }, []);
-
-  const completeTutorial = useCallback(() => {
-    localStorage.setItem('ark_first_use_done', '1');
-    setFirstUse(false);
-  }, []);
-
-  const startWakeListener = useCallback(() => {
-    if (!voiceWakeActive || wakeListeningRef.current) return;
-    try {
-      const WakeRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-      if (!WakeRecognition) return;
-      const recognition = new WakeRecognition();
-      recognition.lang = 'zh-CN';
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.maxAlternatives = 1;
-      wakeAsrRef.current = recognition;
-      wakePendingRef.current = '';
-      recognition.onresult = (e) => {
-        let interim = '';
-        for (let i = e.resultIndex; i < e.results.length; i++) {
-          interim += e.results[i][0].transcript;
-        }
-        const text = interim.replace(/\s/g, '');
-        const detected = WAKE_WORDS.find(w => text.includes(w));
-        if (detected) {
-          try { recognition.stop(); } catch(ex) {}
-          wakeListeningRef.current = false;
-          setWakeDialogue(true);
-          spatialAudio.beep('正前方', 0.12, 880);
-          speak('我在，请说', { rate: 1.05, onEnd: () => {
-            setTimeout(() => {
-              const CmdRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-              if (!CmdRec) return;
-              const cmdRec = new CmdRec();
-              cmdRec.lang = 'zh-CN';
-              cmdRec.continuous = false;
-              cmdRec.interimResults = true;
-              cmdRec.maxAlternatives = 1;
-              let gotResult = false;
-              cmdRec.onresult = (ev) => {
-                for (let i = ev.resultIndex; i < ev.results.length; i++) {
-                  const t = ev.results[i][0].transcript.trim();
-                  if (ev.results[i].isFinal && t) {
-                    gotResult = true;
-                    handleVoiceInputRef.current?.(t);
-                    setWakeDialogue(false);
-                    setTimeout(() => startWakeListener(), 800);
-                  } else {
-                    setSubtitle(`👂 ${t}`);
-                  }
-                }
-              };
-              cmdRec.onerror = () => {
-                setWakeDialogue(false); setSubtitle('');
-                setTimeout(() => startWakeListener(), 1000);
-              };
-              cmdRec.onend = () => {
-                if (!gotResult) {
-                  setWakeDialogue(false); setSubtitle('');
-                  setTimeout(() => startWakeListener(), 1000);
-                }
-              };
-              cmdRec.start();
-              if (dialogueTimeoutRef.current) clearTimeout(dialogueTimeoutRef.current);
-              dialogueTimeoutRef.current = setTimeout(() => {
-                try { cmdRec.abort(); } catch(ex) {}
-                setWakeDialogue(false); setSubtitle('');
-                startWakeListener();
-              }, 8000);
-            }, 300);
-          }});
-          setSubtitle('🎤 我在，请说...');
-          wakePendingRef.current = '';
-        }
-      };
-      recognition.onerror = () => {
-        wakeListeningRef.current = false;
-        setTimeout(() => { if (voiceWakeActive) startWakeListener(); }, 3000);
-      };
-      recognition.onend = () => {
-        wakeListeningRef.current = false;
-        if (voiceWakeActive && !wakeDialogue) {
-          setTimeout(() => startWakeListener(), 800);
-        }
-      };
-      recognition.start();
-      wakeListeningRef.current = true;
-    } catch (e) {
-      console.warn('[Wake] 唤醒词初始化失败:', e);
-    }
-  }, [voiceWakeActive, speak, spatialAudio]);
-
-  const stopWakeListener = useCallback(() => {
-    if (wakeAsrRef.current) {
-      try { wakeAsrRef.current.abort(); } catch(e) {}
-      wakeAsrRef.current = null;
-    }
-    wakeListeningRef.current = false;
-  }, []);
-
-  const vibrateSafety = useCallback((urgent, distance) => {
-    if (!navigator.vibrate) return;
-    if (urgent) {
-      navigator.vibrate([300, 80, 300, 80, 300, 80, 500]);
-    } else if (distance != null && distance <= 2) {
-      navigator.vibrate([150, 80, 150]);
-    } else {
-      navigator.vibrate(80);
-    }
-  }, []);
-
-  const detectTrafficLightFast = useCallback((imageFile) => {
-    return new Promise((resolve) => {
-      if (!imageFile) { resolve(null); return; }
-      const img = new Image();
-      const url = URL.createObjectURL(imageFile);
-      img.onload = () => {
-        URL.revokeObjectURL(url);
-        if (!trafficCanvasRef.current) trafficCanvasRef.current = document.createElement('canvas');
-        const canvas = trafficCanvasRef.current;
-        const cw = 120, ch = 90;
-        canvas.width = cw; canvas.height = ch;
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0, cw, ch);
-        try {
-          const data = ctx.getImageData(0, 0, cw, ch).data;
-          let rCount=0, yCount=0, gCount=0;
-          for (let i=0; i<data.length; i+=4) {
-            const r=data[i], g=data[i+1], b=data[i+2];
-            const brightness = (r+g+b)/3;
-            if (brightness < 90) continue;
-            if (r > 190 && g < 110 && b < 110) rCount++;
-            else if (r > 180 && g > 140 && b < 90) yCount++;
-            else if (r < 110 && g > 160 && b < 110) gCount++;
-          }
-          const total = rCount + yCount + gCount;
-          if (total < 25) { resolve(null); return; }
-          if (rCount > gCount*1.5 && rCount > yCount*1.2) resolve({color:'red', fast:true});
-          else if (gCount > rCount*1.3 && gCount > yCount*1.2) resolve({color:'green', fast:true});
-          else resolve(null);
-        } catch(e) { resolve(null); }
-      };
-      img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
-      img.src = url;
-    });
-  }, []);
-
-  const handleSafetyResult = useCallback((data) => {
-    if (data.safe) {
-      setTrafficLightFast(null);
-      return;
-    }
-    vibrateSafety(data.urgent, data.distance);
-    const dir = data.direction || '正前方';
-    const distText = data.distance != null ? `${data.distance}米` : '附近';
-    const speakText = data.urgent
-      ? `危险！${dir}约${distText}有${data.object}，立即停止！`
-      : `注意，${dir}约${distText}有${data.object}。`;
-    spatialAudio.speakDirectional(speakText, dir, { urgent: !!data.urgent });
-    setSubtitle(data.urgent ? `🚨 ${speakText}` : `⚠️ ${speakText}`, !!data.urgent);
-  }, [vibrateSafety, spatialAudio]);
 
   // ===== 摇一摇开启出行模式 =====
   useEffect(() => {
