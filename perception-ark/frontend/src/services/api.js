@@ -41,6 +41,27 @@ export const api = {
       body: JSON.stringify({ username, password })
     }),
   me: () => request('/auth/me'),
+  // 修改昵称
+  updateNickname: (nickname) =>
+    request('/auth/profile', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nickname })
+    }),
+  // 修改头像(dataURL: data:image/...;base64,...)
+  updateAvatar: (avatar) =>
+    request('/auth/avatar', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ avatar })
+    }),
+  // 注销账户(二次确认 confirm=DELETE)
+  deleteAccount: () =>
+    request('/auth/account?confirm=DELETE', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm: 'DELETE' })
+    }),
 
   // 系统
   health: () => request('/health'),

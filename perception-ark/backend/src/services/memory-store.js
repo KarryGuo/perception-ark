@@ -81,9 +81,26 @@ export function initMemoryStore() {
       password_hash TEXT NOT NULL,
       role TEXT NOT NULL DEFAULT 'user',
       user_id INTEGER,
-      created_at TEXT
+      created_at TEXT,
+      nickname TEXT,
+      avatar TEXT
     );
   `);
+
+  // 兼容旧库: 若 accounts 表缺少 nickname/avatar 列,自动补列
+  try {
+    const cols = db.prepare("PRAGMA table_info(accounts)").all().map(c => c.name);
+    if (!cols.includes('nickname')) {
+      db.exec("ALTER TABLE accounts ADD COLUMN nickname TEXT");
+      log('A05', 'accounts 表已补列 nickname');
+    }
+    if (!cols.includes('avatar')) {
+      db.exec("ALTER TABLE accounts ADD COLUMN avatar TEXT");
+      log('A05', 'accounts 表已补列 avatar');
+    }
+  } catch (e) {
+    log('A05', `accounts 表补列检查失败: ${e.message}`, 'warn');
+  }
 
   log('A05', '记忆数据库初始化完成');
   // 记忆库启动时为空,由用户使用过程中自然累积
@@ -111,7 +128,46 @@ export function getAccountByUsername(username) {
 
 export function getAccountById(id) {
   if (!db) return null;
-  return db.prepare('SELECT id, username, role, user_id, created_at FROM accounts WHERE id = ?').get(id);
+  return db.prepare('SELECT id, username, role, user_id, created_at, nickname, avatar FROM accounts WHERE id = ?').get(id);
+}
+
+/**
+ * 更新账户资料(昵称/头像)
+ * @param {number} id 账户ID
+ * @param {{nickname?: string, avatar?: string|null}} fields
+ * @returns {boolean} 是否更新成功
+ */
+export function updateAccountProfile(id, { nickname, avatar }) {
+  if (!db) return false;
+  try {
+    const sets = [];
+    const args = [];
+    if (nickname !== undefined) { sets.push('nickname = ?'); args.push(nickname); }
+    if (avatar !== undefined) { sets.push('avatar = ?'); args.push(avatar); }
+    if (sets.length === 0) return false;
+    args.push(id);
+    const result = db.prepare(`UPDATE accounts SET ${sets.join(', ')} WHERE id = ?`).run(...args);
+    return result.changes > 0;
+  } catch (err) {
+    log('A05', `更新账户资料失败: ${err.message}`, 'error');
+    return false;
+  }
+}
+
+/**
+ * 注销账户(永久删除)
+ * @param {number} id 账户ID
+ * @returns {boolean} 是否删除成功
+ */
+export function deleteAccount(id) {
+  if (!db) return false;
+  try {
+    const result = db.prepare('DELETE FROM accounts WHERE id = ?').run(id);
+    return result.changes > 0;
+  } catch (err) {
+    log('A05', `注销账户失败: ${err.message}`, 'error');
+    return false;
+  }
 }
 
 // ===== 使用者管理(家属端绑定) =====

@@ -62,6 +62,25 @@ export function AuthProvider({ children }) {
     throw new Error(res.error || '注册失败');
   }, []);
 
+  // 刷新当前用户信息(从后端拉取最新,用于修改昵称/头像后同步本地状态)
+  const refreshUser = useCallback(async () => {
+    try {
+      const res = await api.me();
+      if (res.success) {
+        setUser(res.user);
+        return res.user;
+      }
+    } catch (e) {
+      console.warn('[Auth] 刷新用户信息失败:', e.message);
+    }
+    return null;
+  }, []);
+
+  // 用后端返回的 user 对象直接更新本地状态(避免再次请求 /me)
+  const updateUser = useCallback((newUser) => {
+    setUser(newUser);
+  }, []);
+
   const logout = useCallback(() => {
     localStorage.removeItem('ark_token');
     setUser(null);
@@ -69,7 +88,7 @@ export function AuthProvider({ children }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, register, logout, refreshUser, updateUser }}>
       {children}
     </AuthContext.Provider>
   );

@@ -1,12 +1,14 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../hooks/useAuth.jsx';
+import { api } from '../services/api.js';
 
 /**
  * 感知方舟 · 设置页面
- * 账户设置 / 问答对话 / 出行模式 / 导航 / 音频 / 无障碍 / 功能引导 / 关于 / 退出登录
+ * 账户设置(头像/昵称/注销账户) / 问答对话 / 出行模式 / 导航 / 音频 / 无障碍 / 功能引导 / 关于
+ * 底部独立区: 切换账号 / 退出登录
  */
 export default function Settings() {
-  const { user, logout } = useAuth();
+  const { user, logout, updateUser } = useAuth();
 
   // ===== 音频设置 =====
   const [ttsRate, setTtsRate] = useState(() => parseFloat(localStorage.getItem('ark_tts_rate')) || 0.95);
@@ -15,15 +17,15 @@ export default function Settings() {
   const [testText, setTestText] = useState('这是一段测试语音，用于预览播报效果。');
 
   // ===== 问答对话设置 =====
-  const [chatStyle, setChatStyle] = useState(() => localStorage.getItem('ark_chat_style') || 'concise'); // concise | detailed
+  const [chatStyle, setChatStyle] = useState(() => localStorage.getItem('ark_chat_style') || 'concise');
   const [autoSpeak, setAutoSpeak] = useState(() => localStorage.getItem('ark_auto_speak') !== 'false');
 
   // ===== 出行模式设置 =====
-  const [obstacleSensitivity, setObstacleSensitivity] = useState(() => localStorage.getItem('ark_obstacle_sens') || 'normal'); // low | normal | high
-  const [vibrationStrength, setVibrationStrength] = useState(() => localStorage.getItem('ark_vibration') || 'strong'); // off | weak | strong
+  const [obstacleSensitivity, setObstacleSensitivity] = useState(() => localStorage.getItem('ark_obstacle_sens') || 'normal');
+  const [vibrationStrength, setVibrationStrength] = useState(() => localStorage.getItem('ark_vibration') || 'strong');
 
   // ===== 导航设置 =====
-  const [navMode, setNavMode] = useState(() => localStorage.getItem('ark_nav_mode') || 'walking'); // walking | transit
+  const [navMode, setNavMode] = useState(() => localStorage.getItem('ark_nav_mode') || 'walking');
   const [navVoiceGuide, setNavVoiceGuide] = useState(() => localStorage.getItem('ark_nav_voice') !== 'false');
 
   // ===== 无障碍设置 =====
@@ -37,11 +39,25 @@ export default function Settings() {
   });
 
   // ===== 展开的section =====
-  const [expanded, setExpanded] = useState('audio'); // 默认展开音频
+  const [expanded, setExpanded] = useState('account'); // 默认展开账户设置
+
+  // ===== 账户设置状态 =====
+  const [nicknameInput, setNicknameInput] = useState(user?.nickname || '');
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const [nicknameSaving, setNicknameSaving] = useState(false);
+  const [accountMsg, setAccountMsg] = useState(null); // { type: 'ok'|'err', text }
+  const [confirmDelete, setConfirmDelete] = useState(false); // 注销账户二次确认
+  const [deleting, setDeleting] = useState(false);
+  const fileInputRef = useRef(null);
 
   const toggleSection = useCallback((key) => {
     setExpanded(prev => prev === key ? null : key);
   }, []);
+
+  // 同步用户最新的昵称到输入框(如从其他端修改过)
+  useEffect(() => {
+    setNicknameInput(user?.nickname || '');
+  }, [user?.nickname]);
 
   // 加载可用语音列表
   useEffect(() => {
@@ -117,17 +133,119 @@ export default function Settings() {
     window.location.hash = '#/app';
   }, []);
 
-  // 设置项数据
-  const sections = [
-    { key: 'account', icon: '👤', title: '账户设置' },
-    { key: 'chat', icon: '💬', title: '问答对话' },
-    { key: 'travel', icon: '🚶', title: '出行模式' },
-    { key: 'nav', icon: '🧭', title: '导航设置' },
-    { key: 'audio', icon: '🔊', title: '音频设置' },
-    { key: 'a11y', icon: '♿', title: '无障碍模式' },
-    { key: 'guide', icon: '📖', title: '功能引导' },
-    { key: 'about', icon: 'ℹ️', title: '关于我们' },
-  ];
+  // ===== 账户操作: 修改头像 =====
+  const handleAvatarClick = useCallback(() => {
+    if (avatarUploading) return;
+    fileInputRef.current?.click();
+  }, [avatarUploading]);
+
+  const handleAvatarChange = useCallback(async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // 清空input,允许选择同一文件
+    if (!file) return;
+    // 类型校验
+    if (!file.type.startsWith('image/')) {
+      setAccountMsg({ type: 'err', text: '请选择图片文件' });
+      return;
+    }
+    // 大小校验: 限制 500KB
+    if (file.size > 500 * 1024) {
+      setAccountMsg({ type: 'err', text: '图片过大(限制500KB),请压缩后上传' });
+      return;
+    }
+    setAvatarUploading(true);
+    setAccountMsg(null);
+    try {
+      // 读取为 dataURL
+      const dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(new Error('读取文件失败'));
+        reader.readAsDataURL(file);
+      });
+      const res = await api.updateAvatar(dataUrl);
+      if (res?.success && res.user) {
+        updateUser(res.user);
+        setAccountMsg({ type: 'ok', text: '头像已更新' });
+      } else {
+        setAccountMsg({ type: 'err', text: '头像上传失败' });
+      }
+    } catch (err) {
+      setAccountMsg({ type: 'err', text: `头像上传失败: ${err.message}` });
+    } finally {
+      setAvatarUploading(false);
+    }
+  }, [updateUser]);
+
+  // ===== 账户操作: 修改昵称 =====
+  const handleNicknameSave = useCallback(async () => {
+    const trimmed = nicknameInput.trim();
+    if (trimmed.length > 20) {
+      setAccountMsg({ type: 'err', text: '昵称长度不能超过20个字符' });
+      return;
+    }
+    if (trimmed === (user?.nickname || '')) {
+      setAccountMsg({ type: 'ok', text: '昵称未变化' });
+      return;
+    }
+    setNicknameSaving(true);
+    setAccountMsg(null);
+    try {
+      const res = await api.updateNickname(trimmed);
+      if (res?.success && res.user) {
+        updateUser(res.user);
+        setAccountMsg({ type: 'ok', text: '昵称已保存' });
+      } else {
+        setAccountMsg({ type: 'err', text: '昵称保存失败' });
+      }
+    } catch (err) {
+      setAccountMsg({ type: 'err', text: `昵称保存失败: ${err.message}` });
+    } finally {
+      setNicknameSaving(false);
+    }
+  }, [nicknameInput, user?.nickname, updateUser]);
+
+  // ===== 账户操作: 注销账户 =====
+  const handleDeleteAccount = useCallback(async () => {
+    setDeleting(true);
+    try {
+      const res = await api.deleteAccount();
+      if (res?.success) {
+        // 注销成功: 清token,跳登录页
+        localStorage.removeItem('ark_token');
+        window.location.hash = '#/login';
+        // 强制刷新清空所有内存状态
+        window.location.reload();
+      } else {
+        setAccountMsg({ type: 'err', text: '注销失败,请稍后重试' });
+        setConfirmDelete(false);
+      }
+    } catch (err) {
+      setAccountMsg({ type: 'err', text: `注销失败: ${err.message}` });
+      setConfirmDelete(false);
+    } finally {
+      setDeleting(false);
+    }
+  }, []);
+
+  // ===== 底部操作: 切换账号 / 退出登录 =====
+  const handleSwitchAccount = useCallback(() => {
+    if (navigator.vibrate) navigator.vibrate(10);
+    logout();
+    window.location.hash = '#/login';
+  }, [logout]);
+
+  const handleLogout = useCallback(() => {
+    if (navigator.vibrate) navigator.vibrate(10);
+    logout();
+    window.location.hash = '#/login';
+  }, [logout]);
+
+  // 用户显示名: 优先昵称,其次用户名
+  const displayName = user?.nickname || user?.username || '未登录';
+  // 头像: 优先用户上传头像,其次用首字母占位
+  const avatarUrl = user?.avatar;
+  const initial = (user?.nickname || user?.username || '?').charAt(0).toUpperCase();
 
   return (
     <div className="settings-page">
@@ -148,17 +266,108 @@ export default function Settings() {
           </div>
           {expanded === 'account' && (
             <div className="sp-section-body">
+              {/* 头像修改 */}
               <div className="sp-item">
-                <label className="sp-label"><span>当前用户</span></label>
+                <label className="sp-label"><span>账户头像</span></label>
+                <div className="sp-avatar-row">
+                  <div className="sp-avatar-box" onClick={handleAvatarClick} title="点击更换头像">
+                    {avatarUploading ? (
+                      <span className="sp-avatar-loading">上传中</span>
+                    ) : avatarUrl ? (
+                      <img src={avatarUrl} alt="头像" className="sp-avatar-img" />
+                    ) : (
+                      <span className="sp-avatar-initial">{initial}</span>
+                    )}
+                  </div>
+                  <div className="sp-avatar-tip">
+                    <button className="sp-avatar-btn" onClick={handleAvatarClick} disabled={avatarUploading}>
+                      {avatarUploading ? '上传中...' : '更换头像'}
+                    </button>
+                    <div className="sp-avatar-hint">支持 JPG/PNG,限制 500KB</div>
+                  </div>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    style={{ display: 'none' }}
+                    onChange={handleAvatarChange}
+                  />
+                </div>
+              </div>
+
+              {/* 昵称修改 */}
+              <div className="sp-item">
+                <label className="sp-label"><span>账户昵称</span></label>
+                <div className="sp-nickname-row">
+                  <input
+                    type="text"
+                    className="sp-input"
+                    value={nicknameInput}
+                    onChange={e => setNicknameInput(e.target.value)}
+                    placeholder="设置一个昵称(最多20字)"
+                    maxLength={20}
+                    name="ark-settings-nickname-off"
+                    autoComplete="nope"
+                  />
+                  <button
+                    className="sp-save-btn"
+                    onClick={handleNicknameSave}
+                    disabled={nicknameSaving}
+                  >
+                    {nicknameSaving ? '保存中' : '保存'}
+                  </button>
+                </div>
+              </div>
+
+              {/* 用户名(只读) */}
+              <div className="sp-item">
+                <label className="sp-label"><span>登录用户名</span></label>
                 <div className="sp-user-info">{user?.username || '未登录'}</div>
               </div>
+
+              {/* 用户角色(只读) */}
               <div className="sp-item">
                 <label className="sp-label"><span>用户角色</span></label>
                 <div className="sp-user-info">{user?.role === 'family' ? '家属' : '使用者'}</div>
               </div>
-              <button className="sp-logout-btn" onClick={() => { logout(); window.location.hash = '#/login'; }}>
-                退出登录
-              </button>
+
+              {/* 操作反馈消息 */}
+              {accountMsg && (
+                <div className={`sp-account-msg ${accountMsg.type}`}>{accountMsg.text}</div>
+              )}
+
+              {/* 注销账户(危险操作) */}
+              <div className="sp-item sp-danger-zone">
+                <label className="sp-label"><span>注销账户</span></label>
+                <div className="sp-danger-desc">
+                  注销后账户和所有数据将永久删除,无法恢复。请谨慎操作。
+                </div>
+                {!confirmDelete ? (
+                  <button className="sp-danger-btn" onClick={() => setConfirmDelete(true)}>
+                    申请注销账户
+                  </button>
+                ) : (
+                  <div className="sp-confirm-delete">
+                    <div className="sp-confirm-text">⚠️ 确认要永久注销账户吗?此操作不可撤销!</div>
+                    <div className="sp-confirm-actions">
+                      <button
+                        className="sp-confirm-yes"
+                        onClick={handleDeleteAccount}
+                        disabled={deleting}
+                      >
+                        {deleting ? '注销中...' : '确认注销'}
+                      </button>
+                      <button
+                        className="sp-confirm-no"
+                        onClick={() => setConfirmDelete(false)}
+                        disabled={deleting}
+                      >
+                        取消
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </section>
@@ -412,6 +621,19 @@ export default function Settings() {
             </div>
           )}
         </section>
+
+        {/* ===== 底部独立操作区: 切换账号 / 退出登录 ===== */}
+        <div className="sp-bottom-actions">
+          <div className="sp-current-user">
+            当前登录: <span className="sp-current-name">{displayName}</span>
+          </div>
+          <button className="sp-bottom-btn sp-switch-account-btn" onClick={handleSwitchAccount}>
+            🔄 切换账号
+          </button>
+          <button className="sp-bottom-btn sp-logout-btn" onClick={handleLogout}>
+            ⏏ 退出登录
+          </button>
+        </div>
       </div>
     </div>
   );
