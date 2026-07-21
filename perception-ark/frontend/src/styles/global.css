@@ -3048,42 +3048,6 @@ body.ark-high-contrast .am-poi-title { color: rgba(255,255,255,0.8); }
   to { box-shadow: 0 0 20px 8px rgba(220,38,38,0.3); }
 }
 
-.am-wake-indicator {
-  position: fixed;
-  top: calc(env(safe-area-inset-top) + 12px);
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  background: rgba(0,0,0,0.5);
-  color: rgba(255,255,255,0.7);
-  padding: 5px 14px;
-  border-radius: 20px;
-  font-size: 0.75rem;
-  z-index: 150;
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-  transition: all 0.3s;
-}
-.am-wake-indicator.active {
-  background: rgba(59,130,246,0.8);
-  color: #fff;
-}
-.am-wake-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: rgba(255,255,255,0.5);
-}
-.am-wake-indicator.active .am-wake-dot {
-  background: #fff;
-  animation: wakePulse 1s ease infinite;
-}
-@keyframes wakePulse {
-  0%, 100% { transform: scale(1); opacity: 1; }
-  50% { transform: scale(1.4); opacity: 0.6; }
-}
 
 .am-traffic-light-overlay {
   position: fixed;
@@ -3287,7 +3251,6 @@ input:focus-visible {
 
 /* 大字体模式优化 */
 body.ark-large-font .am-subtitle-bar { font-size: 1.1rem; }
-body.ark-large-font .am-wake-indicator { font-size: 0.85rem; }
 body.ark-large-font .am-error-banner { font-size: 0.95rem; }
 body.ark-large-font .am-tutorial-text { font-size: 1.05rem; }
 body.ark-large-font .am-tutorial-title { font-size: 1.6rem; }

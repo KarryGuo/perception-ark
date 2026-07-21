@@ -1507,13 +1507,7 @@ export default function AppMobile() {
         </div>
       )}
 
-      {/* 语音唤醒状态指示器 */}
-      {voiceWakeActive && !firstUse && (
-        <div className={`am-wake-indicator ${wakeDialogue ? 'active' : ''}`} aria-label={wakeDialogue ? '正在聆听' : '语音唤醒已就绪，说小舟小舟唤醒'}>
-          <span className="am-wake-dot" />
-          <span className="am-wake-text">{wakeDialogue ? '聆听中...' : '🎙️ 说"小舟小舟"唤醒'}</span>
-        </div>
-      )}
+
 
       {/* 红绿灯快速检测指示 */}
       {trafficLightFast && activeMode === 'traffic' && (
