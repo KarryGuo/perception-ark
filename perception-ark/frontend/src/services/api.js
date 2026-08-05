@@ -202,4 +202,9 @@ export const api = {
     }),
   familyDeleteUser: (id) =>
     request(`/family/users/${id}`, { method: 'DELETE' }),
+  // 管理端新增
+  familyDashboard: () => request('/family/dashboard'),
+  familyRecognitionHistory: (limit) => request(`/family/recognition-history${limit ? `?limit=${limit}` : ''}`),
+  familyRoutes: () => request('/family/routes'),
+  familyHabits: () => request('/family/habits'),
 };
