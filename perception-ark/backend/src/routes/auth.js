@@ -169,7 +169,7 @@ router.post('/send-sms', (req, res) => {
  * POST /api/auth/login-sms
  * body: { phone, code }
  */
-router.post('/login-sms', (req, res) => {
+router.post('/login-sms', async (req, res) => {
   try {
     const { phone, code } = req.body;
     if (!phone || !/^1[3-9]\d{9}$/.test(phone.trim())) {
