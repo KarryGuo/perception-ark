@@ -459,6 +459,11 @@ function AppMobileUser() {
     isProcessingRef.current = false;
     isPressingRef.current = true;
     if (!asr.supported) { showToast('当前浏览器不支持语音识别'); return; }
+    // 暂停唤醒词监听,避免与按住说话的ASR冲突(浏览器只允许一个recognition实例)
+    if (wakeListeningRef.current) {
+      try { wakeAsrRef.current?.abort(); } catch(e) {}
+      wakeListeningRef.current = false;
+    }
     asr.start();
     setSubtitle('正在聆听...');
   }, [asr, showToast, stopSpeak]);
@@ -466,8 +471,14 @@ function AppMobileUser() {
   const handlePressEnd = useCallback(() => {
     isPressingRef.current = false;
     if (asr.listening) asr.stop();
-    setTimeout(() => setSubtitle(''), 1000);
-  }, [asr]);
+    setTimeout(() => {
+      setSubtitle('');
+      // 恢复唤醒词监听
+      if (voiceWakeActive && !wakeListeningRef.current) {
+        wakeStartRef.current?.();
+      }
+    }, 1500);
+  }, [asr, voiceWakeActive]);
 
   useEffect(() => {
     if (!asr.transcript || isPressingRef.current === null) return;
