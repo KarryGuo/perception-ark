@@ -136,14 +136,9 @@ router.post('/send-sms', (req, res) => {
     }
     const phoneTrim = phone.trim();
 
-    // 检查该手机号是否已注册(未注册的提示但不暴露具体错误)
-    const account = getAccountByPhone(phoneTrim);
-    if (!account) {
-      return res.status(404).json({ success: false, error: '该手机号尚未注册,请先注册账号' });
-    }
-
-    // 检查封禁状态
-    if (account.status === 'banned') {
+    // 检查封禁状态(仅对已注册账号检查,未注册可直接获取验证码)
+    const existingAccount = getAccountByPhone(phoneTrim);
+    if (existingAccount && existingAccount.status === 'banned') {
       return res.status(403).json({ success: false, error: '该账号已被封禁,如有疑问请联系管理员' });
     }
 
@@ -211,10 +206,22 @@ router.post('/login-sms', (req, res) => {
     smsCodes.delete(phoneTrim);
 
     // 查找账号
-    const account = getAccountByPhone(phoneTrim);
+    let account = getAccountByPhone(phoneTrim);
+
+    // 账号不存在时自动注册(随机用户名,登录后可在设置中完善信息)
     if (!account) {
-      return res.status(404).json({ success: false, error: '账号不存在' });
+      const randomName = `用户${Math.floor(1000 + Math.random() * 9000)}`;
+      const randomPwd = await bcrypt.hash(Math.random().toString(36).slice(-8), 10);
+      const defaultQuestion = '您的出生城市是?';
+      const defaultAnswer = bcrypt.hashSync('未知', 10);
+      const accountId = createAccount(randomName, randomPwd, 'user', null, phoneTrim, defaultQuestion, defaultAnswer);
+      if (!accountId) {
+        return res.status(500).json({ success: false, error: '自动注册失败,请稍后重试' });
+      }
+      account = getAccountById(accountId);
+      log('AUTH', `手机验证码登录自动注册新用户: ${randomName} (${phoneTrim})`);
     }
+
     if (account.status === 'banned') {
       return res.status(403).json({ success: false, error: '该账号已被封禁' });
     }
