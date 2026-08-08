@@ -8,7 +8,7 @@
  *   P2 (A02 导航引导)
  *   P3 (A04 社交辅助 / A05 环境记忆)
  */
-import { visionUnderstand, ocrRecognize, faceDescribe, isConfigured } from '../services/trae-client.js';
+import { visionUnderstand, ocrRecognize, faceDescribe, isConfigured, getModels } from '../services/trae-client.js';
 import { planWalkRoute, searchPOI } from '../services/amap-client.js';
 import {
   searchRoutes, searchFaces, getHabit, upsertHabit, addRoute, addFace, addSosEvent, updateSosStatus, getMemoryStats, getAllUsers
@@ -27,6 +27,16 @@ export const AGENTS = {
   A04: { id: 'A04', name: '社交辅助', priority: PRIORITY.P3, color: '#7B61FF', active: false },
   A05: { id: 'A05', name: '环境记忆', priority: PRIORITY.P3, color: '#00E5FF', active: false }
 };
+
+// 各Agent专用模型分配(失败时自动降级到默认Omni兜底)
+// - VL: 视觉理解/OCR,比Omni快,成本低
+// - turbo: 纯文本意图识别,最快最省
+// - omni: 全模态,用于人脸识别(需视觉+语音协同)
+const MODELS = getModels();
+const MODEL_VL = MODELS.vl;       // qwen-vl-plus: A01场景/A03安全
+const MODEL_OCR = MODELS.ocr;     // OCR专用(默认vl-plus,可升级vl-max提升小字精度)
+const MODEL_TURBO = MODELS.turbo; // qwen-turbo: A02导航意图/选择POI
+const MODEL_OMNI = MODELS.omni;   // qwen-omni-turbo: A04人脸
 
 // 共享上下文
 const sharedContext = {
@@ -186,7 +196,7 @@ export async function runSceneAgent(imageBase64, userQuery = '') {
 
   try {
     const prompt = userQuery || '请用一段话描述当前场景，包括：路面状况、前方主要物体及大致距离、场景类型(室内/室外/路口)。50-100字。专为视障者设计，重点突出可能影响出行的信息。';
-    const result = await visionUnderstand(imageBase64, prompt);
+    const result = await visionUnderstand(imageBase64, prompt, MODEL_VL);
 
     // 更新场景类型到共享上下文(供其他Agent消费)
     if (result.includes('室内')) sharedContext.sceneType = 'indoor';
@@ -568,7 +578,7 @@ export async function runSafetyAgent(imageBase64, mode = 'scan', opts = {}) {
 ${isTravel ? '- 看到红灯时: traffic_light="red", urgent=true, action="红灯请停下"; 绿灯: traffic_light="green", safe=true\n' : ''}- 只输出JSON,不要markdown,不要解释`;
     }
 
-    const rawResult = await visionUnderstand(imageBase64, safetyPrompt);
+    const rawResult = await visionUnderstand(imageBase64, safetyPrompt, MODEL_VL);
     const parsed = safeParseJson(rawResult);
 
     if (!parsed) {
@@ -894,7 +904,7 @@ export async function triggerDangerPreemption(imageBase64) {
     emitLog('A03', 'A03启动视觉安全检测，判断是否需要抢占', 'warn');
 
     try {
-      const dangerResult = await visionUnderstand(imageBase64, '请检查画面中是否存在以下危险：1.靠近的车辆/电动车/自行车 2.地面障碍物(水坑/台阶/坑洞) 3.高空坠物风险 4.其他出行危险。如有危险请说明方向、距离、物体；如无危险请回答"安全"。50字以内。');
+      const dangerResult = await visionUnderstand(imageBase64, '请检查画面中是否存在以下危险：1.靠近的车辆/电动车/自行车 2.地面障碍物(水坑/台阶/坑洞) 3.高空坠物风险 4.其他出行危险。如有危险请说明方向、距离、物体；如无危险请回答"安全"。50字以内。', MODEL_VL);
 
       const isSafe = dangerResult.includes('安全') && !dangerResult.includes('不安全');
 
@@ -949,7 +959,7 @@ export async function runSocialAgent(imageBase64, mode = 'ocr') {
     let memoryHint = '';
 
     if (mode === 'ocr') {
-      result = await ocrRecognize(imageBase64);
+      result = await ocrRecognize(imageBase64, MODEL_OCR);
       const lastOrder = getHabit('food', 'last_order');
       if (lastOrder && result.includes(lastOrder.habit_value)) {
         memoryHint = ` 上次您点过${lastOrder.habit_value}，要再来一份吗？`;
@@ -965,7 +975,7 @@ export async function runSocialAgent(imageBase64, mode = 'ocr') {
       if (result.length > 100) {
         try {
           emitLog('A04', `OCR长文本(${result.length}字), 正在生成智能总结...`, 'info');
-          const summary = await visionUnderstand(imageBase64, `以下文字是OCR识别结果,请用一句话总结核心内容(30字以内):\n${result}`);
+          const summary = await visionUnderstand(imageBase64, `以下文字是OCR识别结果,请用一句话总结核心内容(30字以内):\n${result}`, MODEL_OCR);
           if (summary && summary.length < result.length) {
             result = `${result}\n\n【内容总结】${summary}`;
           }
@@ -974,7 +984,7 @@ export async function runSocialAgent(imageBase64, mode = 'ocr') {
         }
       }
     } else if (mode === 'face') {
-      result = await faceDescribe(imageBase64);
+      result = await faceDescribe(imageBase64, MODEL_OMNI);
       // 匹配本地熟人库
       const faces = searchFaces();
       if (faces.length > 0) {

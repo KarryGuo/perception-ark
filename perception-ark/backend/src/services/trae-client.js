@@ -1,8 +1,11 @@
 /**
- * 阿里千问 Qwen API 客户端 (全模态大模型)
- * 使用 Qwen3.5-Omni-Flash 模型,支持文本+图片+音频+视频输入
- * 平台: qianwenai.com (OpenAI兼容格式)
- * 文档: https://www.qianwenai.com/models/qwen3.5-omni-flash
+ * 阿里千问 Qwen API 客户端 (多模型分工 + Omni兜底)
+ * 模型分工:
+ *   - qwen-vl-plus      视觉理解/OCR (A01场景/A03安全/A04-OCR) 速度快成本低
+ *   - qwen-turbo        纯文本意图识别 (A02导航/选择POI)        最快最省
+ *   - qwen-omni-turbo   全模态 (A04人脸:需视觉+语音)
+ *   - qwen3.5-omni-flash 默认Omni (全模态兜底,任何专用模型失败时自动降级)
+ * 平台: DashScope OpenAI兼容格式
  */
 import axios from 'axios';
 import { log } from '../utils/logger.js';
@@ -11,9 +14,21 @@ import { log } from '../utils/logger.js';
 function getConfig() {
   const API_KEY = process.env.QWEN_API_KEY || '';
   const API_BASE = process.env.QWEN_API_BASE || 'https://dashscope.aliyuncs.com/compatible-mode/v1';
-  const MODEL = process.env.QWEN_MODEL || 'qwen3.5-omni-flash';
+  const MODEL = process.env.QWEN_MODEL || 'qwen3.5-omni-flash'; // 默认Omni(兜底模型)
+  const MODEL_VL = process.env.QWEN_MODEL_VL || 'qwen-vl-plus'; // 视觉专用(A01场景/A03安全)
+  const MODEL_OCR = process.env.QWEN_MODEL_OCR || MODEL_VL; // OCR专用(默认同VL,可升级到vl-max)
+  const MODEL_TURBO = process.env.QWEN_MODEL_TURBO || 'qwen-turbo'; // 文本专用
+  const MODEL_OMNI_TURBO = process.env.QWEN_MODEL_OMNI || 'qwen-omni-turbo'; // 全模态专用
   const MOCK_MODE = process.env.MOCK_MODE === 'true';
-  return { API_KEY, API_BASE, MODEL, MOCK_MODE };
+  return { API_KEY, API_BASE, MODEL, MODEL_VL, MODEL_OCR, MODEL_TURBO, MODEL_OMNI_TURBO, MOCK_MODE };
+}
+
+/**
+ * 获取各专用模型名称,供 orchestrator 调度使用
+ */
+export function getModels() {
+  const { MODEL, MODEL_VL, MODEL_OCR, MODEL_TURBO, MODEL_OMNI_TURBO } = getConfig();
+  return { default: MODEL, vl: MODEL_VL, ocr: MODEL_OCR, turbo: MODEL_TURBO, omni: MODEL_OMNI_TURBO };
 }
 
 export const isConfigured = () => {
@@ -78,31 +93,13 @@ function getMockTextChat(messages, systemPrompt) {
   return '好的，我明白了。（模拟模式：当前未配置真实AI，请在backend/.env中配置QWEN_API_KEY获得完整体验）';
 }
 
+// ============ 内部单模型调用(含429重试) ============
 /**
- * 视觉理解 - 图片+文本 -> 场景描述
- * 千问Omni模型支持OpenAI兼容的多模态格式:image_url或image(base64)
- * @param {string} imageBase64 - base64编码的图片(不含data:image前缀)
- * @param {string} prompt - 提问文本
+ * 视觉理解单模型调用(含429限流重试)
  * @returns {Promise<string>} AI回答
  */
-export async function visionUnderstand(imageBase64, prompt, modelOverride = null) {
-  const { API_KEY, API_BASE, MODEL, MOCK_MODE } = getConfig();
-  const useModel = modelOverride || MODEL;
-
-  // MOCK模式: 返回模拟数据
-  if (MOCK_MODE) {
-    log('A01', '【MOCK模式】视觉理解返回模拟结果');
-    return getMockSceneDescription(prompt);
-  }
-
-  if (!isConfigured()) {
-    throw new Error('未配置 QWEN_API_KEY，无法调用千问视觉模型');
-  }
-  if (!imageBase64) {
-    throw new Error('未获取到摄像头画面，无法进行视觉分析');
-  }
-
-  // 429限流自动重试(最多2次,指数退避)
+async function _visionCall(imageBase64, prompt, useModel) {
+  const { API_KEY, API_BASE } = getConfig();
   const startTime = Date.now();
   let lastErr = null;
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -137,14 +134,14 @@ export async function visionUnderstand(imageBase64, prompt, modelOverride = null
       );
       const latency = Date.now() - startTime;
       const result = response.data.choices[0].message.content;
-      log('A01', `视觉理解完成 (${latency}ms): ${String(result).slice(0, 60)}...`);
+      log('A01', `视觉理解[${useModel}]完成 (${latency}ms): ${String(result).slice(0, 60)}...`);
       return result;
     } catch (err) {
       lastErr = err;
       // 429限流: 指数退避重试
       if (err.response?.status === 429 && attempt < 2) {
         const waitMs = 1500 * Math.pow(2, attempt);
-        log('A01', `千问模型限流(429), ${waitMs}ms后重试(第${attempt + 1}次)`, 'warn');
+        log('A01', `模型${useModel}限流(429), ${waitMs}ms后重试(第${attempt + 1}次)`, 'warn');
         await new Promise(r => setTimeout(r, waitMs));
         continue;
       }
@@ -160,10 +157,83 @@ export async function visionUnderstand(imageBase64, prompt, modelOverride = null
 }
 
 /**
- * OCR文字识别 - 使用千问模型识别图片中的文字
+ * 视觉理解 - 图片+文本 -> 场景描述
+ * @param {string} imageBase64 - base64编码的图片(不含data:image前缀)
+ * @param {string} prompt - 提问文本
+ * @param {string} modelOverride - 专用模型(如qwen-vl-plus),失败自动降级到默认Omni
+ * @returns {Promise<string>} AI回答
  */
-export async function ocrRecognize(imageBase64) {
-  const { API_KEY, API_BASE, MODEL, MOCK_MODE } = getConfig();
+export async function visionUnderstand(imageBase64, prompt, modelOverride = null) {
+  const { MODEL, MOCK_MODE } = getConfig();
+
+  // MOCK模式: 返回模拟数据
+  if (MOCK_MODE) {
+    log('A01', '【MOCK模式】视觉理解返回模拟结果');
+    return getMockSceneDescription(prompt);
+  }
+
+  if (!isConfigured()) {
+    throw new Error('未配置 QWEN_API_KEY，无法调用千问视觉模型');
+  }
+  if (!imageBase64) {
+    throw new Error('未获取到摄像头画面，无法进行视觉分析');
+  }
+
+  const primaryModel = modelOverride || MODEL;
+  try {
+    return await _visionCall(imageBase64, prompt, primaryModel);
+  } catch (err) {
+    // 专用模型失败,降级到默认Omni兜底
+    if (modelOverride && modelOverride !== MODEL) {
+      log('A01', `专用模型${modelOverride}失败,降级到Omni[${MODEL}]兜底: ${err.message}`, 'warn');
+      return await _visionCall(imageBase64, prompt, MODEL);
+    }
+    throw err;
+  }
+}
+
+// ============ OCR 文字识别 ============
+/**
+ * OCR单模型调用
+ */
+async function _ocrCall(imageBase64, useModel) {
+  const { API_KEY, API_BASE } = getConfig();
+  const startTime = Date.now();
+  const response = await axios.post(
+    `${API_BASE}/chat/completions`,
+    {
+      model: useModel,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: '请识别图片中的所有文字，按原文格式输出。如果是菜单/价签/路牌/药盒等结构化文本，请按"名称 价格"或"项目:内容"的格式逐行列出。仅输出识别的文字内容，不要解释。' },
+            { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${imageBase64}` } }
+          ]
+        }
+      ],
+      modalities: ['text'],
+      max_tokens: 800,
+      temperature: 0.2
+    },
+    {
+      headers: { 'Authorization': `Bearer ${API_KEY}`, 'Content-Type': 'application/json' },
+      timeout: 20000
+    }
+  );
+  const latency = Date.now() - startTime;
+  const result = response.data.choices[0].message.content;
+  log('A04', `OCR[${useModel}]识别完成 (${latency}ms): ${String(result).slice(0, 60)}...`);
+  return result;
+}
+
+/**
+ * OCR文字识别 - 使用千问视觉模型识别图片中的文字
+ * @param {string} imageBase64 - base64编码的图片
+ * @param {string} modelOverride - 专用模型(如qwen-vl-plus),失败自动降级到默认Omni
+ */
+export async function ocrRecognize(imageBase64, modelOverride = null) {
+  const { MODEL, MOCK_MODE } = getConfig();
 
   if (MOCK_MODE) {
     log('A04', '【MOCK模式】OCR识别返回模拟结果');
@@ -177,35 +247,14 @@ export async function ocrRecognize(imageBase64) {
     throw new Error('未获取到摄像头画面，无法进行OCR识别');
   }
 
-  const startTime = Date.now();
+  const primaryModel = modelOverride || MODEL;
   try {
-    const response = await axios.post(
-      `${API_BASE}/chat/completions`,
-      {
-        model: MODEL,
-        messages: [
-          {
-            role: 'user',
-            content: [
-              { type: 'text', text: '请识别图片中的所有文字，按原文格式输出。如果是菜单/价签/路牌/药盒等结构化文本，请按"名称 价格"或"项目:内容"的格式逐行列出。仅输出识别的文字内容，不要解释。' },
-              { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${imageBase64}` } }
-            ]
-          }
-        ],
-        modalities: ['text'],
-        max_tokens: 800,
-        temperature: 0.2
-      },
-      {
-        headers: { 'Authorization': `Bearer ${API_KEY}`, 'Content-Type': 'application/json' },
-        timeout: 20000
-      }
-    );
-    const latency = Date.now() - startTime;
-    const result = response.data.choices[0].message.content;
-    log('A04', `OCR识别完成 (${latency}ms): ${String(result).slice(0, 60)}...`);
-    return result;
+    return await _ocrCall(imageBase64, primaryModel);
   } catch (err) {
+    if (modelOverride && modelOverride !== MODEL) {
+      log('A04', `专用模型${modelOverride}失败,降级到Omni[${MODEL}]兜底: ${err.message}`, 'warn');
+      return await _ocrCall(imageBase64, MODEL);
+    }
     if (err.response) {
       const detail = err.response.data?.error?.message || err.response.data?.message || err.response.statusText;
       throw new Error(`千问OCR API错误(${err.response.status}): ${detail}`);
@@ -214,11 +263,48 @@ export async function ocrRecognize(imageBase64) {
   }
 }
 
+// ============ 人脸描述 ============
+/**
+ * 人脸描述单模型调用
+ */
+async function _faceCall(imageBase64, useModel) {
+  const { API_KEY, API_BASE } = getConfig();
+  const startTime = Date.now();
+  const response = await axios.post(
+    `${API_BASE}/chat/completions`,
+    {
+      model: useModel,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: '请描述画面中的人物：性别、大致年龄、衣着特征、是否在向您挥手或打招呼、面部表情。如果是熟人请描述显著特征（如戴眼镜、发型等）。50字以内。' },
+            { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${imageBase64}` } }
+          ]
+        }
+      ],
+      modalities: ['text'],
+      max_tokens: 200,
+      temperature: 0.5
+    },
+    {
+      headers: { 'Authorization': `Bearer ${API_KEY}`, 'Content-Type': 'application/json' },
+      timeout: 20000
+    }
+  );
+  const latency = Date.now() - startTime;
+  const result = response.data.choices[0].message.content;
+  log('A04', `人脸描述[${useModel}]完成 (${latency}ms): ${String(result).slice(0, 60)}...`);
+  return result;
+}
+
 /**
  * 人脸描述 - 使用千问模型描述画面中的人
+ * @param {string} imageBase64 - base64编码的图片
+ * @param {string} modelOverride - 专用模型(如qwen-omni-turbo),失败自动降级到默认Omni
  */
-export async function faceDescribe(imageBase64) {
-  const { API_KEY, API_BASE, MODEL, MOCK_MODE } = getConfig();
+export async function faceDescribe(imageBase64, modelOverride = null) {
+  const { MODEL, MOCK_MODE } = getConfig();
 
   if (MOCK_MODE) {
     log('A04', '【MOCK模式】人脸描述返回模拟结果');
@@ -232,35 +318,14 @@ export async function faceDescribe(imageBase64) {
     throw new Error('未获取到摄像头画面，无法进行人脸识别');
   }
 
-  const startTime = Date.now();
+  const primaryModel = modelOverride || MODEL;
   try {
-    const response = await axios.post(
-      `${API_BASE}/chat/completions`,
-      {
-        model: MODEL,
-        messages: [
-          {
-            role: 'user',
-            content: [
-              { type: 'text', text: '请描述画面中的人物：性别、大致年龄、衣着特征、是否在向你挥手或打招呼、面部表情。如果是熟人请描述显著特征（如戴眼镜、发型等）。50字以内。' },
-              { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${imageBase64}` } }
-            ]
-          }
-        ],
-        modalities: ['text'],
-        max_tokens: 200,
-        temperature: 0.5
-      },
-      {
-        headers: { 'Authorization': `Bearer ${API_KEY}`, 'Content-Type': 'application/json' },
-        timeout: 20000
-      }
-    );
-    const latency = Date.now() - startTime;
-    const result = response.data.choices[0].message.content;
-    log('A04', `人脸描述完成 (${latency}ms): ${String(result).slice(0, 60)}...`);
-    return result;
+    return await _faceCall(imageBase64, primaryModel);
   } catch (err) {
+    if (modelOverride && modelOverride !== MODEL) {
+      log('A04', `专用模型${modelOverride}失败,降级到Omni[${MODEL}]兜底: ${err.message}`, 'warn');
+      return await _faceCall(imageBase64, MODEL);
+    }
     if (err.response) {
       const detail = err.response.data?.error?.message || err.response.data?.message || err.response.statusText;
       throw new Error(`千问人脸API错误(${err.response.status}): ${detail}`);
@@ -269,36 +334,19 @@ export async function faceDescribe(imageBase64) {
   }
 }
 
+// ============ 文本对话 ============
 /**
- * 文本对话 - 用于意图识别和多轮对话
- * @param {Array} messages - 消息列表
- * @param {string} systemPrompt - 系统提示词
- * @param {object} options - { timeout, maxTokens, temperature }
+ * 文本对话单模型调用
  */
-export async function textChat(messages, systemPrompt = '', options = {}) {
-  const { API_KEY, API_BASE, MODEL, MOCK_MODE } = getConfig();
-
-  if (MOCK_MODE) {
-    log('LLM', '【MOCK模式】文本对话返回模拟结果');
-    return getMockTextChat(messages, systemPrompt);
-  }
-
-  if (!isConfigured()) {
-    throw new Error('未配置 QWEN_API_KEY，无法调用千问文本模型');
-  }
-
+async function _textCall(messages, fullMessages, useModel, options) {
+  const { API_KEY, API_BASE } = getConfig();
   const { timeout = 60000, maxTokens = 500, temperature = 0.6 } = options;
-
-  const fullMessages = [];
-  if (systemPrompt) fullMessages.push({ role: 'system', content: systemPrompt });
-  fullMessages.push(...messages);
-
   const startTime = Date.now();
   try {
     const response = await axios.post(
       `${API_BASE}/chat/completions`,
       {
-        model: MODEL,
+        model: useModel,
         messages: fullMessages,
         modalities: ['text'],
         max_tokens: maxTokens,
@@ -311,21 +359,57 @@ export async function textChat(messages, systemPrompt = '', options = {}) {
     );
     const latency = Date.now() - startTime;
     const result = response.data.choices[0].message.content;
-    log('LLM', `文本对话完成 (${latency}ms): ${String(result).slice(0, 80)}`);
+    log('LLM', `文本对话[${useModel}]完成 (${latency}ms): ${String(result).slice(0, 80)}`);
     return result;
   } catch (err) {
     const latency = Date.now() - startTime;
     if (err.code === 'ECONNABORTED') {
-      log('LLM', `文本对话超时 (${latency}ms, limit=${timeout}ms)`, 'error');
+      log('LLM', `文本对话[${useModel}]超时 (${latency}ms, limit=${timeout}ms)`, 'error');
       throw new Error(`AI响应超时(${latency}ms)`);
     }
     if (err.response) {
       const status = err.response.status;
       const detail = err.response.data?.error?.message || err.response.data?.message || err.response.statusText;
-      log('LLM', `文本对话API错误 ${status}: ${detail} (${latency}ms)`, 'error');
+      log('LLM', `文本对话[${useModel}]API错误 ${status}: ${detail} (${latency}ms)`, 'error');
       throw new Error(`AI服务错误(${status}): ${detail}`);
     }
-    log('LLM', `文本对话网络错误: ${err.message} (${latency}ms)`, 'error');
+    log('LLM', `文本对话[${useModel}]网络错误: ${err.message} (${latency}ms)`, 'error');
     throw new Error(`AI网络错误: ${err.message}`);
+  }
+}
+
+/**
+ * 文本对话 - 用于意图识别和多轮对话
+ * @param {Array} messages - 消息列表
+ * @param {string} systemPrompt - 系统提示词
+ * @param {object} options - { timeout, maxTokens, temperature }
+ * @param {string} modelOverride - 专用模型(如qwen-turbo),失败自动降级到默认Omni
+ */
+export async function textChat(messages, systemPrompt = '', options = {}, modelOverride = null) {
+  const { MODEL, MOCK_MODE } = getConfig();
+
+  if (MOCK_MODE) {
+    log('LLM', '【MOCK模式】文本对话返回模拟结果');
+    return getMockTextChat(messages, systemPrompt);
+  }
+
+  if (!isConfigured()) {
+    throw new Error('未配置 QWEN_API_KEY，无法调用千问文本模型');
+  }
+
+  const fullMessages = [];
+  if (systemPrompt) fullMessages.push({ role: 'system', content: systemPrompt });
+  fullMessages.push(...messages);
+
+  const primaryModel = modelOverride || MODEL;
+  try {
+    return await _textCall(messages, fullMessages, primaryModel, options);
+  } catch (err) {
+    // 专用模型失败,降级到默认Omni兜底
+    if (modelOverride && modelOverride !== MODEL) {
+      log('LLM', `专用模型${modelOverride}失败,降级到Omni[${MODEL}]兜底: ${err.message}`, 'warn');
+      return await _textCall(messages, fullMessages, MODEL, options);
+    }
+    throw err;
   }
 }
