@@ -22,7 +22,7 @@ const PIPELINE = [
     id: 'perceive',
     name: '环境理解',
     icon: '👁️',
-    desc: '豆包视觉 · 场景识别',
+    desc: '千问全模态 · 场景识别',
     detail: 'VLM解析：物体·距离·路面·场景类型'
   },
   {

@@ -176,7 +176,7 @@ export async function understandIntent(text, sessionId) {
         reply: parsed.reply
       };
     }
-    // LLM返回了非JSON文本,直接作为chat回复(豆包有时不按格式返回)
+    // LLM返回了非JSON文本,直接作为chat回复(大模型有时不按格式返回)
     return { intent: 'chat', entity: null, reply: result };
   } catch (err) {
     log('小舟', `LLM调用失败: ${err.message}`, 'error');

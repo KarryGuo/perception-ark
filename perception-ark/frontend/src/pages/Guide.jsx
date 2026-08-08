@@ -134,7 +134,7 @@ export default function Guide() {
           <h2>技术架构</h2>
           <p>前端: React 18 + Vite,高德地图JS API,Web Speech API(语音识别/合成)</p>
           <p>后端: Node.js + Express + WebSocket,better-sqlite3(记忆存储),JWT(认证)</p>
-          <p>AI能力: 火山方舟(ARK) — doubao-1.5-pro-32k(文本),doubao-1.5-vision-pro-32k(视觉)</p>
+          <p>AI能力: 阿里千问 Qwen3.5-Omni-Flash 全模态大模型 (视觉+文本+音频+视频)</p>
           <p>地图服务: 高德地图 — 步行路径规划,POI搜索,逆地理编码,天气查询</p>
         </div>
       </div>
