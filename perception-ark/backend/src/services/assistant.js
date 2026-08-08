@@ -4,12 +4,15 @@
  * - 意图识别 + 调用五大Agent能力
  * - 视障者友好的温暖语气
  */
-import { textChat, isConfigured } from './trae-client.js';
+import { textChat, isConfigured, getModels } from './trae-client.js';
 import { log, genId, now } from '../utils/logger.js';
 
 // 会话记忆库: sessionId -> { messages: [], createdAt, lastActive }
 const sessions = new Map();
 const HISTORY_LIMIT = parseInt(process.env.ASSISTANT_HISTORY_LIMIT || '20', 10);
+
+// 意图识别专用模型: qwen-turbo(纯文本,最快最省,失败自动降级到Omni兜底)
+const MODEL_TURBO = getModels().turbo;
 
 // 系统提示词 - 定义小舟人格
 const SYSTEM_PROMPT = `你是"小舟"，感知方舟AI感知眼镜的语音助手，服务视障用户。
@@ -164,7 +167,8 @@ export async function understandIntent(text, sessionId) {
 - ocr/face/scene/safety/memory/fall: entity为null,reply简短告知正在执行
 - chat: 普通对话,entity为null,reply为自然温暖回复(50字以内)
 - 只返回JSON,不要任何其他文字`,
-      { timeout: 10000, maxTokens: 200, temperature: 0.5 }
+      { timeout: 10000, maxTokens: 200, temperature: 0.5 },
+      MODEL_TURBO
     );
 
     const match = result.match(/\{[\s\S]+\}/);
@@ -206,7 +210,8 @@ export async function generateReply(text, sessionId) {
         { role: 'user', content: text }
       ],
       SYSTEM_PROMPT,
-      { timeout: 20000, maxTokens: 200, temperature: 0.6 }
+      { timeout: 20000, maxTokens: 200, temperature: 0.6 },
+      MODEL_TURBO
     );
     return reply;
   } catch (err) {
