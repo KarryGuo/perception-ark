@@ -25,8 +25,8 @@ export default function Login() {
   const [loginRole, setLoginRole] = useState('user');
   // 标记是否本次主动登录(防止useEffect自动跳转覆盖角色拦截)
   const [manualLogin, setManualLogin] = useState(false);
-  // 登录方式: 'password'(账号密码) | 'sms'(手机验证码)
-  const [loginMethod, setLoginMethod] = useState('password');
+  // 登录方式: 'sms'(手机验证码,默认) | 'password'(账号密码)
+  const [loginMethod, setLoginMethod] = useState('sms');
 
   // 手机验证码登录相关状态
   const [smsPhone, setSmsPhone] = useState('');
@@ -167,19 +167,76 @@ export default function Login() {
         <div className="auth-method-tabs">
           <button
             type="button"
-            className={`auth-method-tab ${loginMethod === 'password' ? 'active' : ''}`}
-            onClick={() => switchMethod('password')}
-          >
-            🔑 账号密码
-          </button>
-          <button
-            type="button"
             className={`auth-method-tab ${loginMethod === 'sms' ? 'active' : ''}`}
             onClick={() => switchMethod('sms')}
           >
             📱 手机验证码
           </button>
+          <button
+            type="button"
+            className={`auth-method-tab ${loginMethod === 'password' ? 'active' : ''}`}
+            onClick={() => switchMethod('password')}
+          >
+            🔑 账号密码
+          </button>
         </div>
+
+        {/* ===== 手机验证码登录 ===== */}
+        {loginMethod === 'sms' && (
+          <form onSubmit={handleSmsLogin} className="auth-form">
+            <div className="auth-field">
+              <label htmlFor="sms-phone">手机号码</label>
+              <input
+                id="sms-phone"
+                type="tel"
+                value={smsPhone}
+                onChange={e => setSmsPhone(e.target.value)}
+                placeholder="请输入注册时的手机号"
+                autoComplete="off"
+                required
+                autoFocus
+              />
+            </div>
+
+            <div className="auth-field">
+              <label htmlFor="sms-code">验证码</label>
+              <div className="auth-sms-row">
+                <input
+                  id="sms-code"
+                  type="text"
+                  inputMode="numeric"
+                  maxLength={6}
+                  value={smsCode}
+                  onChange={e => setSmsCode(e.target.value.replace(/\D/g, ''))}
+                  placeholder="6位数字验证码"
+                  autoComplete="one-time-code"
+                  required
+                />
+                <button
+                  type="button"
+                  className="auth-sms-btn"
+                  onClick={handleSendSms}
+                  disabled={smsSending || smsCountdown > 0}
+                >
+                  {smsCountdown > 0 ? `${smsCountdown}s` : (smsSending ? '发送中...' : '获取验证码')}
+                </button>
+              </div>
+              {smsHint && <div className="auth-sms-hint">{smsHint}</div>}
+            </div>
+
+            {error && <div className="auth-error">{error}</div>}
+
+            <button type="submit" className="auth-btn" disabled={loading}>
+              {loading ? '登录中...' : '验证码登录'}
+            </button>
+
+            <div className="auth-links">
+              <a href="#/register">没有账号? 立即注册</a>
+              <a href="#/forgot">忘记密码?</a>
+              <a href="#/guide">产品使用说明</a>
+            </div>
+          </form>
+        )}
 
         {/* ===== 账号密码登录 ===== */}
         {loginMethod === 'password' && (
@@ -253,80 +310,6 @@ export default function Login() {
               <a href="#/guide">产品使用说明</a>
             </div>
           </form>
-        )}
-
-        {/* ===== 手机验证码登录 ===== */}
-        {loginMethod === 'sms' && (
-          <form onSubmit={handleSmsLogin} className="auth-form">
-            <div className="auth-field">
-              <label htmlFor="sms-phone">手机号码</label>
-              <input
-                id="sms-phone"
-                type="tel"
-                value={smsPhone}
-                onChange={e => setSmsPhone(e.target.value)}
-                placeholder="请输入注册时的手机号"
-                autoComplete="off"
-                required
-                autoFocus
-              />
-            </div>
-
-            <div className="auth-field">
-              <label htmlFor="sms-code">验证码</label>
-              <div className="auth-sms-row">
-                <input
-                  id="sms-code"
-                  type="text"
-                  inputMode="numeric"
-                  maxLength={6}
-                  value={smsCode}
-                  onChange={e => setSmsCode(e.target.value.replace(/\D/g, ''))}
-                  placeholder="6位数字验证码"
-                  autoComplete="one-time-code"
-                  required
-                />
-                <button
-                  type="button"
-                  className="auth-sms-btn"
-                  onClick={handleSendSms}
-                  disabled={smsSending || smsCountdown > 0}
-                >
-                  {smsCountdown > 0 ? `${smsCountdown}s` : (smsSending ? '发送中...' : '获取验证码')}
-                </button>
-              </div>
-              {smsHint && <div className="auth-sms-hint">{smsHint}</div>}
-            </div>
-
-            {error && <div className="auth-error">{error}</div>}
-
-            <button type="submit" className="auth-btn" disabled={loading}>
-              {loading ? '登录中...' : '验证码登录'}
-            </button>
-
-            <div className="auth-links">
-              <a href="#/register">没有账号? 立即注册</a>
-              <a href="#/forgot">忘记密码?</a>
-              <a href="#/guide">产品使用说明</a>
-            </div>
-          </form>
-        )}
-
-        {/* 评委手机扫码体验 */}
-        {loginRole === 'user' && (
-          <div className="auth-qr">
-            <div className="auth-qr-title">📱 评委手机扫码体验</div>
-            <div className="auth-qr-img">
-              <img
-                src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&margin=8&color=04060C&bgcolor=FFFFFF&data=${encodeURIComponent(window.location.href.split('#')[0] + '#/demo')}`}
-                alt="扫码体验移动端APP"
-                width="160"
-                height="160"
-              />
-            </div>
-            <div className="auth-qr-tip">扫码一键进入移动端APP</div>
-            <div className="auth-qr-hint">首次访问需等待约30秒服务唤醒</div>
-          </div>
         )}
       </div>
     </div>

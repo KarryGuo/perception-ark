@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>感知方舟 · 产品说明书</title>
+<style>
+  :root {
+    --void: #04060C; --void-2: #080B14; --void-3: #0D111C;
+    --ink: #EAF0FF; --ink-soft: #D0D8E8; --ink-muted: #8893A8; --ink-faint: #5A6478;
+    --emerald: #00FFA3; --magenta: #FF2E7E; --amber: #FFB627; --violet: #7B61FF; --cyan: #00E5FF;
+    --glass: rgba(13,17,28,0.6); --gb: rgba(255,255,255,0.06); --gbh: rgba(255,255,255,0.14);
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family: 'Noto Sans SC', -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+    background: var(--void); color: var(--ink); line-height: 1.8; font-size: 17px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .ambient {
+    position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    background:
+      radial-gradient(ellipse 800px 500px at 10% 10%, rgba(0,255,163,0.05) 0%, transparent 60%),
+      radial-gradient(ellipse 600px 500px at 90% 60%, rgba(123,97,255,0.05) 0%, transparent 60%),
+      radial-gradient(ellipse 500px 400px at 50% 100%, rgba(255,46,126,0.03) 0%, transparent 60%);
+  }
+  .container { max-width: 900px; margin: 0 auto; padding: 60px 40px 120px; position: relative; z-index: 1; }
+
+  /* HERO */
+  .hero { text-align: center; padding: 40px 0 60px; }
+  .hero-logo {
+    font-size: 3.5rem; font-weight: 900; letter-spacing: -0.02em;
+    background: linear-gradient(135deg, var(--emerald), var(--cyan));
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+  }
+  .hero-sub { font-size: 1.3rem; color: var(--ink-muted); margin-top: 12px; letter-spacing: 0.15em; }
+  .hero-tag {
+    display: inline-block; margin-top: 20px; padding: 8px 20px;
+    border: 1px solid rgba(0,255,163,0.2); border-radius: 100px;
+    background: rgba(0,255,163,0.05); color: var(--emerald);
+    font-size: .9rem; letter-spacing: 0.1em;
+  }
+  .hero-desc { font-size: 1.15rem; color: var(--ink-soft); margin-top: 32px; line-height: 2; max-width: 680px; margin-left:auto; margin-right:auto; }
+
+  /* SECTION */
+  .section { margin-top: 64px; }
+  .section-title {
+    font-size: 1.8rem; font-weight: 700; margin-bottom: 28px;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .section-title .bar { width: 4px; height: 28px; border-radius: 2px; }
+  .section-title .bar.emerald { background: var(--emerald); }
+  .section-title .bar.amber { background: var(--amber); }
+  .section-title .bar.magenta { background: var(--magenta); }
+  .section-title .bar.violet { background: var(--violet); }
+  .section-title .bar.cyan { background: var(--cyan); }
+  .section-title .bar.ink { background: var(--ink-soft); }
+
+  /* CARDS */
+  .card-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 700px) { .card-grid { grid-template-columns: 1fr; } .container { padding: 40px 20px 80px; } }
+  .card {
+    background: var(--glass); border: 1px solid var(--gb); border-radius: 16px;
+    padding: 28px; backdrop-filter: blur(20px); transition: border-color .3s;
+  }
+  .card:hover { border-color: var(--gbh); }
+  .card-icon { font-size: 2rem; margin-bottom: 14px; }
+  .card-title { font-size: 1.2rem; font-weight: 600; margin-bottom: 10px; }
+  .card-desc { font-size: 1rem; color: var(--ink-soft); line-height: 1.8; }
+  .card-tag {
+    display: inline-block; margin-top: 12px; padding: 4px 12px; border-radius: 6px;
+    font-size: .82rem; font-weight: 600;
+  }
+  .tag-emerald { background: rgba(0,255,163,0.1); color: var(--emerald); }
+  .tag-amber { background: rgba(255,182,39,0.1); color: var(--amber); }
+  .tag-magenta { background: rgba(255,46,126,0.1); color: var(--magenta); }
+  .tag-violet { background: rgba(123,97,255,0.1); color: var(--violet); }
+  .tag-cyan { background: rgba(0,229,255,0.1); color: var(--cyan); }
+
+  /* AGENT TABLE */
+  .agent-row {
+    display: flex; align-items: flex-start; gap: 20px; padding: 24px;
+    background: var(--glass); border: 1px solid var(--gb); border-radius: 14px;
+    margin-bottom: 14px; border-left: 4px solid;
+  }
+  .agent-row.a01 { border-left-color: var(--emerald); }
+  .agent-row.a02 { border-left-color: var(--amber); }
+  .agent-row.a03 { border-left-color: var(--magenta); }
+  .agent-row.a04 { border-left-color: var(--violet); }
+  .agent-row.a05 { border-left-color: var(--cyan); }
+  .agent-badge {
+    flex-shrink: 0; width: 56px; height: 56px; border-radius: 14px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    font-size: .72rem; font-weight: 700; letter-spacing: 0.05em;
+  }
+  .badge-a01 { background: rgba(0,255,163,0.12); color: var(--emerald); }
+  .badge-a02 { background: rgba(255,182,39,0.12); color: var(--amber); }
+  .badge-a03 { background: rgba(255,46,126,0.12); color: var(--magenta); }
+  .badge-a04 { background: rgba(123,97,255,0.12); color: var(--violet); }
+  .badge-a05 { background: rgba(0,229,255,0.12); color: var(--cyan); }
+  .agent-body h3 { font-size: 1.15rem; margin-bottom: 6px; }
+  .agent-body .priority { font-size: .85rem; color: var(--ink-muted); margin-bottom: 8px; }
+  .agent-body p { font-size: 1rem; color: var(--ink-soft); }
+
+  /* ARCH */
+  .arch-box {
+    background: var(--void-2); border: 1px solid var(--gb); border-radius: 16px;
+    padding: 32px; font-size: 1rem; line-height: 2.2;
+  }
+  .arch-layer { padding: 8px 0; border-bottom: 1px solid var(--gb); }
+  .arch-layer:last-child { border-bottom: none; }
+  .arch-layer strong { color: var(--emerald); min-width: 120px; display: inline-block; }
+
+  /* FEATURE LIST */
+  .feature-list { list-style: none; }
+  .feature-list li {
+    padding: 14px 0; border-bottom: 1px solid var(--gb);
+    display: flex; align-items: flex-start; gap: 14px; font-size: 1.05rem; color: var(--ink-soft);
+  }
+  .feature-list li:last-child { border-bottom: none; }
+  .feature-list .dot { flex-shrink: 0; width: 8px; height: 8px; border-radius: 50%; margin-top: 10px; }
+  .dot.emerald { background: var(--emerald); } .dot.amber { background: var(--amber); }
+  .dot.magenta { background: var(--magenta); } .dot.violet { background: var(--violet); }
+  .dot.cyan { background: var(--cyan); }
+
+  /* ACCESS */
+  .access-box {
+    background: rgba(0,255,163,0.06); border: 1px solid rgba(0,255,163,0.15);
+    border-radius: 16px; padding: 32px; text-align: center;
+  }
+  .access-box h3 { font-size: 1.3rem; margin-bottom: 16px; }
+  .access-url {
+    font-size: 1.1rem; color: var(--emerald); font-family: 'Space Grotesk', monospace;
+    padding: 12px 24px; background: var(--void-3); border-radius: 10px;
+    display: inline-block; margin: 12px 0; word-break: break-all;
+  }
+  .access-steps { text-align: left; margin-top: 24px; font-size: 1.05rem; color: var(--ink-soft); line-height: 2.2; }
+  .access-steps strong { color: var(--ink); }
+
+  /* FOOTER */
+  .footer {
+    margin-top: 80px; padding-top: 32px; border-top: 1px solid var(--gb);
+    text-align: center; color: var(--ink-faint); font-size: .95rem; line-height: 2;
+  }
+</style>
+</head>
+<body>
+<div class="ambient"></div>
+<div class="container">
+
+  <!-- HERO -->
+  <div class="hero">
+    <div class="hero-logo">感知方舟</div>
+    <div class="hero-sub">PerceptionArk</div>
+    <div class="hero-tag">AI 智能视障辅助眼镜系统</div>
+    <p class="hero-desc">
+      以五大智能体协作为核心，融合千问全模态大模型、高德实时导航、空间音频与跌倒检测，
+      为视障人士构建从出行感知到紧急救援的完整守护闭环。
+    </p>
+  </div>
+
+  <!-- 产品概述 -->
+  <div class="section">
+    <div class="section-title"><span class="bar emerald"></span>产品概述</div>
+    <p style="font-size:1.1rem;color:var(--ink-soft);line-height:2;">
+      感知方舟是一款面向视障人群的 AI 辅助眼镜系统。系统由<strong style="color:var(--ink)">视障端</strong>、<strong style="color:var(--ink)">家属端</strong>和<strong style="color:var(--ink)">管理后台</strong>三端协同组成，通过摄像头视觉感知、语音多模态交互、实时定位导航和智能体优先级抢占机制，为视障用户在出行、阅读、社交和安全防护场景提供全天候辅助。家属端可远程守护视障亲属的出行安全与紧急求助，管理后台支持账号管理与设备监测。
+    </p>
+  </div>
+
+  <!-- 核心功能 -->
+  <div class="section">
+    <div class="section-title"><span class="bar cyan"></span>核心功能</div>
+    <div class="card-grid">
+      <div class="card">
+        <div class="card-icon">👁️</div>
+        <div class="card-title">视觉场景理解</div>
+        <div class="card-desc">调用千问3.5全模态大模型，实时识别前方物体名称、方位、距离、路面状况和场景类型，以自然语言语音播报给视障用户。</div>
+        <span class="card-tag tag-emerald">A01 场景感知</span>
+      </div>
+      <div class="card">
+        <div class="card-icon">🧭</div>
+        <div class="card-title">智能导航引导</div>
+        <div class="card-desc">接入高德地图步行路径规划与POI搜索，支持语音对话式导航：说出目的地→搜索Top3→"去第一个"→自动规划路线→出行模式实时引导。</div>
+        <span class="card-tag tag-amber">A02 导航引导</span>
+      </div>
+      <div class="card">
+        <div class="card-icon">🚨</div>
+        <div class="card-title">安全预警与SOS</div>
+        <div class="card-desc">红绿灯Canvas快速检测+AI双保险，障碍物三级预警（紧急/警告/提示），跌倒IMU检测触发10秒倒计时SOS，无应答自动拨号120。</div>
+        <span class="card-tag tag-magenta">A03 安全预警 P0最高优先级</span>
+      </div>
+      <div class="card">
+        <div class="card-icon">📖</div>
+        <div class="card-title">OCR阅读与人脸识别</div>
+        <div class="card-desc">菜单、招牌、药盒、价签文字结构化识别并语音播报；人脸描述性别、年龄、衣着、表情等特征，自动写入熟人记忆库。</div>
+        <span class="card-tag tag-violet">A04 社交辅助</span>
+      </div>
+      <div class="card">
+        <div class="card-icon">🧠</div>
+        <div class="card-title">环境记忆积累</div>
+        <div class="card-desc">SQLite持久化存储常用路线、熟人面孔和出行习惯，随使用自然积累，越用越懂用户。重启不丢失，云端持久化磁盘保障。</div>
+        <span class="card-tag tag-cyan">A05 环境记忆</span>
+      </div>
+      <div class="card">
+        <div class="card-icon">👨‍👩‍👦</div>
+        <div class="card-title">家属远程守护</div>
+        <div class="card-desc">家属绑定视障账号后，实时查看出行位置（隐私模糊化约1km精度）、SOS紧急告警、安全事件记录、常用路线和综合看板。</div>
+        <span class="card-tag tag-emerald">三端协同</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 五大智能体 -->
+  <div class="section">
+    <div class="section-title"><span class="bar magenta"></span>五大智能体协作架构</div>
+    <p style="font-size:1.05rem;color:var(--ink-soft);margin-bottom:24px;">
+      五个智能体按 P0-P3 优先级运行，高优先级可<strong style="color:var(--magenta)">抢占</strong>低优先级的播报，并通过死锁防护机制自动释放，确保安全信息永远优先传达。
+    </p>
+
+    <div class="agent-row a03">
+      <div class="agent-badge badge-a03">A03<br>P0</div>
+      <div class="agent-body">
+        <h3>安全预警 Agent</h3>
+        <div class="priority">优先级 P0 · 最高 · 可抢占所有其他Agent</div>
+        <p>红绿灯检测、障碍物距离判断、跌倒SOS。检测到危险时立即抢占当前播报，推送空间音频警报+分级震动+全屏红色动画，用户安全始终第一。</p>
+      </div>
+    </div>
+
+    <div class="agent-row a01">
+      <div class="agent-badge badge-a01">A01<br>P1</div>
+      <div class="agent-body">
+        <h3>场景感知 Agent</h3>
+        <div class="priority">优先级 P1</div>
+        <p>调用千问全模态视觉理解，识别前方物体、距离、方位、路面状况和场景类型（室内/室外/路口），以自然语言播报环境信息。</p>
+      </div>
+    </div>
+
+    <div class="agent-row a02">
+      <div class="agent-badge badge-a02">A02<br>P2</div>
+      <div class="agent-body">
+        <h3>导航引导 Agent</h3>
+        <div class="priority">优先级 P2</div>
+        <p>高德地图步行路径规划、POI搜索、逆地理编码、天气查询。智能POI选择+延迟播报下一步导航指令，路线规划后自动切换出行模式。</p>
+      </div>
+    </div>
+
+    <div class="agent-row a04">
+      <div class="agent-badge badge-a04">A04<br>P3</div>
+      <div class="agent-body">
+        <h3>社交辅助 Agent</h3>
+        <div class="priority">优先级 P3</div>
+        <p>OCR文字识别（菜单/招牌/药盒/价签）和人脸描述（性别/年龄/衣着/表情），帮助视障用户阅读文字和感知面前的人。</p>
+      </div>
+    </div>
+
+    <div class="agent-row a05">
+      <div class="agent-badge badge-a05">A05<br>P3</div>
+      <div class="agent-body">
+        <h3>环境记忆 Agent</h3>
+        <div class="priority">优先级 P3</div>
+        <p>SQLite持久化记忆库，积累常用路线、熟人面孔和出行习惯。随使用自然成长，越用越个性化。</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 技术架构 -->
+  <div class="section">
+    <div class="section-title"><span class="bar amber"></span>技术架构</div>
+    <div class="arch-box">
+      <div class="arch-layer"><strong>AI 能力</strong> 阿里千问 Qwen3.5-Omni-Flash 全模态大模型（视觉+文本+音频+视频）</div>
+      <div class="arch-layer"><strong>前端框架</strong> React 18 + Vite 5 + Web Speech API（ASR/TTS）+ Web Audio API（空间音频）</div>
+      <div class="arch-layer"><strong>后端框架</strong> Node.js + Express 4 + WebSocket 实时通信</div>
+      <div class="arch-layer"><strong>数据存储</strong> better-sqlite3（WAL模式）+ 持久化磁盘，7张表自动迁移</div>
+      <div class="arch-layer"><strong>认证系统</strong> JWT（7天有效期）+ bcryptjs密码哈希 + 手机验证码登录 + 密保找回</div>
+      <div class="arch-layer"><strong>地图服务</strong> 高德地图 REST API（步行导航/POI/逆地理/天气）+ JS API 3D暗色地图</div>
+      <div class="arch-layer"><strong>移动APP</strong> Capacitor 6 打包 Android/iOS，Leaflet+高德瓦片离线地图</div>
+      <div class="arch-layer"><strong>部署方案</strong> Render.com Starter 套餐，单一Web Service，前端构建产物由后端静态托管，1GB持久化磁盘</div>
+      <div class="arch-layer"><strong>开发工具</strong> TRAE SOLO CN 全程AI辅助开发</div>
+    </div>
+  </div>
+
+  <!-- 三端协同 -->
+  <div class="section">
+    <div class="section-title"><span class="bar violet"></span>三端协同</div>
+    <div class="card-grid">
+      <div class="card" style="border-left:3px solid var(--emerald);">
+        <div class="card-icon">📱</div>
+        <div class="card-title">视障端</div>
+        <div class="card-desc">视障用户主界面。语音唤醒"小舟小舟"→8秒对话窗口→五大模式（识别/出行/阅读/红绿灯/寻物）。摄像头实时画面+字幕条+空间音频+震动反馈。摇一摇触发出行模式，按住说话语音输入，SOS一键紧急求助。</div>
+      </div>
+      <div class="card" style="border-left:3px solid var(--violet);">
+        <div class="card-icon">👨‍👩‍👧</div>
+        <div class="card-title">家属端</div>
+        <div class="card-desc">家属守护界面。4个Tab（守护/安全/路线/我的）。通过手机号绑定视障账号，5秒轮询+WebSocket实时推送SOS告警。位置隐私模糊化（约1km精度），聊天内容不返回，识别详情脱敏——关爱不等于监控。</div>
+      </div>
+      <div class="card" style="border-left:3px solid var(--amber);grid-column:1/-1;">
+        <div class="card-icon">🖥️</div>
+        <div class="card-title">管理后台</div>
+        <div class="card-desc">系统运营界面。设备监测（实时状态+五大Agent状态+系统统计+最近SOS）、账号管理（列表/封禁/解封，操作必填原因并记录日志）、操作日志（管理员操作流水审计）。仅管理员角色可访问。</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 安全与隐私 -->
+  <div class="section">
+    <div class="section-title"><span class="bar magenta"></span>安全与隐私设计</div>
+    <ul class="feature-list">
+      <li><span class="dot magenta"></span><div><strong>SOS 完整链路：</strong>跌倒IMU检测（加速度>25m/s²+2秒静止确认）→ 10秒倒计时（"我没事"取消）→ 立即通知家属+云端同步位置 → 60秒语音询问 → 60秒无应答自动跳转 tel:120 拨打急救电话</div></li>
+      <li><span class="dot magenta"></span><div><strong>位置隐私模糊化：</strong>家属端所有位置坐标保留2位小数（约1km精度），不返回精确坐标，关爱与隐私兼顾</div></li>
+      <li><span class="dot emerald"></span><div><strong>聊天内容保护：</strong>家属端不返回视障用户的聊天原文，识别历史只显示"识别已记录"摘要</div></li>
+      <li><span class="dot amber"></span><div><strong>防回声循环：</strong>TTS播报期间自动屏蔽ASR输入，3秒延迟重置，防止TTS音频被ASR重新捕获形成循环</div></li>
+      <li><span class="dot cyan"></span><div><strong>处理锁防并发：</strong>TTS/ASR操作使用处理锁，避免并发播报和识别冲突</div></li>
+      <li><span class="dot violet"></span><div><strong>错误不语音播报：</strong>API失败等错误仅Toast提示，不触发TTS，避免ASR误捕获</div></li>
+    </ul>
+  </div>
+
+  <!-- 体验方式 -->
+  <div class="section">
+    <div class="section-title"><span class="bar emerald"></span>体验方式</div>
+    <div class="access-box">
+      <h3>🌐 在线访问</h3>
+      <p style="color:var(--ink-soft);font-size:1.05rem;">部署于 Render.com 云平台，浏览器直接访问</p>
+      <div class="access-url">https://perception-ark.onrender.com</div>
+      <div class="access-steps">
+        <p><strong>方式一 · 账号密码登录：</strong>使用注册账号登录体验</p>
+        <p><strong>方式二 · 手机验证码登录：</strong>输入手机号→获取验证码→登录（开发模式验证码界面直接显示）</p>
+        <p><strong>角色说明：</strong>用户登录→视障端 ｜ 家属登录→家属端 ｜ 管理员登录→管理后台</p>
+        <p><strong>移动APP：</strong>Android APK 可通过 Capacitor 打包安装体验原生功能</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- FOOTER -->
+  <div class="footer">
+    <p>感知方舟 PerceptionArk · AI 智能视障辅助眼镜系统</p>
+    <p>全程基于 TRAE 平台 AI 辅助开发 · React + Node.js + Qwen 全模态大模型</p>
+  </div>
+
+</div>
+</body>
+</html>

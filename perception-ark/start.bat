@@ -58,7 +58,7 @@ echo  ║  家属端页面:  http://localhost:5173/#/family          ║
 echo  ║  API健康检查: http://localhost:3001/api/health        ║
 echo  ║                                                       ║
 echo  ║  当前模式: MOCK (无需API Key即可体验全部功能)          ║
-echo  ║  接入真实AI: 编辑 backend\.env 填写 ARK_API_KEY       ║
+echo  ║  接入真实AI: 编辑 backend\.env 填写 QWEN_API_KEY      ║
 echo  ║             并将 MOCK_MODE 改为 false                 ║
 echo  ║                                                       ║
 echo  ║  关闭服务: 直接关闭弹出的两个窗口                      ║
