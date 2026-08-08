@@ -3086,6 +3086,71 @@ input:focus-visible,
   justify-content: center;
 }
 
+/* 家属绑定列表 */
+.sp-family-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.sp-family-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  background: var(--void-3);
+  border: 1px solid var(--gb);
+  border-radius: 10px;
+}
+.sp-family-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.sp-family-name {
+  font-size: .9rem;
+  color: var(--ink);
+  font-weight: 500;
+}
+.sp-family-relation {
+  font-size: .8rem;
+  color: var(--ink-muted);
+  margin-left: 6px;
+}
+.sp-family-phone {
+  font-size: .8rem;
+  color: var(--ink-muted);
+  font-family: 'Space Grotesk', monospace;
+}
+.sp-family-status {
+  font-size: .72rem;
+  padding: 2px 8px;
+  border-radius: 4px;
+  display: inline-block;
+  width: fit-content;
+}
+.sp-family-status.active {
+  background: rgba(0,255,163,0.12);
+  color: var(--bio-emerald);
+}
+.sp-family-status.pending {
+  background: rgba(255,182,39,0.12);
+  color: var(--bio-amber);
+}
+.sp-unbind-btn {
+  padding: 8px 14px;
+  background: rgba(255,46,126,0.08);
+  border: 1px solid rgba(255,46,126,0.25);
+  border-radius: 8px;
+  color: var(--bio-magenta);
+  font-size: .8rem;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all .2s;
+  min-height: 40px;
+}
+.sp-unbind-btn:hover { background: rgba(255,46,126,0.15); }
+
 .sp-account-msg {
   margin-top: 8px;
   padding: 10px 14px;

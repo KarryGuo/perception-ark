@@ -65,6 +65,59 @@ export default function Settings() {
   const [secAnswer, setSecAnswer] = useState('');
   const [secSaving, setSecSaving] = useState(false);
 
+  // ===== 家属绑定状态 =====
+  const [familyList, setFamilyList] = useState([]);
+  const [familyPhone, setFamilyPhone] = useState('');
+  const [familyName, setFamilyName] = useState('');
+  const [familyRelation, setFamilyRelation] = useState('');
+  const [familyBinding, setFamilyBinding] = useState(false);
+  const [familyMsg, setFamilyMsg] = useState(null);
+
+  const loadFamilyList = useCallback(async () => {
+    try {
+      const res = await api.getFamilyList();
+      if (res?.success) setFamilyList(res.list || []);
+    } catch (err) {
+      console.warn('[Settings] 加载家属列表失败:', err.message);
+    }
+  }, []);
+
+  const handleBindFamily = useCallback(async () => {
+    setFamilyMsg(null);
+    if (!familyPhone.trim()) { setFamilyMsg({ type: 'err', text: '请输入家属手机号' }); return; }
+    if (!/^1[3-9]\d{9}$/.test(familyPhone.trim())) { setFamilyMsg({ type: 'err', text: '手机号格式不正确' }); return; }
+    setFamilyBinding(true);
+    try {
+      const res = await api.bindFamily(familyPhone.trim(), familyName.trim(), familyRelation.trim());
+      if (res?.success) {
+        setFamilyMsg({ type: 'ok', text: res.message || (res.status === 'active' ? '家属绑定成功' : '已发送短信邀请') });
+        setFamilyPhone(''); setFamilyName(''); setFamilyRelation('');
+        loadFamilyList();
+      } else {
+        setFamilyMsg({ type: 'err', text: res?.error || '绑定失败' });
+      }
+    } catch (err) {
+      setFamilyMsg({ type: 'err', text: `绑定失败: ${err.message}` });
+    } finally {
+      setFamilyBinding(false);
+    }
+  }, [familyPhone, familyName, familyRelation, loadFamilyList]);
+
+  const handleUnbindFamily = useCallback(async (bindingId) => {
+    if (!confirm('确认解绑该家属?')) return;
+    try {
+      const res = await api.unbindFamily(bindingId);
+      if (res?.success) {
+        setFamilyMsg({ type: 'ok', text: '已解绑' });
+        loadFamilyList();
+      } else {
+        setFamilyMsg({ type: 'err', text: res?.error || '解绑失败' });
+      }
+    } catch (err) {
+      setFamilyMsg({ type: 'err', text: `解绑失败: ${err.message}` });
+    }
+  }, [loadFamilyList]);
+
   const toggleSection = useCallback((key) => {
     setExpanded(prev => prev === key ? null : key);
   }, []);
@@ -96,6 +149,11 @@ export default function Settings() {
     document.body.classList.toggle('ark-high-contrast', highContrast);
     localStorage.setItem('ark_high_contrast', String(highContrast));
   }, [highContrast]);
+
+  // 页面加载时获取家属绑定列表
+  useEffect(() => {
+    loadFamilyList();
+  }, [loadFamilyList]);
 
   const handleSaveRate = useCallback((rate) => {
     localStorage.setItem('ark_tts_rate', String(rate));
@@ -535,6 +593,97 @@ export default function Settings() {
                   </div>
                 )}
               </div>
+            </div>
+          )}
+        </section>
+
+        {/* ===== SOS与家属绑定设置 ===== */}
+        <section className="sp-section">
+          <div className="sp-section-head" onClick={() => toggleSection('family')}>
+            <span className="sp-section-icon">👨‍👩‍👧</span>
+            <span className="sp-section-title-sm">SOS与家属绑定</span>
+            <span className={`sp-arrow ${expanded === 'family' ? 'open' : ''}`}>▾</span>
+          </div>
+          {expanded === 'family' && (
+            <div className="sp-section-body">
+              <div className="sp-item">
+                <label className="sp-label"><span>绑定家属</span></label>
+                <div className="sp-hint" style={{ marginBottom: '10px' }}>
+                  输入家属手机号进行绑定。如家属已注册,直接绑定成功;未注册将发送短信邀请。
+                </div>
+                <div className="sp-pwd-form">
+                  <input
+                    type="tel"
+                    className="sp-input"
+                    value={familyPhone}
+                    onChange={e => setFamilyPhone(e.target.value)}
+                    placeholder="家属手机号(11位)"
+                    maxLength={11}
+                    name="ark-settings-family-phone-off"
+                    autoComplete="nope"
+                  />
+                  <input
+                    type="text"
+                    className="sp-input"
+                    value={familyName}
+                    onChange={e => setFamilyName(e.target.value)}
+                    placeholder="家属称呼(可选,如:妈妈)"
+                    name="ark-settings-family-name-off"
+                    autoComplete="nope"
+                  />
+                  <input
+                    type="text"
+                    className="sp-input"
+                    value={familyRelation}
+                    onChange={e => setFamilyRelation(e.target.value)}
+                    placeholder="关系(可选,如:母亲)"
+                    name="ark-settings-family-relation-off"
+                    autoComplete="nope"
+                  />
+                  <button
+                    className="sp-save-btn sp-action-btn"
+                    onClick={handleBindFamily}
+                    disabled={familyBinding}
+                    style={{ width: '100%' }}
+                  >
+                    {familyBinding ? '绑定中...' : '绑定家属'}
+                  </button>
+                </div>
+              </div>
+
+              {familyMsg && (
+                <div className={`sp-account-msg ${familyMsg.type}`}>{familyMsg.text}</div>
+              )}
+
+              {/* 已绑定的家属列表 */}
+              {familyList.length > 0 && (
+                <div className="sp-item">
+                  <label className="sp-label"><span>已绑定家属 ({familyList.length})</span></label>
+                  <div className="sp-family-list">
+                    {familyList.map(f => (
+                      <div key={f.id} className="sp-family-card">
+                        <div className="sp-family-info">
+                          <div className="sp-family-name">
+                            {f.family_name || f.family_phone}
+                            {f.relation && <span className="sp-family-relation">({f.relation})</span>}
+                          </div>
+                          <div className="sp-family-phone">{f.family_phone}</div>
+                          <div className={`sp-family-status ${f.status}`}>
+                            {f.status === 'active' ? '已绑定' : '待注册'}
+                          </div>
+                        </div>
+                        <button
+                          className="sp-unbind-btn"
+                          onClick={() => handleUnbindFamily(f.id)}
+                          aria-label={`解绑 ${f.family_name || f.family_phone}`}
+                        >
+                          解绑
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </section>

@@ -104,6 +104,18 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ question, answer })
     }),
+  // 家属绑定(视障用户邀请家属)
+  bindFamily: (phone, name, relation) =>
+    request('/auth/family/bind', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone, name, relation })
+    }),
+  // 获取家属绑定列表
+  getFamilyList: () => request('/auth/family/list'),
+  // 解绑家属
+  unbindFamily: (bindingId) =>
+    request(`/auth/family/unbind/${bindingId}`, { method: 'DELETE' }),
 
   // 系统
   health: () => request('/health'),

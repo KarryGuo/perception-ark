@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
-import { createAccount, getAccountByUsername, getAccountById, getAccountByPhone, updateAccountProfile, deleteAccount, getSecurityQuestion, verifySecurityAnswer, resetPassword, updateSecurity } from '../services/memory-store.js';
+import { createAccount, getAccountByUsername, getAccountById, getAccountByPhone, updateAccountProfile, deleteAccount, getSecurityQuestion, verifySecurityAnswer, resetPassword, updateSecurity, addFamilyBinding, getFamilyBindings, removeFamilyBinding } from '../services/memory-store.js';
 import { generateToken, authRequired } from '../services/auth.js';
 import { log } from '../utils/logger.js';
 
@@ -447,6 +447,87 @@ router.put('/avatar', authRequired, (req, res) => {
     res.json({ success: true, user: buildUserPayload(account) });
   } catch (err) {
     log('AUTH', `修改头像失败: ${err.message}`, 'error');
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * 绑定家属(视障用户邀请家属)
+ * POST /api/auth/family/bind
+ * body: { phone, name?, relation? }
+ * 如家属已注册(status=active),直接绑定;未注册则status=pending,短信邀请
+ */
+router.post('/family/bind', authRequired, (req, res) => {
+  try {
+    const { phone, name, relation } = req.body;
+    if (!phone || !phone.trim()) {
+      return res.status(400).json({ success: false, error: '请输入家属手机号' });
+    }
+    // 简单校验手机号格式
+    const phoneTrim = phone.trim();
+    if (!/^1[3-9]\d{9}$/.test(phoneTrim)) {
+      return res.status(400).json({ success: false, error: '手机号格式不正确' });
+    }
+    // 不能绑定自己
+    const myAccount = getAccountById(req.user.id);
+    if (myAccount?.phone === phoneTrim) {
+      return res.status(400).json({ success: false, error: '不能绑定自己的手机号' });
+    }
+    const result = addFamilyBinding(req.user.id, phoneTrim, name, relation);
+    if (!result.success) {
+      if (result.existing) {
+        return res.status(409).json({ success: false, error: '该手机号已绑定' });
+      }
+      return res.status(500).json({ success: false, error: result.error });
+    }
+    log('AUTH', `用户 ${myAccount.username} 绑定家属: ${phoneTrim} (status=${result.status})`);
+    // TODO: 实际短信发送需集成短信服务商API(如阿里云/腾讯云SMS)
+    // 当前日志记录邀请行为,生产环境调用SMS API发送邀请短信
+    if (result.status === 'pending') {
+      log('AUTH', `[短信邀请] 已邀请家属 ${phoneTrim} 注册感知方舟家属端 (邀请人: ${myAccount.username})`);
+    }
+    res.json({
+      success: true,
+      message: result.status === 'active' ? '家属绑定成功' : '已发送短信邀请家属注册,对方注册后自动绑定',
+      status: result.status,
+      familyAccount: result.familyAccount
+    });
+  } catch (err) {
+    log('AUTH', `绑定家属失败: ${err.message}`, 'error');
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * 获取家属绑定列表
+ * GET /api/auth/family/list
+ */
+router.get('/family/list', authRequired, (req, res) => {
+  try {
+    const list = getFamilyBindings(req.user.id);
+    res.json({ success: true, list });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * 解绑家属
+ * DELETE /api/auth/family/unbind/:bindingId
+ */
+router.delete('/family/unbind/:bindingId', authRequired, (req, res) => {
+  try {
+    const bindingId = parseInt(req.params.bindingId);
+    if (!bindingId) {
+      return res.status(400).json({ success: false, error: '无效的绑定ID' });
+    }
+    const ok = removeFamilyBinding(bindingId, req.user.id);
+    if (!ok) {
+      return res.status(404).json({ success: false, error: '未找到绑定记录或无权操作' });
+    }
+    log('AUTH', `用户解绑家属: bindingId=${bindingId}`);
+    res.json({ success: true, message: '已解绑' });
+  } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
 });

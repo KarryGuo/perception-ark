@@ -110,7 +110,33 @@ export function initMemoryStore() {
       detail TEXT,
       created_at TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS family_bindings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_account_id INTEGER NOT NULL,
+      family_account_id INTEGER,
+      family_phone TEXT NOT NULL,
+      family_name TEXT,
+      relation TEXT,
+      status TEXT DEFAULT 'pending',
+      invited_at TEXT,
+      bound_at TEXT,
+      UNIQUE(user_account_id, family_phone)
+    );
   `);
+
+  // 兼容旧库: 若 family_bindings 表缺少列,自动补列
+  try {
+    const fbCols = db.prepare("PRAGMA table_info(family_bindings)").all().map(c => c.name);
+    if (!fbCols.includes('family_name')) {
+      db.exec("ALTER TABLE family_bindings ADD COLUMN family_name TEXT");
+    }
+    if (!fbCols.includes('relation')) {
+      db.exec("ALTER TABLE family_bindings ADD COLUMN relation TEXT");
+    }
+  } catch (e) {
+    log('A05', `family_bindings 表补列检查失败: ${e.message}`, 'warn');
+  }
 
   // 兼容旧库: 若 accounts 表缺少列,自动补列
   try {
@@ -335,6 +361,74 @@ export function findUserAccountByUsername(username) {
 export function getAccountByPhone(phone) {
   if (!db || !phone) return null;
   return db.prepare('SELECT * FROM accounts WHERE phone = ?').get(phone.trim());
+}
+
+// ===== 家属绑定(视障端正向绑定) =====
+/**
+ * 添加家属绑定(视障用户邀请家属)
+ * @param {number} userAccountId 视障用户账号ID
+ * @param {string} familyPhone 家属手机号
+ * @param {string} familyName 家属称呼(可选)
+ * @param {string} relation 关系(可选)
+ * @returns {object} { success, bindingId, familyAccount }
+ */
+export function addFamilyBinding(userAccountId, familyPhone, familyName, relation) {
+  if (!db) return { success: false, error: '数据库未初始化' };
+  const phone = familyPhone.trim();
+  // 检查是否已绑定同一手机号
+  const existing = db.prepare('SELECT * FROM family_bindings WHERE user_account_id = ? AND family_phone = ?').get(userAccountId, phone);
+  if (existing) {
+    return { success: false, error: '该手机号已绑定', existing: true };
+  }
+  // 查找家属账号是否已注册
+  const familyAccount = db.prepare("SELECT id, username, role, nickname, phone FROM accounts WHERE phone = ? AND role = 'family'").get(phone);
+  const now = new Date().toISOString();
+  try {
+    const result = db.prepare(`
+      INSERT INTO family_bindings (user_account_id, family_account_id, family_phone, family_name, relation, status, invited_at, bound_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      userAccountId,
+      familyAccount?.id || null,
+      phone,
+      familyName || null,
+      relation || null,
+      familyAccount ? 'active' : 'pending',
+      now,
+      familyAccount ? now : null
+    );
+    return { success: true, bindingId: result.lastInsertRowid, familyAccount, status: familyAccount ? 'active' : 'pending' };
+  } catch (err) {
+    log('A05', `添加家属绑定失败: ${err.message}`, 'error');
+    return { success: false, error: err.message };
+  }
+}
+
+/**
+ * 获取视障用户的所有家属绑定
+ * @param {number} userAccountId
+ * @returns {array}
+ */
+export function getFamilyBindings(userAccountId) {
+  if (!db) return [];
+  return db.prepare('SELECT * FROM family_bindings WHERE user_account_id = ? ORDER BY invited_at DESC').all(userAccountId);
+}
+
+/**
+ * 删除家属绑定
+ * @param {number} bindingId
+ * @param {number} userAccountId 验证归属权
+ * @returns {boolean}
+ */
+export function removeFamilyBinding(bindingId, userAccountId) {
+  if (!db) return false;
+  try {
+    const result = db.prepare('DELETE FROM family_bindings WHERE id = ? AND user_account_id = ?').run(bindingId, userAccountId);
+    return result.changes > 0;
+  } catch (err) {
+    log('A05', `删除家属绑定失败: ${err.message}`, 'error');
+    return false;
+  }
 }
 
 // ===== 管理员功能 =====
