@@ -11,8 +11,18 @@ import { log } from '../utils/logger.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 优先使用 DATA_DIR 环境变量(云平台持久化磁盘),否则使用本地 data 目录
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '../../data');
-if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+let DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '../../data');
+try {
+  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+  // 验证可写权限(持久化磁盘挂载异常时会抛错)
+  fs.accessSync(DATA_DIR, fs.constants.W_OK);
+} catch (e) {
+  // 持久化磁盘不可写/未挂载时,降级到本地目录(非持久化,但保证服务启动)
+  log(`[memory-store] DATA_DIR=${DATA_DIR} 不可用(${e.message}),降级到本地目录`);
+  DATA_DIR = path.join(__dirname, '../../data');
+  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+log(`[memory-store] 数据目录: ${DATA_DIR}`);
 const DB_PATH = path.join(DATA_DIR, 'memory.db');
 
 let db = null;

@@ -28,17 +28,16 @@ services:
         value: 3001
       - key: DATA_DIR
         value: /data  # 持久化磁盘目录,重启不丢失
-      # ===== 火山引擎方舟 API (必填,否则使用MOCK模式) =====
-      - key: ARK_API_KEY
-        sync: false  # 在Render界面手动填写,不在配置中暴露
-      - key: ARK_VISION_MODEL
-        sync: false  # 在Render界面填写推理接入点ID(如ep-2026xxxx)
-      - key: ARK_TEXT_MODEL
-        sync: false  # 在Render界面填写推理接入点ID(如ep-2026xxxx)
-      - key: ARK_API_BASE
-        value: https://ark.cn-beijing.volces.com/api/v3
+      # ===== 阿里千问 Qwen API (必填,否则使用MOCK模式) =====
+      # 全模态模型 qwen3.5-omni-flash: 视觉+文本+音频+视频
+      - key: QWEN_API_KEY
+        sync: false  # 在Render界面手动填写,以sk-开头
+      - key: QWEN_MODEL
+        value: qwen3.5-omni-flash
+      - key: QWEN_API_BASE
+        value: https://dashscope.aliyuncs.com/compatible-mode/v1
       # ===== 高德地图 API =====
-      # 后端REST API (导航/POI搜索/逆地理编码)
+      # 后端REST API (导航/POI搜索/逆地理编码/天气)
       - key: AMAP_API_KEY
         sync: false
       # 前端JS API Key (Vite构建时注入,Render界面填写)
@@ -46,6 +45,9 @@ services:
         sync: false
       # 前端JS API 安全密钥 (Vite构建时注入,Render界面填写)
       - key: VITE_AMAP_SECURITY_CODE
+        sync: false
+      # ===== JWT密钥 (建议填写,保证token安全) =====
+      - key: JWT_SECRET
         sync: false
       # ===== Mock模式开关 =====
       - key: MOCK_MODE
