@@ -408,7 +408,7 @@ export default function Settings() {
               <div className="sp-item">
                 <label className="sp-label"><span>登录密码</span></label>
                 {!showPwdForm ? (
-                  <button className="sp-save-btn" onClick={() => { setShowPwdForm(true); setAccountMsg(null); }}>
+                  <button className="sp-save-btn sp-action-btn" onClick={() => { setShowPwdForm(true); setAccountMsg(null); }}>
                     {isPhoneRegistered ? '设置密码' : '修改密码'}
                   </button>
                 ) : (
@@ -461,7 +461,7 @@ export default function Settings() {
               <div className="sp-item">
                 <label className="sp-label"><span>密保问题</span></label>
                 {!showSecForm ? (
-                  <button className="sp-save-btn" onClick={() => { setShowSecForm(true); setAccountMsg(null); }}>
+                  <button className="sp-save-btn sp-action-btn" onClick={() => { setShowSecForm(true); setAccountMsg(null); }}>
                     设置密保
                   </button>
                 ) : (

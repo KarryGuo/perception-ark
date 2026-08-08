@@ -3027,6 +3027,65 @@ input:focus-visible,
 .sp-save-btn:hover:not(:disabled) { background: rgba(0,255,163,0.2); }
 .sp-save-btn:disabled { opacity: .5; cursor: not-allowed; }
 
+/* 修改密码/密保表单 */
+.sp-pwd-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.sp-pwd-form .sp-input,
+.sp-pwd-form .sp-select {
+  width: 100%;
+  padding: 12px 14px;
+  font-size: .95rem;
+  min-height: 48px;
+}
+.sp-pwd-actions {
+  display: flex;
+  gap: 10px;
+}
+.sp-pwd-actions .sp-save-btn {
+  flex: 1;
+  padding: 12px 18px;
+  font-size: .95rem;
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.sp-cancel-btn {
+  flex: 1;
+  padding: 12px 18px;
+  background: var(--void-3);
+  border: 1px solid var(--gb);
+  border-radius: 10px;
+  color: var(--ink-muted);
+  font-size: .95rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all .2s;
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.sp-cancel-btn:hover { background: var(--void-4); color: var(--ink); }
+.sp-hint {
+  font-size: .8rem;
+  color: var(--ink-faint);
+  line-height: 1.5;
+}
+/* 独立操作按钮(设置密码/设置密保)统一高度 */
+.sp-action-btn {
+  padding: 12px 24px !important;
+  min-height: 48px;
+  font-size: .95rem !important;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 .sp-account-msg {
   margin-top: 8px;
   padding: 10px 14px;
