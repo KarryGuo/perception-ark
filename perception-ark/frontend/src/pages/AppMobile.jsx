@@ -464,7 +464,12 @@ function AppMobileUser() {
       try { wakeAsrRef.current?.abort(); } catch(e) {}
       wakeListeningRef.current = false;
     }
-    asr.start();
+    // abort()是异步的,延迟150ms等浏览器释放麦克风资源后再启动ASR
+    setTimeout(() => {
+      if (isPressingRef.current) {
+        asr.start();
+      }
+    }, 150);
     setSubtitle('正在聆听...');
   }, [asr, showToast, stopSpeak]);
 

@@ -257,9 +257,9 @@ export function useSpeechRecognition() {
       setListening(true);
       return true;
     } catch (err) {
-      // InvalidStateError: recognition has already started
-      asrRunningRef.current = true;
-      setListening(true);
+      // InvalidStateError: recognition尚未完全释放,实际未启动成功
+      asrRunningRef.current = false;
+      setListening(false);
       return false;
     }
   }, [supported]);
