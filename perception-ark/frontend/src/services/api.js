@@ -90,6 +90,20 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ confirm: 'DELETE' })
     }),
+  // 修改密码(oldPassword='skip'时跳过验证,用于手机注册用户首次设置密码)
+  updatePassword: (oldPassword, newPassword) =>
+    request('/auth/password', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ oldPassword, newPassword })
+    }),
+  // 修改密保问题和答案
+  updateSecurity: (question, answer) =>
+    request('/auth/security', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question, answer })
+    }),
 
   // 系统
   health: () => request('/health'),

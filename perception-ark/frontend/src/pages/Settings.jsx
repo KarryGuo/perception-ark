@@ -50,6 +50,21 @@ export default function Settings() {
   const [deleting, setDeleting] = useState(false);
   const fileInputRef = useRef(null);
 
+  // ===== 修改密码状态 =====
+  const [showPwdForm, setShowPwdForm] = useState(false);
+  const [oldPwd, setOldPwd] = useState('');
+  const [newPwd, setNewPwd] = useState('');
+  const [confirmPwd, setConfirmPwd] = useState('');
+  const [pwdSaving, setPwdSaving] = useState(false);
+  // 手机验证码注册的用户(用户名以"用户"+数字开头)可跳过原密码验证
+  const isPhoneRegistered = user?.username?.match(/^用户\d+$/);
+
+  // ===== 修改密保状态 =====
+  const [showSecForm, setShowSecForm] = useState(false);
+  const [secQuestion, setSecQuestion] = useState('您的出生城市是?');
+  const [secAnswer, setSecAnswer] = useState('');
+  const [secSaving, setSecSaving] = useState(false);
+
   const toggleSection = useCallback((key) => {
     setExpanded(prev => prev === key ? null : key);
   }, []);
@@ -205,6 +220,64 @@ export default function Settings() {
     }
   }, [nicknameInput, user?.nickname, updateUser]);
 
+  // ===== 账户操作: 修改密码 =====
+  const handlePasswordSave = useCallback(async () => {
+    setAccountMsg(null);
+    if (!newPwd || newPwd.length < 6) {
+      setAccountMsg({ type: 'err', text: '新密码长度至少6位' });
+      return;
+    }
+    if (newPwd !== confirmPwd) {
+      setAccountMsg({ type: 'err', text: '两次输入的密码不一致' });
+      return;
+    }
+    // 手机注册用户跳过原密码验证,其他用户需要原密码
+    const oldVal = isPhoneRegistered ? 'skip' : oldPwd;
+    if (!isPhoneRegistered && !oldPwd) {
+      setAccountMsg({ type: 'err', text: '请输入原密码' });
+      return;
+    }
+    setPwdSaving(true);
+    try {
+      const res = await api.updatePassword(oldVal, newPwd);
+      if (res?.success) {
+        setAccountMsg({ type: 'ok', text: '密码修改成功' });
+        setShowPwdForm(false);
+        setOldPwd(''); setNewPwd(''); setConfirmPwd('');
+      } else {
+        setAccountMsg({ type: 'err', text: res?.error || '密码修改失败' });
+      }
+    } catch (err) {
+      setAccountMsg({ type: 'err', text: `密码修改失败: ${err.message}` });
+    } finally {
+      setPwdSaving(false);
+    }
+  }, [oldPwd, newPwd, confirmPwd, isPhoneRegistered]);
+
+  // ===== 账户操作: 修改密保 =====
+  const handleSecuritySave = useCallback(async () => {
+    setAccountMsg(null);
+    if (!secAnswer || !secAnswer.trim()) {
+      setAccountMsg({ type: 'err', text: '请填写密保答案' });
+      return;
+    }
+    setSecSaving(true);
+    try {
+      const res = await api.updateSecurity(secQuestion, secAnswer.trim());
+      if (res?.success) {
+        setAccountMsg({ type: 'ok', text: '密保问题已更新' });
+        setShowSecForm(false);
+        setSecAnswer('');
+      } else {
+        setAccountMsg({ type: 'err', text: res?.error || '密保更新失败' });
+      }
+    } catch (err) {
+      setAccountMsg({ type: 'err', text: `密保更新失败: ${err.message}` });
+    } finally {
+      setSecSaving(false);
+    }
+  }, [secQuestion, secAnswer]);
+
   // ===== 账户操作: 注销账户 =====
   const handleDeleteAccount = useCallback(async () => {
     setDeleting(true);
@@ -329,6 +402,100 @@ export default function Settings() {
               <div className="sp-item">
                 <label className="sp-label"><span>用户角色</span></label>
                 <div className="sp-user-info">{user?.role === 'family' ? '家属' : '使用者'}</div>
+              </div>
+
+              {/* 修改密码 */}
+              <div className="sp-item">
+                <label className="sp-label"><span>登录密码</span></label>
+                {!showPwdForm ? (
+                  <button className="sp-save-btn" onClick={() => { setShowPwdForm(true); setAccountMsg(null); }}>
+                    {isPhoneRegistered ? '设置密码' : '修改密码'}
+                  </button>
+                ) : (
+                  <div className="sp-pwd-form">
+                    {!isPhoneRegistered && (
+                      <input
+                        type="password"
+                        className="sp-input"
+                        value={oldPwd}
+                        onChange={e => setOldPwd(e.target.value)}
+                        placeholder="原密码"
+                        name="ark-settings-oldpwd-off"
+                        autoComplete="nope"
+                      />
+                    )}
+                    <input
+                      type="password"
+                      className="sp-input"
+                      value={newPwd}
+                      onChange={e => setNewPwd(e.target.value)}
+                      placeholder="新密码(至少6位)"
+                      name="ark-settings-newpwd-off"
+                      autoComplete="nope"
+                    />
+                    <input
+                      type="password"
+                      className="sp-input"
+                      value={confirmPwd}
+                      onChange={e => setConfirmPwd(e.target.value)}
+                      placeholder="确认新密码"
+                      name="ark-settings-confirmpwd-off"
+                      autoComplete="nope"
+                    />
+                    <div className="sp-pwd-actions">
+                      <button className="sp-save-btn" onClick={handlePasswordSave} disabled={pwdSaving}>
+                        {pwdSaving ? '保存中' : '确认修改'}
+                      </button>
+                      <button className="sp-cancel-btn" onClick={() => { setShowPwdForm(false); setOldPwd(''); setNewPwd(''); setConfirmPwd(''); setAccountMsg(null); }}>
+                        取消
+                      </button>
+                    </div>
+                    {isPhoneRegistered && (
+                      <div className="sp-hint">手机注册用户首次设置密码,无需原密码</div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* 修改密保 */}
+              <div className="sp-item">
+                <label className="sp-label"><span>密保问题</span></label>
+                {!showSecForm ? (
+                  <button className="sp-save-btn" onClick={() => { setShowSecForm(true); setAccountMsg(null); }}>
+                    设置密保
+                  </button>
+                ) : (
+                  <div className="sp-pwd-form">
+                    <select
+                      className="sp-select"
+                      value={secQuestion}
+                      onChange={e => setSecQuestion(e.target.value)}
+                    >
+                      <option value="您的出生城市是?">您的出生城市是?</option>
+                      <option value="您的小学名称是?">您的小学名称是?</option>
+                      <option value="您父亲的名字是?">您父亲的名字是?</option>
+                      <option value="您母亲的姓氏是?">您母亲的姓氏是?</option>
+                      <option value="您的宠物名字是?">您的宠物名字是?</option>
+                    </select>
+                    <input
+                      type="text"
+                      className="sp-input"
+                      value={secAnswer}
+                      onChange={e => setSecAnswer(e.target.value)}
+                      placeholder="密保答案"
+                      name="ark-settings-secanswer-off"
+                      autoComplete="nope"
+                    />
+                    <div className="sp-pwd-actions">
+                      <button className="sp-save-btn" onClick={handleSecuritySave} disabled={secSaving}>
+                        {secSaving ? '保存中' : '确认保存'}
+                      </button>
+                      <button className="sp-cancel-btn" onClick={() => { setShowSecForm(false); setSecAnswer(''); setAccountMsg(null); }}>
+                        取消
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* 操作反馈消息 */}
