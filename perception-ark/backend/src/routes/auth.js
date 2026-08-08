@@ -2,6 +2,7 @@ import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import { createAccount, getAccountByUsername, getAccountById, getAccountByPhone, updateAccountProfile, deleteAccount, getSecurityQuestion, verifySecurityAnswer, resetPassword, updateSecurity, addFamilyBinding, getFamilyBindings, removeFamilyBinding } from '../services/memory-store.js';
 import { generateToken, authRequired } from '../services/auth.js';
+import { sendFamilyInviteSms } from '../services/sms.js';
 import { log } from '../utils/logger.js';
 
 const router = Router();
@@ -457,7 +458,7 @@ router.put('/avatar', authRequired, (req, res) => {
  * body: { phone, name?, relation? }
  * 如家属已注册(status=active),直接绑定;未注册则status=pending,短信邀请
  */
-router.post('/family/bind', authRequired, (req, res) => {
+router.post('/family/bind', authRequired, async (req, res) => {
   try {
     const { phone, name, relation } = req.body;
     if (!phone || !phone.trim()) {
@@ -481,16 +482,21 @@ router.post('/family/bind', authRequired, (req, res) => {
       return res.status(500).json({ success: false, error: result.error });
     }
     log('AUTH', `用户 ${myAccount.username} 绑定家属: ${phoneTrim} (status=${result.status})`);
-    // TODO: 实际短信发送需集成短信服务商API(如阿里云/腾讯云SMS)
-    // 当前日志记录邀请行为,生产环境调用SMS API发送邀请短信
+    // 家属未注册时发送短信邀请
+    let smsSent = false;
     if (result.status === 'pending') {
-      log('AUTH', `[短信邀请] 已邀请家属 ${phoneTrim} 注册感知方舟家属端 (邀请人: ${myAccount.username})`);
+      const smsResult = await sendFamilyInviteSms(phoneTrim, myAccount.nickname || myAccount.username);
+      smsSent = smsResult.success;
+      if (!smsSent) {
+        log('AUTH', `家属邀请短信发送失败: ${smsResult.error}`, 'warn');
+      }
     }
     res.json({
       success: true,
       message: result.status === 'active' ? '家属绑定成功' : '已发送短信邀请家属注册,对方注册后自动绑定',
       status: result.status,
-      familyAccount: result.familyAccount
+      familyAccount: result.familyAccount,
+      smsSent
     });
   } catch (err) {
     log('AUTH', `绑定家属失败: ${err.message}`, 'error');

@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../hooks/useAuth.jsx';
+import { useSpeechSynthesis } from '../hooks/useSpeech.js';
 import { api } from '../services/api.js';
 
 /**
@@ -9,6 +10,7 @@ import { api } from '../services/api.js';
  */
 export default function Settings() {
   const { user, logout, updateUser } = useAuth();
+  const { speak } = useSpeechSynthesis();
 
   // ===== 音频设置 =====
   const [ttsRate, setTtsRate] = useState(() => parseFloat(localStorage.getItem('ark_tts_rate')) || 0.95);
@@ -90,7 +92,12 @@ export default function Settings() {
     try {
       const res = await api.bindFamily(familyPhone.trim(), familyName.trim(), familyRelation.trim());
       if (res?.success) {
-        setFamilyMsg({ type: 'ok', text: res.message || (res.status === 'active' ? '家属绑定成功' : '已发送短信邀请') });
+        // 语音告知用户绑定结果: 已注册直接绑定 / 未注册已发短信邀请
+        const speakText = res.status === 'active'
+          ? '家属绑定成功'
+          : '已通过短信通知该账号注册家属端,对方注册后将自动完成绑定';
+        setFamilyMsg({ type: 'ok', text: res.message || speakText });
+        speak(speakText);
         setFamilyPhone(''); setFamilyName(''); setFamilyRelation('');
         loadFamilyList();
       } else {
@@ -101,7 +108,7 @@ export default function Settings() {
     } finally {
       setFamilyBinding(false);
     }
-  }, [familyPhone, familyName, familyRelation, loadFamilyList]);
+  }, [familyPhone, familyName, familyRelation, loadFamilyList, speak]);
 
   const handleUnbindFamily = useCallback(async (bindingId) => {
     if (!confirm('确认解绑该家属?')) return;
