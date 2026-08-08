@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
-import { createAccount, getAccountByUsername, getAccountById, getAccountByPhone, updateAccountProfile, deleteAccount, getSecurityQuestion, verifySecurityAnswer, resetPassword } from '../services/memory-store.js';
+import { createAccount, getAccountByUsername, getAccountById, getAccountByPhone, updateAccountProfile, deleteAccount, getSecurityQuestion, verifySecurityAnswer, resetPassword, updateSecurity } from '../services/memory-store.js';
 import { generateToken, authRequired } from '../services/auth.js';
 import { log } from '../utils/logger.js';
 
@@ -208,18 +208,24 @@ router.post('/login-sms', async (req, res) => {
     // 查找账号
     let account = getAccountByPhone(phoneTrim);
 
-    // 账号不存在时自动注册(随机用户名,登录后可在设置中完善信息)
+    // 账号不存在时自动注册(用户名=用户+手机后4位,登录后可在设置中完善信息)
     if (!account) {
-      const randomName = `用户${Math.floor(1000 + Math.random() * 9000)}`;
+      const phoneSuffix = phoneTrim.slice(-4);
+      const randomName = `用户${phoneSuffix}`;
+      // 检查用户名是否冲突,冲突则加随机数
+      let finalName = randomName;
+      while (getAccountByUsername(finalName)) {
+        finalName = `用户${phoneSuffix}${Math.floor(Math.random() * 10)}`;
+      }
       const randomPwd = await bcrypt.hash(Math.random().toString(36).slice(-8), 10);
       const defaultQuestion = '您的出生城市是?';
       const defaultAnswer = bcrypt.hashSync('未知', 10);
-      const accountId = createAccount(randomName, randomPwd, 'user', null, phoneTrim, defaultQuestion, defaultAnswer);
+      const accountId = createAccount(finalName, randomPwd, 'user', null, phoneTrim, defaultQuestion, defaultAnswer);
       if (!accountId) {
         return res.status(500).json({ success: false, error: '自动注册失败,请稍后重试' });
       }
       account = getAccountById(accountId);
-      log('AUTH', `手机验证码登录自动注册新用户: ${randomName} (${phoneTrim})`);
+      log('AUTH', `手机验证码登录自动注册新用户: ${finalName} (${phoneTrim})`);
     }
 
     if (account.status === 'banned') {
@@ -342,6 +348,72 @@ router.put('/profile', authRequired, (req, res) => {
     res.json({ success: true, user: buildUserPayload(account) });
   } catch (err) {
     log('AUTH', `修改昵称失败: ${err.message}`, 'error');
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * 修改密码
+ * PUT /api/auth/password
+ * body: { oldPassword, newPassword }
+ */
+router.put('/password', authRequired, async (req, res) => {
+  try {
+    const { oldPassword, newPassword } = req.body;
+    if (!oldPassword || !newPassword) {
+      return res.status(400).json({ success: false, error: '请输入原密码和新密码' });
+    }
+    if (newPassword.length < 6) {
+      return res.status(400).json({ success: false, error: '新密码长度至少6位' });
+    }
+    const account = getAccountById(req.user.id);
+    if (!account) {
+      return res.status(404).json({ success: false, error: '账号不存在' });
+    }
+    // 手机验证码自动注册的用户可能不知道随机密码,允许通过密保验证后修改
+    // 如果原密码为空字符串"skip"(前端手机注册用户专用入口),跳过验证
+    if (oldPassword !== 'skip') {
+      const matched = await bcrypt.compare(oldPassword, account.password_hash);
+      if (!matched) {
+        return res.status(401).json({ success: false, error: '原密码不正确' });
+      }
+    }
+    const newHash = await bcrypt.hash(newPassword, 10);
+    const ok = resetPassword(account.username, newHash);
+    if (!ok) {
+      return res.status(500).json({ success: false, error: '密码修改失败' });
+    }
+    log('AUTH', `用户修改密码: ${account.username}`);
+    res.json({ success: true, message: '密码修改成功' });
+  } catch (err) {
+    log('AUTH', `修改密码失败: ${err.message}`, 'error');
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * 修改密保问题和答案
+ * PUT /api/auth/security
+ * body: { question, answer }
+ */
+router.put('/security', authRequired, async (req, res) => {
+  try {
+    const { question, answer } = req.body;
+    if (!question || !question.trim()) {
+      return res.status(400).json({ success: false, error: '请选择密保问题' });
+    }
+    if (!answer || !answer.trim()) {
+      return res.status(400).json({ success: false, error: '请填写密保答案' });
+    }
+    const answerHash = bcrypt.hashSync(answer.trim(), 10);
+    const ok = updateSecurity(req.user.id, question.trim(), answerHash);
+    if (!ok) {
+      return res.status(500).json({ success: false, error: '密保更新失败' });
+    }
+    log('AUTH', `用户修改密保: ${req.user.username}`);
+    res.json({ success: true, message: '密保问题已更新' });
+  } catch (err) {
+    log('AUTH', `修改密保失败: ${err.message}`, 'error');
     res.status(500).json({ success: false, error: err.message });
   }
 });

@@ -233,6 +233,24 @@ export function resetPassword(username, newPasswordHash) {
 }
 
 /**
+ * 更新密保问题和答案
+ * @param {number} id 账户ID
+ * @param {string} question 密保问题
+ * @param {string} answerHash bcrypt哈希后的答案
+ * @returns {boolean} 是否更新成功
+ */
+export function updateSecurity(id, question, answerHash) {
+  if (!db) return false;
+  try {
+    const result = db.prepare('UPDATE accounts SET security_question = ?, security_answer_hash = ? WHERE id = ?').run(question, answerHash, id);
+    return result.changes > 0;
+  } catch (err) {
+    log('A05', `更新密保失败: ${err.message}`, 'error');
+    return false;
+  }
+}
+
+/**
  * 更新账户资料(昵称/头像)
  * @param {number} id 账户ID
  * @param {{nickname?: string, avatar?: string|null}} fields
