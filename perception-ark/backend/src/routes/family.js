@@ -1,20 +1,49 @@
 import { Router } from 'express';
-import { getSosEvents, getMemoryStats, getAllRoutes, searchFaces, getAllUsers, addUser, deleteUser, getAllHabits } from '../services/memory-store.js';
+import { getSosEvents, getMemoryStats, getAllRoutes, searchFaces, getAllUsers, addUser, deleteUser, getAllHabits, findUserAccountByPhone } from '../services/memory-store.js';
 import { getContext, getStats } from '../agents/orchestrator.js';
+import { log } from '../utils/logger.js';
 
 const router = Router();
+
+/**
+ * 隐私过滤: 对位置进行模糊化(保留街道级,屏蔽精确经纬度)
+ * 屏蔽: 摄像头画面、详细识别内容、聊天记录、个人习惯记忆
+ */
+function privacyFilterLocation(location) {
+  if (!location) return null;
+  // 模糊化经纬度: 保留2位小数(约1km精度),不暴露精确行踪
+  return {
+    address: location.address || '未知位置',
+    lat: location.lat ? Math.round(location.lat * 100) / 100 : null,
+    lng: location.lng ? Math.round(location.lng * 100) / 100 : null,
+    // 不返回精确坐标和详细地理信息
+    approximate: true
+  };
+}
 
 // 使用者列表(家属绑定的被守护人)
 router.get('/users', (req, res) => {
   res.json({ users: getAllUsers() });
 });
 
-// 添加使用者(绑定信息)
+// 添加使用者(绑定信息) - 支持通过 bind_phone 手机号绑定视障账号
 router.post('/users', (req, res) => {
-  const { name, age, relation, phone, emergency_contact, emergency_phone, health_notes } = req.body;
+  const { name, age, relation, phone, emergency_contact, emergency_phone, health_notes, bind_phone } = req.body;
   if (!name) return res.status(400).json({ error: '请填写姓名' });
-  const id = addUser({ name, age, relation, phone, emergency_contact, emergency_phone, health_notes });
-  res.json({ success: true, id });
+
+  let bound_account_id = null;
+  // 如果填写了视障账号手机号,查找并绑定
+  if (bind_phone) {
+    const account = findUserAccountByPhone(bind_phone.trim());
+    if (!account) {
+      return res.status(404).json({ error: `未找到手机号为"${bind_phone}"的视障用户,请确认手机号正确且该账号身份为使用者` });
+    }
+    bound_account_id = account.id;
+    log('FAMILY', `家属通过手机号绑定视障账号: ${bind_phone} (account_id=${account.id})`);
+  }
+
+  const id = addUser({ name, age, relation, phone, emergency_contact, emergency_phone, health_notes, bound_account_id });
+  res.json({ success: true, id, bound_account_id });
 });
 
 // 删除使用者
@@ -46,9 +75,9 @@ router.get('/overview', (req, res) => {
     users,
     user: {
       name: primaryUser?.name || '未绑定',
-      location: context.currentLocation,
+      location: privacyFilterLocation(context.currentLocation),  // 模糊化位置
       activity: context.userActivity,
-      lastSpoken: context.lastSpoken?.text || '暂无',
+      // 隐私保护: 不返回 lastSpoken(聊天内容属于隐私)
       battery: parseInt(process.env.DEVICE_BATTERY || '87', 10),
       online: true
     },
@@ -59,11 +88,11 @@ router.get('/overview', (req, res) => {
   });
 });
 
-// 实时位置
+// 实时位置(模糊化)
 router.get('/location', (req, res) => {
   const context = getContext();
   res.json({
-    location: context.currentLocation,
+    location: privacyFilterLocation(context.currentLocation),
     activity: context.userActivity,
     lastDangerEvent: context.lastDangerEvent
   });
@@ -134,16 +163,22 @@ router.get('/dashboard', (req, res) => {
   const today = new Date().toISOString().slice(0, 10);
   const todaySos = sosEvents.filter(e => (e.created_at || '').startsWith(today)).length;
 
-  // 常用路线(top5)
-  const topRoutes = routes.slice(0, 5);
+  // 常用路线(top5) - 隐私保护: 只返回路线名称和次数,不返回精确坐标
+  const topRoutes = routes.slice(0, 5).map(r => ({
+    id: r.id,
+    route_name: r.route_name || '未命名路线',
+    visit_count: r.visit_count,
+    last_visited: r.last_visited
+  }));
 
-  // 最近识别(最近10条)
+  // 最近识别 - 隐私保护: 只返回安全相关的摘要,不返回识别详细内容
   const recentRecognitions = history
     .filter(e => e.type === 'subtitle')
     .slice(-10)
-    .reverse();
+    .reverse()
+    .map(e => ({ type: e.type, time: e.time, summary: '识别已记录' }));
 
-  // 最近安全事件(最近10条)
+  // 最近安全事件(最近10条) - 安全预警对家属可见
   const recentSafety = history
     .filter(e => e.type === 'safety_result' && !e.safe)
     .slice(-10)
@@ -164,9 +199,9 @@ router.get('/dashboard', (req, res) => {
     },
     user: {
       name: users[0]?.name || '未绑定',
-      location: context.currentLocation,
+      location: privacyFilterLocation(context.currentLocation),  // 模糊化位置
       activity: context.userActivity,
-      lastSpoken: context.lastSpoken?.text || '暂无',
+      // 隐私保护: 不返回 lastSpoken
       battery: parseInt(process.env.DEVICE_BATTERY || '87', 10),
       online: true
     },

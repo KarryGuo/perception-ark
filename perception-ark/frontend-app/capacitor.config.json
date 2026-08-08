@@ -1,0 +1,22 @@
+{
+  "appId": "com.perceptionark.app",
+  "appName": "感知方舟",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https",
+    "iosScheme": "https",
+    "hostname": "app.perceptionark.local",
+    "cleartext": true,
+    "allowNavigation": ["*"]
+  },
+  "android": {
+    "allowMixedContent": true
+  },
+  "ios": {
+    "contentInset": "always",
+    "scheme": "https",
+    "limitsNavigationsToAppBoundDomains": false,
+    "scrollEnabled": false,
+    "useUserAgentString": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1"
+  }
+}

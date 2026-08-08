@@ -2,13 +2,13 @@
 # 文档: https://render.com/docs/blueprint-spec
 # 使用方法: 在 Render Dashboard > New > Blueprint 选择本仓库根目录
 # 架构: 前端Vite构建产物由后端Express静态服务托管,单一URL访问
-# 注意: 免费套餐15分钟无请求会休眠,首次唤醒约30秒;如需不休眠+数据持久化请升级Starter($7/月)
+# 注意: Starter套餐($7/月)支持持久化磁盘+不休眠,数据重启不丢失
 
 services:
   - type: web
     name: perception-ark
     runtime: node
-    plan: free  # 免费套餐,适合初赛评审体验
+    plan: starter  # 升级到Starter套餐以支持持久化磁盘($7/月),数据不丢失
     region: singapore  # 新加坡节点,访问中国相对较快
     branch: main
     rootDir: perception-ark  # 项目根目录
@@ -16,13 +16,18 @@ services:
     startCommand: cd backend && npm start
     healthCheckPath: /api/health
     autoDeploy: true
+    # 持久化磁盘: 重启/重新部署后数据保留(账号/聊天记录/SOS记录等)
+    disks:
+      - name: ark-data
+        mountPath: /data
+        sizeGB: 1  # 1GB足够SQLite数据库使用
     envVars:
       - key: NODE_ENV
         value: production
       - key: PORT
         value: 3001
       - key: DATA_DIR
-        value: /tmp/ark-data  # 免费套餐使用临时目录(重启会丢失,初赛Demo可接受)
+        value: /data  # 持久化磁盘目录,重启不丢失
       # ===== 火山引擎方舟 API (必填,否则使用MOCK模式) =====
       - key: ARK_API_KEY
         sync: false  # 在Render界面手动填写,不在配置中暴露

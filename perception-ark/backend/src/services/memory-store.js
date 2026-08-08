@@ -6,6 +6,7 @@ import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import bcrypt from 'bcryptjs';
 import { log } from '../utils/logger.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -83,11 +84,25 @@ export function initMemoryStore() {
       user_id INTEGER,
       created_at TEXT,
       nickname TEXT,
-      avatar TEXT
+      avatar TEXT,
+      phone TEXT,
+      status TEXT DEFAULT 'active',
+      security_question TEXT,
+      security_answer_hash TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS admin_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      admin_id INTEGER,
+      target_account_id INTEGER,
+      action TEXT NOT NULL,
+      reason TEXT,
+      detail TEXT,
+      created_at TEXT
     );
   `);
 
-  // 兼容旧库: 若 accounts 表缺少 nickname/avatar 列,自动补列
+  // 兼容旧库: 若 accounts 表缺少列,自动补列
   try {
     const cols = db.prepare("PRAGMA table_info(accounts)").all().map(c => c.name);
     if (!cols.includes('nickname')) {
@@ -98,22 +113,64 @@ export function initMemoryStore() {
       db.exec("ALTER TABLE accounts ADD COLUMN avatar TEXT");
       log('A05', 'accounts 表已补列 avatar');
     }
+    if (!cols.includes('phone')) {
+      db.exec("ALTER TABLE accounts ADD COLUMN phone TEXT");
+      log('A05', 'accounts 表已补列 phone');
+    }
+    if (!cols.includes('status')) {
+      db.exec("ALTER TABLE accounts ADD COLUMN status TEXT DEFAULT 'active'");
+      log('A05', 'accounts 表已补列 status');
+    }
+    if (!cols.includes('security_question')) {
+      db.exec("ALTER TABLE accounts ADD COLUMN security_question TEXT");
+      log('A05', 'accounts 表已补列 security_question');
+    }
+    if (!cols.includes('security_answer_hash')) {
+      db.exec("ALTER TABLE accounts ADD COLUMN security_answer_hash TEXT");
+      log('A05', 'accounts 表已补列 security_answer_hash');
+    }
   } catch (e) {
     log('A05', `accounts 表补列检查失败: ${e.message}`, 'warn');
   }
 
+  // 兼容旧库: 若 users 表缺少 bound_account_id 列,自动补列(用于家属绑定视障账号)
+  try {
+    const userCols = db.prepare("PRAGMA table_info(users)").all().map(c => c.name);
+    if (!userCols.includes('bound_account_id')) {
+      db.exec("ALTER TABLE users ADD COLUMN bound_account_id INTEGER");
+      log('A05', 'users 表已补列 bound_account_id');
+    }
+  } catch (e) {
+    log('A05', `users 表补列检查失败: ${e.message}`, 'warn');
+  }
+
   log('A05', '记忆数据库初始化完成');
   // 记忆库启动时为空,由用户使用过程中自然累积
+
+  // 初始化默认超级管理员账号(注册页不提供管理员注册,需保证系统始终可登录管理后台)
+  try {
+    const existingAdmin = db.prepare("SELECT id FROM accounts WHERE username = 'admin' AND role = 'admin'").get();
+    if (!existingAdmin) {
+      const adminHash = bcrypt.hashSync('admin123', 10);
+      db.prepare(`
+        INSERT INTO accounts (username, password_hash, role, user_id, created_at, phone, status)
+        VALUES (?, ?, 'admin', NULL, ?, NULL, 'active')
+      `).run('admin', adminHash, new Date().toISOString());
+      log('A05', '默认超级管理员账号已创建 (用户名: admin / 密码: admin123)');
+    }
+  } catch (e) {
+    log('A05', `默认超级管理员初始化失败: ${e.message}`, 'warn');
+  }
 }
 
 // ===== 账号管理(登录系统) =====
-export function createAccount(username, passwordHash, role = 'user', userId = null) {
+export function createAccount(username, passwordHash, role = 'user', userId = null, phone = null, securityQuestion = null, securityAnswerHash = null) {
   if (!db) return null;
   try {
     const result = db.prepare(`
-      INSERT INTO accounts (username, password_hash, role, user_id, created_at)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(username, passwordHash, role, userId, new Date().toISOString());
+      INSERT INTO accounts (username, password_hash, role, user_id, created_at, phone, security_question, security_answer_hash)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(username, passwordHash, role, userId, new Date().toISOString(), phone || null, securityQuestion || null, securityAnswerHash || null);
     return result.lastInsertRowid;
   } catch (err) {
     if (err.message.includes('UNIQUE')) return null;
@@ -128,7 +185,41 @@ export function getAccountByUsername(username) {
 
 export function getAccountById(id) {
   if (!db) return null;
-  return db.prepare('SELECT id, username, role, user_id, created_at, nickname, avatar FROM accounts WHERE id = ?').get(id);
+  return db.prepare('SELECT id, username, role, user_id, created_at, nickname, avatar, phone, status, security_question FROM accounts WHERE id = ?').get(id);
+}
+
+/**
+ * 获取账号的密保问题(仅返回问题文本,不含答案)
+ */
+export function getSecurityQuestion(username) {
+  if (!db) return null;
+  const row = db.prepare('SELECT security_question FROM accounts WHERE username = ?').get(username);
+  if (!row || !row.security_question) return null;
+  return row.security_question;
+}
+
+/**
+ * 校验密保答案是否正确
+ */
+export function verifySecurityAnswer(username, answer) {
+  if (!db || !answer) return false;
+  const row = db.prepare('SELECT security_answer_hash FROM accounts WHERE username = ?').get(username);
+  if (!row || !row.security_answer_hash) return false;
+  return bcrypt.compareSync(answer, row.security_answer_hash);
+}
+
+/**
+ * 重置账号密码
+ */
+export function resetPassword(username, newPasswordHash) {
+  if (!db) return false;
+  try {
+    const result = db.prepare('UPDATE accounts SET password_hash = ? WHERE username = ?').run(newPasswordHash, username);
+    return result.changes > 0;
+  } catch (err) {
+    log('A05', `重置密码失败: ${err.message}`, 'error');
+    return false;
+  }
 }
 
 /**
@@ -173,11 +264,11 @@ export function deleteAccount(id) {
 // ===== 使用者管理(家属端绑定) =====
 export function addUser(user) {
   if (!db) return null;
-  const { name, age, relation, phone, emergency_contact, emergency_phone, health_notes } = user;
+  const { name, age, relation, phone, emergency_contact, emergency_phone, health_notes, bound_account_id } = user;
   const result = db.prepare(`
-    INSERT INTO users (name, age, relation, phone, emergency_contact, emergency_phone, health_notes, bound_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(name, age || null, relation || '', phone || '', emergency_contact || '', emergency_phone || '', health_notes || '', new Date().toISOString());
+    INSERT INTO users (name, age, relation, phone, emergency_contact, emergency_phone, health_notes, bound_at, bound_account_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(name, age || null, relation || '', phone || '', emergency_contact || '', emergency_phone || '', health_notes || '', new Date().toISOString(), bound_account_id || null);
   return result.lastInsertRowid;
 }
 
@@ -190,6 +281,76 @@ export function deleteUser(id) {
   if (!db) return 0;
   const result = db.prepare('DELETE FROM users WHERE id = ?').run(id);
   return result.changes;
+}
+
+/**
+ * 按手机号查找视障账号(家属绑定用)
+ * 仅返回 role='user' 且状态正常的账号,避免家属绑定家属或被封禁账号
+ */
+export function findUserAccountByPhone(phone) {
+  if (!db || !phone) return null;
+  return db.prepare("SELECT id, username, role, nickname, phone FROM accounts WHERE phone = ? AND role = 'user' AND (status IS NULL OR status = 'active')").get(phone.trim());
+}
+
+/**
+ * 按用户名查找视障账号(兼容旧接口)
+ */
+export function findUserAccountByUsername(username) {
+  if (!db) return null;
+  return db.prepare("SELECT id, username, role, nickname FROM accounts WHERE username = ? AND role = 'user'").get(username);
+}
+
+/**
+ * 按手机号查找任意账号(手机验证码登录用,不限角色)
+ * 返回完整账号记录(含password_hash等字段)
+ */
+export function getAccountByPhone(phone) {
+  if (!db || !phone) return null;
+  return db.prepare('SELECT * FROM accounts WHERE phone = ?').get(phone.trim());
+}
+
+// ===== 管理员功能 =====
+/**
+ * 获取所有账号列表(管理员用,过滤password_hash)
+ */
+export function getAllAccounts() {
+  if (!db) return [];
+  return db.prepare("SELECT id, username, role, user_id, created_at, nickname, avatar, phone, status FROM accounts ORDER BY created_at DESC").all();
+}
+
+/**
+ * 更新账号状态(管理员封禁/解封)
+ */
+export function updateAccountStatus(id, status) {
+  if (!db) return false;
+  try {
+    const result = db.prepare('UPDATE accounts SET status = ? WHERE id = ?').run(status, id);
+    return result.changes > 0;
+  } catch (err) {
+    log('A05', `更新账号状态失败: ${err.message}`, 'error');
+    return false;
+  }
+}
+
+/**
+ * 记录管理员操作日志
+ */
+export function addAdminLog(logEntry) {
+  if (!db) return null;
+  const { admin_id, target_account_id, action, reason, detail } = logEntry;
+  const result = db.prepare(`
+    INSERT INTO admin_logs (admin_id, target_account_id, action, reason, detail, created_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(admin_id || null, target_account_id || null, action, reason || '', detail || '', new Date().toISOString());
+  return result.lastInsertRowid;
+}
+
+/**
+ * 获取管理员操作日志
+ */
+export function getAdminLogs(limit = 50) {
+  if (!db) return [];
+  return db.prepare('SELECT * FROM admin_logs ORDER BY created_at DESC LIMIT ?').all(limit);
 }
 
 // ===== 路线记忆 =====

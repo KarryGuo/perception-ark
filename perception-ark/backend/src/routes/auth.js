@@ -1,10 +1,16 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
-import { createAccount, getAccountByUsername, getAccountById, updateAccountProfile, deleteAccount } from '../services/memory-store.js';
+import { createAccount, getAccountByUsername, getAccountById, getAccountByPhone, updateAccountProfile, deleteAccount, getSecurityQuestion, verifySecurityAnswer, resetPassword } from '../services/memory-store.js';
 import { generateToken, authRequired } from '../services/auth.js';
 import { log } from '../utils/logger.js';
 
 const router = Router();
+
+// ===== 手机验证码存储(内存Map,5分钟过期) =====
+// key: 手机号, value: { code, expireAt, attempts }
+const smsCodes = new Map();
+const SMS_EXPIRE_MS = 5 * 60 * 1000; // 5分钟
+const SMS_MAX_ATTEMPTS = 5; // 单次验证码最多尝试5次
 
 /**
  * 注册
@@ -13,7 +19,7 @@ const router = Router();
  */
 router.post('/register', async (req, res) => {
   try {
-    const { username, password, role } = req.body;
+    const { username, password, role, phone, securityQuestion, securityAnswer } = req.body;
 
     // 输入验证
     if (!username || !password) {
@@ -25,6 +31,21 @@ router.post('/register', async (req, res) => {
     if (password.length < 6) {
       return res.status(400).json({ success: false, error: '密码长度至少6位' });
     }
+    // 注册仅允许 user/family 角色;管理员(超级管理员)由系统初始化创建,不通过注册
+    const accountRole = role === 'family' ? 'family' : 'user';
+    if (!phone) {
+      return res.status(400).json({ success: false, error: '请填写手机号码,用于家属绑定关系' });
+    }
+    if (!/^1[3-9]\d{9}$/.test(phone.trim())) {
+      return res.status(400).json({ success: false, error: '手机号格式不正确' });
+    }
+    // 密保问题与答案必填(用于找回密码)
+    if (!securityQuestion || !securityQuestion.trim()) {
+      return res.status(400).json({ success: false, error: '请选择密保问题' });
+    }
+    if (!securityAnswer || !securityAnswer.trim()) {
+      return res.status(400).json({ success: false, error: '请填写密保答案' });
+    }
 
     // 检查用户名是否已存在
     const existing = getAccountByUsername(username);
@@ -32,12 +53,12 @@ router.post('/register', async (req, res) => {
       return res.status(409).json({ success: false, error: '用户名已存在' });
     }
 
-    // 加密密码
+    // 加密密码和密保答案
     const passwordHash = await bcrypt.hash(password, 10);
-    const accountRole = role === 'family' ? 'family' : 'user';
+    const answerHash = bcrypt.hashSync(securityAnswer.trim(), 10);
 
     // 创建账号
-    const accountId = createAccount(username, passwordHash, accountRole);
+    const accountId = createAccount(username, passwordHash, accountRole, null, phone, securityQuestion.trim(), answerHash);
     if (!accountId) {
       return res.status(500).json({ success: false, error: '注册失败' });
     }
@@ -45,7 +66,7 @@ router.post('/register', async (req, res) => {
     const account = getAccountById(accountId);
     const token = generateToken(account);
 
-    log('AUTH', `新用户注册: ${username} (${accountRole})`);
+    log('AUTH', `新用户注册: ${username} (${accountRole})${phone ? ' phone=' + phone : ''}`);
 
     res.json({
       success: true,
@@ -81,6 +102,11 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ success: false, error: '用户名或密码错误' });
     }
 
+    // 检查账号状态(封禁账号禁止登录)
+    if (account.status === 'banned') {
+      return res.status(403).json({ success: false, error: '该账号已被封禁,如有疑问请联系管理员' });
+    }
+
     const token = generateToken(account);
     log('AUTH', `用户登录: ${username}`);
 
@@ -91,6 +117,180 @@ router.post('/login', async (req, res) => {
     });
   } catch (err) {
     log('AUTH', `登录失败: ${err.message}`, 'error');
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * 发送手机验证码
+ * POST /api/auth/send-sms
+ * body: { phone }
+ * 说明: 未配置短信服务商,开发模式下验证码通过响应 devCode 字段返回(前端弹窗显示),
+ *       同时在后端日志输出。生产环境接入真实短信服务后移除 devCode 字段。
+ */
+router.post('/send-sms', (req, res) => {
+  try {
+    const { phone } = req.body;
+    if (!phone || !/^1[3-9]\d{9}$/.test(phone.trim())) {
+      return res.status(400).json({ success: false, error: '手机号格式不正确' });
+    }
+    const phoneTrim = phone.trim();
+
+    // 检查该手机号是否已注册(未注册的提示但不暴露具体错误)
+    const account = getAccountByPhone(phoneTrim);
+    if (!account) {
+      return res.status(404).json({ success: false, error: '该手机号尚未注册,请先注册账号' });
+    }
+
+    // 检查封禁状态
+    if (account.status === 'banned') {
+      return res.status(403).json({ success: false, error: '该账号已被封禁,如有疑问请联系管理员' });
+    }
+
+    // 生成6位数字验证码
+    const code = String(Math.floor(100000 + Math.random() * 900000));
+    smsCodes.set(phoneTrim, {
+      code,
+      expireAt: Date.now() + SMS_EXPIRE_MS,
+      attempts: 0,
+    });
+
+    // 后端日志输出验证码(开发/调试用)
+    log('AUTH', `发送验证码到 ${phoneTrim}: ${code}`);
+
+    res.json({
+      success: true,
+      message: '验证码已发送,请查看手机短信',
+      devCode: code, // 开发模式返回验证码(生产环境移除)
+    });
+  } catch (err) {
+    log('AUTH', `发送验证码失败: ${err.message}`, 'error');
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * 手机验证码登录
+ * POST /api/auth/login-sms
+ * body: { phone, code }
+ */
+router.post('/login-sms', (req, res) => {
+  try {
+    const { phone, code } = req.body;
+    if (!phone || !/^1[3-9]\d{9}$/.test(phone.trim())) {
+      return res.status(400).json({ success: false, error: '手机号格式不正确' });
+    }
+    if (!code || !/^\d{6}$/.test(String(code).trim())) {
+      return res.status(400).json({ success: false, error: '请输入6位数字验证码' });
+    }
+
+    const phoneTrim = phone.trim();
+    const codeTrim = String(code).trim();
+
+    // 校验验证码
+    const stored = smsCodes.get(phoneTrim);
+    if (!stored) {
+      return res.status(401).json({ success: false, error: '请先获取验证码' });
+    }
+    if (Date.now() > stored.expireAt) {
+      smsCodes.delete(phoneTrim);
+      return res.status(401).json({ success: false, error: '验证码已过期,请重新获取' });
+    }
+    if (stored.attempts >= SMS_MAX_ATTEMPTS) {
+      smsCodes.delete(phoneTrim);
+      return res.status(401).json({ success: false, error: '验证码错误次数过多,请重新获取' });
+    }
+
+    // 比对验证码
+    if (stored.code !== codeTrim) {
+      stored.attempts++;
+      return res.status(401).json({ success: false, error: '验证码不正确' });
+    }
+
+    // 验证通过,删除验证码记录
+    smsCodes.delete(phoneTrim);
+
+    // 查找账号
+    const account = getAccountByPhone(phoneTrim);
+    if (!account) {
+      return res.status(404).json({ success: false, error: '账号不存在' });
+    }
+    if (account.status === 'banned') {
+      return res.status(403).json({ success: false, error: '该账号已被封禁' });
+    }
+
+    const token = generateToken(account);
+    log('AUTH', `用户手机验证码登录: ${account.username} (${phoneTrim})`);
+
+    res.json({
+      success: true,
+      token,
+      user: buildUserPayload(account)
+    });
+  } catch (err) {
+    log('AUTH', `验证码登录失败: ${err.message}`, 'error');
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * 获取密保问题(找回密码第1步)
+ * POST /api/auth/security-question
+ * body: { username }
+ */
+router.post('/security-question', (req, res) => {
+  try {
+    const { username } = req.body;
+    if (!username || !username.trim()) {
+      return res.status(400).json({ success: false, error: '请输入用户名' });
+    }
+    const question = getSecurityQuestion(username.trim());
+    if (!question) {
+      return res.status(404).json({ success: false, error: '用户名不存在或未设置密保问题' });
+    }
+    res.json({ success: true, question });
+  } catch (err) {
+    log('AUTH', `获取密保问题失败: ${err.message}`, 'error');
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * 重置密码(找回密码第2步: 校验密保答案后重置)
+ * POST /api/auth/reset-password
+ * body: { username, securityAnswer, newPassword }
+ */
+router.post('/reset-password', async (req, res) => {
+  try {
+    const { username, securityAnswer, newPassword } = req.body;
+    if (!username || !username.trim()) {
+      return res.status(400).json({ success: false, error: '请输入用户名' });
+    }
+    if (!securityAnswer || !securityAnswer.trim()) {
+      return res.status(400).json({ success: false, error: '请填写密保答案' });
+    }
+    if (!newPassword || newPassword.length < 6) {
+      return res.status(400).json({ success: false, error: '新密码长度至少6位' });
+    }
+
+    const uname = username.trim();
+    // 校验密保答案
+    const matched = verifySecurityAnswer(uname, securityAnswer.trim());
+    if (!matched) {
+      return res.status(401).json({ success: false, error: '密保答案不正确' });
+    }
+
+    // 加密新密码并重置
+    const newHash = await bcrypt.hash(newPassword, 10);
+    const ok = resetPassword(uname, newHash);
+    if (!ok) {
+      return res.status(500).json({ success: false, error: '重置密码失败' });
+    }
+
+    log('AUTH', `用户通过密保重置密码: ${uname}`);
+    res.json({ success: true, message: '密码重置成功,请使用新密码登录' });
+  } catch (err) {
+    log('AUTH', `重置密码失败: ${err.message}`, 'error');
     res.status(500).json({ success: false, error: err.message });
   }
 });
@@ -210,7 +410,9 @@ function buildUserPayload(account) {
     role: account.role,
     userId: account.user_id,
     nickname: account.nickname || '',
-    avatar: account.avatar || ''
+    avatar: account.avatar || '',
+    phone: account.phone || '',
+    status: account.status || 'active'
   };
 }
 

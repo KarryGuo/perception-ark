@@ -1,0 +1,35 @@
+{
+  "name": "perception-ark-app",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build --mode production",
+    "preview": "vite preview",
+    "cap:sync": "npx cap sync",
+    "cap:sync:android": "npx cap sync android",
+    "cap:sync:ios": "npx cap sync ios",
+    "cap:open:android": "npx cap open android",
+    "cap:open:ios": "npx cap open ios",
+    "cap:build": "npm run build && npx cap sync",
+    "cap:build:android": "npm run build && npx cap sync android",
+    "cap:build:ios": "npm run build && npx cap sync ios",
+    "cap:apk": "npm run build && npx cap sync android && cd android && gradlew assembleDebug"
+  },
+  "dependencies": {
+    "@capacitor-community/speech-recognition": "^6.0.1",
+    "@capacitor/geolocation": "^6.1.1",
+    "leaflet": "^1.9.4",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@capacitor/android": "^6.2.0",
+    "@capacitor/cli": "^6.2.0",
+    "@capacitor/core": "^6.2.0",
+    "@capacitor/ios": "^6.2.1",
+    "@vitejs/plugin-react": "^4.3.2",
+    "vite": "^5.4.8"
+  }
+}

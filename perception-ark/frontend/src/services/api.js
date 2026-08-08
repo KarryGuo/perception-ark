@@ -28,11 +28,11 @@ function fileToFormData(file, extra = {}) {
 
 export const api = {
   // 认证
-  register: (username, password, role) =>
+  register: (username, password, role, phone, securityQuestion, securityAnswer) =>
     request('/auth/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password, role })
+      body: JSON.stringify({ username, password, role, phone, securityQuestion, securityAnswer })
     }),
   login: (username, password) =>
     request('/auth/login', {
@@ -40,7 +40,35 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password })
     }),
+  // 手机验证码登录: 发送验证码
+  sendSms: (phone) =>
+    request('/auth/send-sms', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone })
+    }),
+  // 手机验证码登录: 验证码登录
+  loginBySms: (phone, code) =>
+    request('/auth/login-sms', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone, code })
+    }),
   me: () => request('/auth/me'),
+  // 找回密码: 获取密保问题
+  getSecurityQuestion: (username) =>
+    request('/auth/security-question', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username })
+    }),
+  // 找回密码: 校验密保答案并重置密码
+  resetPassword: (username, securityAnswer, newPassword) =>
+    request('/auth/reset-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, securityAnswer, newPassword })
+    }),
   // 修改昵称
   updateNickname: (nickname) =>
     request('/auth/profile', {
@@ -207,4 +235,21 @@ export const api = {
   familyRecognitionHistory: (limit) => request(`/family/recognition-history${limit ? `?limit=${limit}` : ''}`),
   familyRoutes: () => request('/family/routes'),
   familyHabits: () => request('/family/habits'),
+
+  // 管理员后台
+  adminAccounts: () => request('/admin/accounts'),
+  adminBanAccount: (id, reason) =>
+    request(`/admin/accounts/${id}/ban`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason })
+    }),
+  adminUnbanAccount: (id, reason) =>
+    request(`/admin/accounts/${id}/unban`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason })
+    }),
+  adminLogs: (limit) => request(`/admin/logs${limit ? `?limit=${limit}` : ''}`),
+  adminDevices: () => request('/admin/devices'),
 };

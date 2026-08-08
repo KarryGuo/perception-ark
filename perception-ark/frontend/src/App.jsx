@@ -5,6 +5,7 @@ import Glasses from './pages/Glasses.jsx';
 import Family from './pages/Family.jsx';
 import Login from './pages/Login.jsx';
 import Register from './pages/Register.jsx';
+import ForgotPassword from './pages/ForgotPassword.jsx';
 import Guide from './pages/Guide.jsx';
 import AppMobile from './pages/AppMobile.jsx';
 import Settings from './pages/Settings.jsx';
@@ -127,6 +128,7 @@ export default function App() {
   // 公开路由: 登录/注册/说明页/评委体验入口
   if (route === '#/login' || route === '#/login/') return <Login />;
   if (route === '#/register' || route === '#/register/') return <Register />;
+  if (route === '#/forgot' || route === '#/forgot/') return <ForgotPassword />;
   if (route === '#/guide' || route === '#/guide/') return <Guide />;
   if (route === '#/demo' || route === '#/demo/') return <DemoEntry />;
 

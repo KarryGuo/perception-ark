@@ -140,7 +140,7 @@ export async function understandIntent(text, sessionId) {
   if (!isConfigured()) {
     return {
       intent: 'chat',
-      reply: '我听到了。目前我还没接入AI大脑，请在backend/.env中配置ARK_API_KEY后我就能完整理解您了。'
+      reply: '我听到了。目前我还没接入AI大脑，请在backend/.env中配置QWEN_API_KEY后我就能完整理解您了。'
     };
   }
 

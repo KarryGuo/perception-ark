@@ -135,6 +135,52 @@ export function useSpatialAudio() {
     oscillator.stop(ctx.currentTime + duration);
   }, [ensureAudioContext]);
 
+  // 急促警报声 - 障碍物很近时触发(连续短促高频蜂鸣,营造紧迫感)
+  // 播放5次短促蜂鸣,频率在1000-1200Hz交替,每次80ms响+80ms停
+  const alarmTimersRef = useRef([]);
+  const alarm = useCallback((direction = '正前方') => {
+    const ctx = ensureAudioContext();
+    if (!ctx || !pannerRef.current || !gainNodeRef.current) return;
+
+    // 清除上一次未完成的警报定时器(防止叠加)
+    alarmTimersRef.current.forEach(t => clearTimeout(t));
+    alarmTimersRef.current = [];
+
+    const panValue = DIRECTION_PAN_MAP[direction] ?? 0;
+    const beepCount = 5;
+    const beepDuration = 0.08;  // 每声80ms
+    const interval = 0.16;       // 160ms间隔(80ms响+80ms停)
+
+    for (let i = 0; i < beepCount; i++) {
+      const startTime = ctx.currentTime + i * interval;
+      // 频率交替(1000/1200Hz),增强紧迫感
+      const freq = i % 2 === 0 ? 1000 : 1200;
+
+      pannerRef.current.pan.setValueAtTime(panValue, startTime);
+
+      const oscillator = ctx.createOscillator();
+      const alarmGain = ctx.createGain();
+      oscillator.type = 'square';  // 方波,声音更尖锐刺耳
+      oscillator.frequency.setValueAtTime(freq, startTime);
+
+      alarmGain.gain.setValueAtTime(0, startTime);
+      alarmGain.gain.linearRampToValueAtTime(0.5, startTime + 0.005);
+      alarmGain.gain.setValueAtTime(0.5, startTime + beepDuration - 0.01);
+      alarmGain.gain.exponentialRampToValueAtTime(0.001, startTime + beepDuration);
+
+      oscillator.connect(alarmGain);
+      alarmGain.connect(pannerRef.current);
+
+      oscillator.start(startTime);
+      oscillator.stop(startTime + beepDuration);
+    }
+  }, [ensureAudioContext]);
+
+  const stopAlarm = useCallback(() => {
+    alarmTimersRef.current.forEach(t => clearTimeout(t));
+    alarmTimersRef.current = [];
+  }, []);
+
   const speakInternal = useCallback((text, options = {}, direction = null) => {
     if (!supported || !text) return;
     const { urgent = false, onEnd, rate } = options;
@@ -232,7 +278,7 @@ export function useSpatialAudio() {
     setSpeaking(false);
   }, [supported]);
 
-  return { speakDirectional, speak, stop, beep, speaking, supported };
+  return { speakDirectional, speak, stop, beep, alarm, stopAlarm, speaking, supported };
 }
 
 export default useSpatialAudio;

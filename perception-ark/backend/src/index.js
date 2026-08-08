@@ -17,6 +17,7 @@ import apiRouter from './routes/api.js';
 import familyRouter from './routes/family.js';
 import assistantRouter from './routes/assistant.js';
 import authRouter from './routes/auth.js';
+import adminRouter from './routes/admin.js';
 import { initMemoryStore } from './services/memory-store.js';
 import { addListener, removeListener } from './agents/orchestrator.js';
 import { log } from './utils/logger.js';
@@ -53,6 +54,7 @@ app.use('/api/auth', authRouter);
 app.use('/api', apiRouter);
 app.use('/api/family', familyRouter);
 app.use('/api/assistant', assistantRouter);
+app.use('/api/admin', adminRouter);
 
 // 未知API路由返回JSON 404
 app.use('/api/*', (req, res) => {
@@ -134,11 +136,11 @@ server.listen(PORT, () => {
   log('SYS', `API文档: http://localhost:${PORT}/api/health`);
   log('SYS', `═══════════════════════════════════════════`);
 
-  if (!process.env.ARK_API_KEY || process.env.ARK_API_KEY === 'your_ark_api_key_here' || process.env.ARK_API_KEY === '请在此填写你的ARK_API_KEY') {
-    log('SYS', '⚠ 未配置 ARK_API_KEY，将使用MOCK模式运行', 'warn');
-    log('SYS', '  配置方法: 编辑 backend/.env 并填写真实密钥', 'warn');
+  if (!process.env.QWEN_API_KEY || !process.env.QWEN_API_KEY.startsWith('sk-')) {
+    log('SYS', '⚠ 未配置 QWEN_API_KEY，将使用MOCK模式运行', 'warn');
+    log('SYS', '  配置方法: 编辑 backend/.env 并填写真实千问API Key', 'warn');
   } else {
-    log('SYS', '✓ 已检测到 ARK_API_KEY，将使用真实豆包大模型');
+    log('SYS', '✓ 已检测到 QWEN_API_KEY，将使用真实千问大模型');
   }
 
   const wakeWord = process.env.ASSISTANT_WAKE_WORD || '小舟小舟';

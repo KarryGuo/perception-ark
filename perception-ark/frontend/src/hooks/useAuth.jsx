@@ -52,8 +52,19 @@ export function AuthProvider({ children }) {
     throw new Error(res.error || '登录失败');
   }, []);
 
-  const register = useCallback(async (username, password, role) => {
-    const res = await api.register(username, password, role);
+  // 手机验证码登录(无需密码,通过验证码登录)
+  const loginBySms = useCallback(async (phone, code) => {
+    const res = await api.loginBySms(phone, code);
+    if (res.success) {
+      localStorage.setItem('ark_token', res.token);
+      setUser(res.user);
+      return res.user;
+    }
+    throw new Error(res.error || '验证码登录失败');
+  }, []);
+
+  const register = useCallback(async (username, password, role, phone, securityQuestion, securityAnswer) => {
+    const res = await api.register(username, password, role, phone, securityQuestion, securityAnswer);
     if (res.success) {
       localStorage.setItem('ark_token', res.token);
       setUser(res.user);
@@ -88,7 +99,7 @@ export function AuthProvider({ children }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout, refreshUser, updateUser }}>
+    <AuthContext.Provider value={{ user, loading, login, loginBySms, register, logout, refreshUser, updateUser }}>
       {children}
     </AuthContext.Provider>
   );
