@@ -537,10 +537,11 @@ function AppMobileUser() {
         const speakText = addr
           ? `已定位到当前位置,${addr}`
           : `已定位到当前位置,经纬度${pos.lat.toFixed(5)},${pos.lng.toFixed(5)}`;
-        speak(speakText);
+        // 使用 urgent 优先级: 立即中断任何残留TTS(如快速识别的长文本播报),确保导航播报即时
+        speak(speakText, { urgent: true });
         showToast('已定位到最新位置');
       } else {
-        speak('定位失败,请检查GPS或网络,可点击左上角定位按钮重试');
+        speak('定位失败,请检查GPS或网络,可点击左上角定位按钮重试', { urgent: true });
         showToast('定位失败,请点击定位按钮重试');
       }
     });

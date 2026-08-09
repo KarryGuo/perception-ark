@@ -37,6 +37,9 @@ export function useSpeechSynthesis() {
   const playNextTimersRef = useRef([]);
   // 音色性别: 'male' | 'female' | null(无偏好,用具体voice)
   const genderRef = useRef(null);
+  // generation机制: 每次 speak/stop 都递增,旧 utterance 的 onend 只在 generation 匹配时才驱动 playNext
+  // 根本修复: stop() 后即使新的 speak() 重置了 stoppedRef,旧 onend 也不会继续播放旧队列
+  const generationRef = useRef(0);
 
   // 从localStorage读取用户设置的语速和音色
   const getSavedRate = () => {
@@ -147,7 +150,9 @@ export function useSpeechSynthesis() {
     if (!supported || !text) return;
     const { urgent = false, onEnd, rate } = options;
 
-    // 任何新的speak都重置停止标志
+    // 新的 speak 调用: 递增 generation,使之前所有 utterance 的 onend 失效
+    const myGeneration = ++generationRef.current;
+    // 重置停止标志(允许本次播报的 playNext 推进)
     stoppedRef.current = false;
 
     // 如果之前 stop() 调用过 pause(),需要 resume 才能播放新的
@@ -188,6 +193,9 @@ export function useSpeechSynthesis() {
       };
 
       utter.onend = () => {
+        // 关键: 只有当前 generation 的 utterance 才驱动 playNext
+        // stop() 或新的 speak() 都会递增 generation,使旧 onend 失效
+        if (myGeneration !== generationRef.current) return;
         if (idx === sentences.length - 1) {
           setSpeaking(false);
           currentUtterRef.current = null;
@@ -198,6 +206,7 @@ export function useSpeechSynthesis() {
       };
 
       utter.onerror = () => {
+        if (myGeneration !== generationRef.current) return;
         setSpeaking(false);
         currentUtterRef.current = null;
       };
@@ -207,6 +216,8 @@ export function useSpeechSynthesis() {
 
     // 依次播放(onend驱动 + 轮询兜底,双保险)
     const playNext = () => {
+      // 关键: generation 不匹配时直接返回,阻止旧 speak 的 playNext 继续推进
+      if (myGeneration !== generationRef.current) return;
       if (stoppedRef.current) return;
       const next = utterQueueRef.current.shift();
       if (next) {
@@ -221,6 +232,9 @@ export function useSpeechSynthesis() {
 
   const stop = useCallback(() => {
     if (!supported) return;
+    // 递增 generation: 使所有正在播放/队列中的 utterance 的 onend 失效
+    // 这是根本修复: 即使后续有新的 speak() 重置 stoppedRef,旧 onend 也不会驱动 playNext
+    generationRef.current++;
     stoppedRef.current = true;
     playNextTimersRef.current.forEach(t => clearTimeout(t));
     playNextTimersRef.current = [];
