@@ -23,6 +23,7 @@ export default function Family() {
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState('overview');
   const [showAddForm, setShowAddForm] = useState(false);
+  const [editingUserId, setEditingUserId] = useState(null); // null=添加模式, 数字=编辑模式
   const [formData, setFormData] = useState({
     name: '', age: '', relation: '', phone: '',
     emergency_contact: '', emergency_phone: '', health_notes: '',
@@ -89,17 +90,48 @@ export default function Family() {
     e.preventDefault();
     if (!formData.name.trim()) return;
     try {
-      await api.familyAddUser({
+      const payload = {
         ...formData,
         age: formData.age ? parseInt(formData.age) : null
-      });
+      };
+      if (editingUserId) {
+        // 编辑模式
+        await api.familyUpdateUser(editingUserId, payload);
+      } else {
+        // 添加模式
+        await api.familyAddUser(payload);
+      }
       setFormData({ name: '', age: '', relation: '', phone: '', emergency_contact: '', emergency_phone: '', health_notes: '', bind_phone: '' });
       setShowAddForm(false);
+      setEditingUserId(null);
       loadUsers();
     } catch (err) {
-      alert('添加失败: ' + err.message);
+      alert(`${editingUserId ? '编辑' : '添加'}失败: ` + err.message);
     }
-  }, [formData, loadUsers]);
+  }, [formData, editingUserId, loadUsers]);
+
+  // 点击编辑使用者: 预填表单数据并进入编辑模式
+  const handleEditUser = useCallback((u) => {
+    setEditingUserId(u.id);
+    setFormData({
+      name: u.name || '',
+      age: u.age != null ? String(u.age) : '',
+      relation: u.relation || '',
+      phone: u.phone || '',
+      emergency_contact: u.emergency_contact || '',
+      emergency_phone: u.emergency_phone || '',
+      health_notes: u.health_notes || '',
+      bind_phone: '' // bind_phone 不回填(安全考虑,编辑时重新输入绑定手机号)
+    });
+    setShowAddForm(true);
+  }, []);
+
+  // 取消表单(添加/编辑通用)
+  const handleCancelForm = useCallback(() => {
+    setShowAddForm(false);
+    setEditingUserId(null);
+    setFormData({ name: '', age: '', relation: '', phone: '', emergency_contact: '', emergency_phone: '', health_notes: '', bind_phone: '' });
+  }, []);
 
   const handleDeleteUser = useCallback(async (id, name) => {
     if (!confirm(`确定删除使用者"${name}"？`)) return;
@@ -374,8 +406,8 @@ export default function Family() {
               <h2 className="am-fam-section-title">👥 使用者管理</h2>
               <button
                 className={`am-fam-add-btn ${showAddForm ? 'cancel' : ''}`}
-                onClick={() => setShowAddForm(!showAddForm)}
-                aria-label={showAddForm ? '取消添加' : '添加使用者'}
+                onClick={() => showAddForm ? handleCancelForm() : setShowAddForm(true)}
+                aria-label={showAddForm ? '取消' : '添加使用者'}
               >
                 {showAddForm ? '取消' : '+ 添加'}
               </button>
@@ -383,6 +415,7 @@ export default function Family() {
 
             {showAddForm && (
               <form className="am-fam-add-form" onSubmit={handleAddUser}>
+                <div className="am-fam-form-title">{editingUserId ? '编辑使用者' : '添加使用者'}</div>
                 <FamFormInput placeholder="姓名 *" value={formData.name} onChange={v => setFormData({ ...formData, name: v })} required />
                 <div className="am-fam-form-row">
                   <FamFormInput placeholder="年龄" type="number" value={formData.age} onChange={v => setFormData({ ...formData, age: v })} />
@@ -395,7 +428,7 @@ export default function Family() {
                 </div>
                 <FamFormInput placeholder="健康备注(如:高血压)" value={formData.health_notes} onChange={v => setFormData({ ...formData, health_notes: v })} />
                 <FamFormInput placeholder="绑定视障人员手机号" value={formData.bind_phone} onChange={v => setFormData({ ...formData, bind_phone: v })} />
-                <button type="submit" className="am-fam-submit-btn">确认绑定</button>
+                <button type="submit" className="am-fam-submit-btn">{editingUserId ? '保存修改' : '确认绑定'}</button>
               </form>
             )}
 
@@ -412,11 +445,18 @@ export default function Family() {
                           {u.relation || '未填写关系'}{u.age ? ` · ${u.age}岁` : ''}
                         </div>
                       </div>
-                      <button
-                        className="am-fam-user-del"
-                        onClick={() => handleDeleteUser(u.id, u.name)}
-                        aria-label={`删除${u.name}`}
-                      >✕</button>
+                      <div className="am-fam-user-actions">
+                        <button
+                          className="am-fam-user-edit"
+                          onClick={() => handleEditUser(u)}
+                          aria-label={`编辑${u.name}`}
+                        >编辑</button>
+                        <button
+                          className="am-fam-user-del"
+                          onClick={() => handleDeleteUser(u.id, u.name)}
+                          aria-label={`删除${u.name}`}
+                        >✕</button>
+                      </div>
                     </div>
                     {u.phone && <div className="am-fam-user-phone">📱 {u.phone}</div>}
                     {u.bound_account_id && <div className="am-fam-user-bound">🔗 已绑定视障账号 (ID: {u.bound_account_id})</div>}

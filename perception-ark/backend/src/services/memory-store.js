@@ -338,6 +338,29 @@ export function deleteUser(id) {
 }
 
 /**
+ * 更新使用者信息
+ */
+export function updateUser(id, data) {
+  if (!db) return 0;
+  const { name, age, relation, phone, emergency_contact, emergency_phone, health_notes, bound_account_id } = data;
+  const result = db.prepare(`
+    UPDATE users SET
+      name = COALESCE(?, name),
+      age = COALESCE(?, age),
+      relation = COALESCE(?, relation),
+      phone = COALESCE(?, phone),
+      emergency_contact = COALESCE(?, emergency_contact),
+      emergency_phone = COALESCE(?, emergency_phone),
+      health_notes = COALESCE(?, health_notes),
+      bound_account_id = COALESCE(?, bound_account_id)
+    WHERE id = ?
+  `).run(name || null, age !== undefined ? age : null, relation || null, phone || null,
+        emergency_contact || null, emergency_phone || null, health_notes || null,
+        bound_account_id !== undefined ? bound_account_id : null, id);
+  return result.changes;
+}
+
+/**
  * 按手机号查找视障账号(家属绑定用)
  * 仅返回 role='user' 且状态正常的账号,避免家属绑定家属或被封禁账号
  */

@@ -93,6 +93,28 @@ function AppMobileUser() {
   const poiSearchTimerRef = useRef(null);
   const wakeStartRef = useRef(null);
   const wakeStopRef = useRef(null);
+  const lastTravelSpeakRef = useRef(''); // 出行模式上次播报文本(去重,避免重复播报相同内容)
+  const lastTravelTimeRef = useRef(0); // 出行模式上次播报时间(强制刷新间隔)
+
+  // 安全解析JSON(处理VLM返回的markdown代码块包裹)
+  const safeParseJson = useCallback((text) => {
+    if (!text) return null;
+    if (typeof text === 'object') return text;
+    if (typeof text !== 'string') return null;
+    // 1. 尝试从markdown代码块提取 ```json ... ``` 或 ``` ... ```
+    const codeBlock = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+    if (codeBlock) {
+      try { return JSON.parse(codeBlock[1].trim()); } catch (e) { /* continue */ }
+    }
+    // 2. 尝试直接解析
+    try { return JSON.parse(text.trim()); } catch (e) { /* continue */ }
+    // 3. 尝试提取最外层 { ... }
+    const braceMatch = text.match(/\{[\s\S]*\}/);
+    if (braceMatch) {
+      try { return JSON.parse(braceMatch[0]); } catch (e) { /* continue */ }
+    }
+    return null;
+  }, []);
 
   const vibrateSafety = useCallback((urgent, distance) => {
     if (!navigator.vibrate) return;
@@ -912,21 +934,23 @@ function AppMobileUser() {
           res = await api.scene(img, '你是视障用户的眼睛。请用一段话描述当前场景,必须包含:\n1.前方主要物体名称\n2.物体的方位(左前方/正前方/右前方/左方/右方)\n3.物体到你的估算距离(单位米,1-5米范围)\n格式示例:"正前方2米有桌椅,右前方3米有门"。40字以内,专为视障者设计,只描述前方可见的主要物体和距离。');
         } else if (activeMode === 'travel') {
           // 增强出行模式: 物体识别+方位+避让建议+斑马线+红绿灯+行动指引
-          res = await api.scene(img, `你是视障用户的出行导航助手。用户正在步行导航中，请分析摄像头画面并给出详细指引。
-必须严格输出JSON格式(不要输出其他任何文字):
+          res = await api.scene(img, `你是视障用户的出行导航助手。用户正在步行导航中，请仔细分析摄像头画面并给出详细指引。
+必须严格输出JSON格式(不要markdown代码块,不要输出其他任何文字):
 {"objects":[{"name":"物体名","direction":"左前方|正前方|右前方|左方|右方","distance":距离(米)}],"crosswalk":boolean,"traffic_light":"red|green|yellow|none","obstacle":boolean,"suggestion":"避让或行动建议","action":"直行|向左转|向右转|停下|减速","urgent":boolean}
 
-识别规则:
-1.识别画面中所有可见物体(车辆/电动车/自行车/行人/障碍物/斑马线/红绿灯/台阶/柱子/墙/施工围栏等),每个给出方位和距离
-2.看到斑马线:crosswalk=true
-3.看到红绿灯:traffic_light=对应颜色,否则none
-4.有障碍物需避让:obstacle=true,suggestion给出具体避让建议(如"左前方有电动车,请向右转避让")
-5.避开障碍物后:action建议直行/向左转/向右转
-6.斑马线+红灯:action="停下",urgent=true,suggestion="红灯,请停下等待"
-7.斑马线+绿灯:action="直行",suggestion="绿灯,可以通行"
-8.无障碍物:obstacle=false,action="直行",suggestion="前方安全,请继续直行"
-9.distance单位为米(数字)
-只输出JSON,不要markdown,不要解释`);
+识别规则(安全第一,宁可多报不可漏报):
+1.必须仔细扫描画面中所有可见物体(车辆/电动车/自行车/行人/垃圾桶/路灯杆/树/台阶/柱子/墙/施工围栏/台阶/水坑/坑洞等),每个给出准确方位和估算距离。即使远处有小物体也要报告
+2.只要前方有任何可能阻碍通行的物体,obstacle必须为true,不要因为"可以绕过"就报false
+3.看到斑马线:crosswalk=true
+4.看到红绿灯:traffic_light=对应颜色,否则none
+5.有障碍物时:suggestion必须包含具体避让方向(如"左前方2米有电动车,请向右转避让"),不能只说"注意安全"
+6.障碍物在1米内:urgent=true,action="停下"
+7.障碍物在1-3米:action="减速"或方向调整建议
+8.斑马线+红灯:action="停下",urgent=true,suggestion="红灯,请停下等待"
+9.斑马线+绿灯:action="直行",suggestion="绿灯,可以通行"
+10.完全无障碍物(视野开阔):obstacle=false,action="直行",suggestion="前方畅通,请继续直行"
+11.distance单位为米(数字),估算要准确
+直接输出JSON,绝对不要用markdown代码块包裹,不要有任何解释文字`);
         } else if (activeMode === 'read') {
           res = await api.social(img, 'ocr');
         } else if (activeMode === 'traffic') {
@@ -938,12 +962,8 @@ function AppMobileUser() {
         if (res?.success && res.result) {
           failCount = 0;
           const raw = res.result;
-          let parsed = null;
-          if (typeof raw === 'string') {
-            try { parsed = JSON.parse(raw); } catch(e) { parsed = null; }
-          } else if (typeof raw === 'object') {
-            parsed = raw;
-          }
+          // 使用safeParseJson处理VLM可能返回的markdown代码块包裹
+          const parsed = safeParseJson(raw);
 
           // ===== 出行模式: 增强的物体识别+避让+斑马线+红绿灯指引 =====
           if (activeMode === 'travel' && parsed && typeof parsed === 'object' && 'objects' in parsed) {
@@ -951,7 +971,9 @@ function AppMobileUser() {
             const objs = Array.isArray(parsed.objects) ? parsed.objects : [];
             const hasCrosswalk = !!parsed.crosswalk;
             const trafficLight = parsed.traffic_light || 'none';
-            const hasObstacle = !!parsed.obstacle;
+            // obstacle字段可能不准,用objects实际内容二次判定: 有物体且非路面/天空类则视为有障碍
+            const nonGroundObjs = objs.filter(o => o.name && !/^(路面|地面|天空|天花板|墙壁)$/.test(o.name));
+            const hasObstacle = !!parsed.obstacle || nonGroundObjs.length > 0;
             const action = parsed.action || '直行';
             const suggestion = parsed.suggestion || '';
             const isUrgent = !!parsed.urgent;
@@ -969,47 +991,65 @@ function AppMobileUser() {
                 speakText = `前方斑马线，${lightText}，请谨慎。`;
               }
             }
-            // 2. 有障碍物: 播报物体+方位+避让建议
-            else if (hasObstacle && objs.length > 0) {
-              const objDescs = objs.slice(0, 3).map(o => {
+            // 2. 有障碍物: 播报物体+方位+距离+避让建议
+            else if (hasObstacle && nonGroundObjs.length > 0) {
+              const objDescs = nonGroundObjs.slice(0, 3).map(o => {
                 const dist = o.distance != null ? `约${o.distance}米` : '附近';
-                return `${o.direction}${dist}有${o.name}`;
+                return `${o.direction || '正前方'}${dist}有${o.name}`;
               });
-              speakText = `${objDescs.join('，')}。${suggestion || '请注意避让'}`;
+              // 有避让建议时用建议,否则根据最近障碍物方位给出方向指引
+              if (suggestion && !/直行|前方安全/.test(suggestion)) {
+                speakText = `${objDescs.join('，')}。${suggestion}`;
+              } else {
+                // 自动生成方向指引: 最近障碍物在哪边就建议往反方向走
+                const nearest = nonGroundObjs.sort((a, b) => (a.distance || 5) - (b.distance || 5))[0];
+                const nDir = nearest?.direction || '正前方';
+                let avoidDir = '';
+                if (/左/.test(nDir)) avoidDir = '向右';
+                else if (/右/.test(nDir)) avoidDir = '向左';
+                else avoidDir = '减速慢行';
+                speakText = `${objDescs.join('，')}。请${avoidDir}避让`;
+              }
             }
             // 3. 无障碍物: 播报安全+行动指引
             else {
-              speakText = suggestion || '前方安全，请继续直行';
+              speakText = suggestion || '前方畅通，请继续直行';
             }
 
-            // 显示文本
-            let displayText = '';
-            if (hasCrosswalk && trafficLight !== 'none') {
-              const icon = trafficLight === 'red' ? '🚦' : trafficLight === 'green' ? '🚦' : '🚦';
-              displayText = `${icon} ${speakText}`;
-            } else if (hasObstacle) {
-              displayText = isUrgent ? `🚨 ${speakText}` : `⚠️ ${speakText}`;
-            } else {
-              displayText = `🛡️ ${speakText}`;
-            }
+            // 去重: 与上次播报内容相同且15秒内,不重复播报(紧急情况除外)
+            const now = Date.now();
+            const isDuplicate = speakText === lastTravelSpeakRef.current && (now - lastTravelTimeRef.current) < 15000;
+            if (!isDuplicate || isUrgent) {
+              lastTravelSpeakRef.current = speakText;
+              lastTravelTimeRef.current = now;
 
-            setSubtitle(displayText, isUrgent);
-            addMessage('assistant', speakText);
-
-            // 方向提取用于空间音效
-            const dirMatch = speakText.match(/(左前方|正前方|右前方|左方|右方)/);
-            const dir = dirMatch ? dirMatch[1] : '正前方';
-
-            // 空间音效播报(WebSocket未连接时使用本地TTS)
-            if (!connected) {
-              spatialAudio.speakDirectional(speakText, dir, { urgent: isUrgent });
-            }
-
-            // 分级震动反馈 + 障碍物接近急促警报
-            if (navigator.vibrate) {
-              if (isUrgent || (hasCrosswalk && trafficLight === 'red')) {
-                navigator.vibrate([300, 80, 300, 80, 300, 80, 500]);
+              // 显示文本
+              let displayText = '';
+              if (hasCrosswalk && trafficLight !== 'none') {
+                displayText = `🚦 ${speakText}`;
               } else if (hasObstacle) {
+                displayText = isUrgent ? `🚨 ${speakText}` : `⚠️ ${speakText}`;
+              } else {
+                displayText = `🛡️ ${speakText}`;
+              }
+
+              setSubtitle(displayText, isUrgent);
+              addMessage('assistant', speakText);
+
+              // 方向提取用于空间音效
+              const dirMatch = speakText.match(/(左前方|正前方|右前方|左方|右方)/);
+              const dir = dirMatch ? dirMatch[1] : '正前方';
+
+              // 空间音效播报(WebSocket未连接时使用本地TTS)
+              if (!connected) {
+                spatialAudio.speakDirectional(speakText, dir, { urgent: isUrgent });
+              }
+
+              // 分级震动反馈 + 障碍物接近急促警报
+              if (navigator.vibrate) {
+                if (isUrgent || (hasCrosswalk && trafficLight === 'red')) {
+                  navigator.vibrate([300, 80, 300, 80, 300, 80, 500]);
+                } else if (hasObstacle) {
                 // 有障碍物: 根据距离分级
                 const minDist = objs.length > 0 ? Math.min(...objs.filter(o => o.distance != null).map(o => o.distance)) : 3;
                 if (minDist <= 1) {
@@ -1025,6 +1065,7 @@ function AppMobileUser() {
                   navigator.vibrate(80);
                 }
               }
+            }
             }
           }
           // ===== 红绿灯模式(原有逻辑): safety agent返回的JSON =====
@@ -1534,8 +1575,11 @@ function AppMobileUser() {
       localStorage.setItem('ark_first_use_done', '1');
       setFirstUse(false);
       startCamera();
-      setTimeout(() => startWakeListener(), 1000);
-      speak('欢迎使用感知方舟，我是您的智能助手小舟。说出小舟小舟即可唤醒我。', { rate: 0.9 });
+      // 等TTS播报结束后再启动ASR,避免麦克风音频冲突导致唤醒词监听启动失败
+      speak('欢迎使用感知方舟，我是您的智能助手小舟。说出小舟小舟即可唤醒我。', {
+        rate: 0.9,
+        onEnd: () => { setTimeout(() => startWakeListener(), 500); }
+      });
     }
   }, [tutorialStep, startCamera, startWakeListener, speak]);
 
@@ -2058,7 +2102,7 @@ function AppMobileUser() {
                 {tutorialStep === 4 ? '开始使用' : '下一步'}
               </button>
             </div>
-            <button className="am-tutorial-skip" onClick={() => { completeTutorial(); startCamera(); setTimeout(() => startWakeListener(), 1000); speak('已跳过教程，欢迎使用感知方舟。说出小舟小舟即可唤醒我。', { rate: 0.9 }); }} aria-label="跳过教程">跳过</button>
+            <button className="am-tutorial-skip" onClick={() => { completeTutorial(); startCamera(); speak('已跳过教程，欢迎使用感知方舟。说出小舟小舟即可唤醒我。', { rate: 0.9, onEnd: () => { setTimeout(() => startWakeListener(), 500); } }); }} aria-label="跳过教程">跳过</button>
           </div>
         </div>
       )}

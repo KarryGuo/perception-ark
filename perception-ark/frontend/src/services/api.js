@@ -254,6 +254,12 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(data)
     }),
+  familyUpdateUser: (id, data) =>
+    request(`/family/users/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    }),
   familyDeleteUser: (id) =>
     request(`/family/users/${id}`, { method: 'DELETE' }),
   // 管理端新增

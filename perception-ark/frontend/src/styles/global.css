@@ -498,6 +498,15 @@ input { font-family: inherit; }
   font-size: 1.1rem; padding: 8px; min-width: 40px; min-height: 40px;
 }
 .am-fam-user-del:active { color: var(--bio-magenta); transform: scale(.9); }
+.am-fam-user-actions { display: flex; gap: 4px; align-items: center; }
+.am-fam-user-edit {
+  background: rgba(0,255,163,0.08); border: 1px solid rgba(0,255,163,0.2);
+  cursor: pointer; color: var(--bio-emerald); border-radius: 6px;
+  font-size: .75rem; padding: 6px 12px; min-height: 36px; font-family: inherit;
+  transition: all .2s;
+}
+.am-fam-user-edit:active { background: rgba(0,255,163,0.2); transform: scale(.92); }
+.am-fam-form-title { font-size: .95rem; font-weight: 600; color: var(--ink); margin-bottom: 10px; }
 .am-fam-user-phone { font-size: .82rem; color: var(--bio-cyan); font-family: 'Space Grotesk', monospace; margin-top: 8px; }
 .am-fam-user-bound { font-size: .8rem; color: var(--bio-emerald); margin-top: 6px; }
 .am-fam-user-emergency { font-size: .8rem; color: var(--ink-soft); margin-top: 6px; }

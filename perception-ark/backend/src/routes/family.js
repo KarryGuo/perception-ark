@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getSosEvents, getMemoryStats, getAllRoutes, searchFaces, getAllUsers, addUser, deleteUser, getAllHabits, findUserAccountByPhone } from '../services/memory-store.js';
+import { getSosEvents, getMemoryStats, getAllRoutes, searchFaces, getAllUsers, addUser, deleteUser, updateUser, getAllHabits, findUserAccountByPhone } from '../services/memory-store.js';
 import { getContext, getStats } from '../agents/orchestrator.js';
 import { log } from '../utils/logger.js';
 
@@ -50,6 +50,33 @@ router.post('/users', (req, res) => {
 router.delete('/users/:id', (req, res) => {
   const changes = deleteUser(parseInt(req.params.id));
   res.json({ success: true, changes });
+});
+
+// 编辑使用者信息
+router.put('/users/:id', (req, res) => {
+  const { name, age, relation, phone, emergency_contact, emergency_phone, health_notes, bind_phone } = req.body;
+  if (!name) return res.status(400).json({ error: '请填写姓名' });
+
+  let bound_account_id = undefined;
+  // 如果填写了视障账号手机号,查找并绑定(空字符串表示解绑)
+  if (bind_phone !== undefined) {
+    if (bind_phone && bind_phone.trim()) {
+      const account = findUserAccountByPhone(bind_phone.trim());
+      if (!account) {
+        return res.status(404).json({ error: `未找到手机号为"${bind_phone}"的视障用户,请确认手机号正确且该账号身份为使用者` });
+      }
+      bound_account_id = account.id;
+      log('FAMILY', `家属编辑绑定视障账号: ${bind_phone} (account_id=${account.id})`);
+    } else {
+      bound_account_id = null; // 解绑
+    }
+  }
+
+  const changes = updateUser(parseInt(req.params.id), {
+    name, age: age !== undefined ? (age ? parseInt(age) : null) : undefined,
+    relation, phone, emergency_contact, emergency_phone, health_notes, bound_account_id
+  });
+  res.json({ success: true, changes, bound_account_id });
 });
 
 // 家属端首页数据 - 实时状态总览
