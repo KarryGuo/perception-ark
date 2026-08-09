@@ -134,7 +134,8 @@ export default function Login() {
     setLoading(true);
     setManualLogin(true);
     try {
-      const loginUser = await loginBySms(smsPhone.trim(), smsCode.trim());
+      // 传递smsRole给后端: 未注册时按所选身份自动注册(user/family)
+      const loginUser = await loginBySms(smsPhone.trim(), smsCode.trim(), smsRole);
       // 手机验证码登录仅限用户登录(管理员不能通过验证码登录)
       if (loginUser.role === 'admin') {
         logout();
@@ -142,12 +143,13 @@ export default function Login() {
         return;
       }
       // 身份校验: 视障人员入口仅允许user角色,家属入口仅允许family角色
+      // (未注册的手机号已由后端按smsRole自动注册,此处不会因角色不匹配而报错)
       if (smsRole === 'user' && loginUser.role === 'family') {
         logout();
         setError('该手机号为家属账号,请选择"家属"身份登录');
         return;
       }
-      if (smsRole === 'family' && loginUser.role !== 'family') {
+      if (smsRole === 'family' && loginUser.role === 'user') {
         logout();
         setError('该手机号为视障人员账号,请选择"视障人员"身份登录');
         return;

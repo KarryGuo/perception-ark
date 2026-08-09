@@ -52,9 +52,9 @@ export function AuthProvider({ children }) {
     throw new Error(res.error || '登录失败');
   }, []);
 
-  // 手机验证码登录(无需密码,通过验证码登录)
-  const loginBySms = useCallback(async (phone, code) => {
-    const res = await api.loginBySms(phone, code);
+  // 手机验证码登录(无需密码,通过验证码登录;role用于未注册时自动注册的身份)
+  const loginBySms = useCallback(async (phone, code, role) => {
+    const res = await api.loginBySms(phone, code, role);
     if (res.success) {
       localStorage.setItem('ark_token', res.token);
       setUser(res.user);

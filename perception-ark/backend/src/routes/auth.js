@@ -168,11 +168,13 @@ router.post('/send-sms', (req, res) => {
 /**
  * 手机验证码登录
  * POST /api/auth/login-sms
- * body: { phone, code }
+ * body: { phone, code, role?: 'user'|'family' }
+ * 说明: 账号已存在则直接登录;账号不存在时按 role 自动注册(默认user,家属身份注册为family)
+ *       字段信息(昵称/密保等)登录后可在设置中完善
  */
 router.post('/login-sms', async (req, res) => {
   try {
-    const { phone, code } = req.body;
+    const { phone, code, role } = req.body;
     if (!phone || !/^1[3-9]\d{9}$/.test(phone.trim())) {
       return res.status(400).json({ success: false, error: '手机号格式不正确' });
     }
@@ -182,6 +184,8 @@ router.post('/login-sms', async (req, res) => {
 
     const phoneTrim = phone.trim();
     const codeTrim = String(code).trim();
+    // 自动注册角色: 仅允许 user/family,默认 user
+    const accountRole = role === 'family' ? 'family' : 'user';
 
     // 校验验证码
     const stored = smsCodes.get(phoneTrim);
@@ -209,7 +213,7 @@ router.post('/login-sms', async (req, res) => {
     // 查找账号
     let account = getAccountByPhone(phoneTrim);
 
-    // 账号不存在时自动注册(用户名=用户+手机后4位,登录后可在设置中完善信息)
+    // 账号不存在时自动注册(用户名=用户+手机后4位,按所选身份创建,登录后可在设置中完善信息)
     if (!account) {
       const phoneSuffix = phoneTrim.slice(-4);
       const randomName = `用户${phoneSuffix}`;
@@ -221,12 +225,12 @@ router.post('/login-sms', async (req, res) => {
       const randomPwd = await bcrypt.hash(Math.random().toString(36).slice(-8), 10);
       const defaultQuestion = '您的出生城市是?';
       const defaultAnswer = bcrypt.hashSync('未知', 10);
-      const accountId = createAccount(finalName, randomPwd, 'user', null, phoneTrim, defaultQuestion, defaultAnswer);
+      const accountId = createAccount(finalName, randomPwd, accountRole, null, phoneTrim, defaultQuestion, defaultAnswer);
       if (!accountId) {
         return res.status(500).json({ success: false, error: '自动注册失败,请稍后重试' });
       }
       account = getAccountById(accountId);
-      log('AUTH', `手机验证码登录自动注册新用户: ${finalName} (${phoneTrim})`);
+      log('AUTH', `手机验证码登录自动注册新${accountRole === 'family' ? '家属' : '用户'}: ${finalName} (${phoneTrim})`);
     }
 
     if (account.status === 'banned') {

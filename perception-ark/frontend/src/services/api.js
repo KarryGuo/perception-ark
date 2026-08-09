@@ -47,12 +47,12 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ phone })
     }),
-  // 手机验证码登录: 验证码登录
-  loginBySms: (phone, code) =>
+  // 手机验证码登录: 验证码登录(role用于未注册时自动注册的身份:user/family)
+  loginBySms: (phone, code, role) =>
     request('/auth/login-sms', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phone, code })
+      body: JSON.stringify({ phone, code, role })
     }),
   me: () => request('/auth/me'),
   // 找回密码: 获取密保问题
