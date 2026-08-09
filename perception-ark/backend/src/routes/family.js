@@ -1,6 +1,7 @@
 import { Router } from 'express';
-import { getSosEvents, getMemoryStats, getAllRoutes, searchFaces, getAllUsers, addUser, deleteUser, updateUser, getAllHabits, findUserAccountByPhone } from '../services/memory-store.js';
+import { getSosEvents, getMemoryStats, getAllRoutes, searchFaces, getAllUsers, addUser, deleteUser, updateUser, getAllHabits, findUserAccountByPhone, syncFamilyBindingFromFamilySide, getAccountById } from '../services/memory-store.js';
 import { getContext, getStats } from '../agents/orchestrator.js';
+import { authRequired } from '../services/auth.js';
 import { log } from '../utils/logger.js';
 
 const router = Router();
@@ -27,7 +28,7 @@ router.get('/users', (req, res) => {
 });
 
 // 添加使用者(绑定信息) - 支持通过 bind_phone 手机号绑定视障账号
-router.post('/users', (req, res) => {
+router.post('/users', authRequired, (req, res) => {
   const { name, age, relation, phone, emergency_contact, emergency_phone, health_notes, bind_phone } = req.body;
   if (!name) return res.status(400).json({ error: '请填写姓名' });
 
@@ -36,10 +37,30 @@ router.post('/users', (req, res) => {
   if (bind_phone) {
     const account = findUserAccountByPhone(bind_phone.trim());
     if (!account) {
-      return res.status(404).json({ error: `未找到手机号为"${bind_phone}"的视障用户,请确认手机号正确且该账号身份为使用者` });
+      return res.status(404).json({ error: `该账号未注册（手机号${bind_phone}），请确认手机号正确且该账号身份为使用者` });
     }
     bound_account_id = account.id;
     log('FAMILY', `家属通过手机号绑定视障账号: ${bind_phone} (account_id=${account.id})`);
+
+    // 反向同步: 在视障端的family_bindings表插入active记录
+    // 确保视障用户登录后SOS和设置里能看到被家属绑定的信息
+    if (req.user?.id) {
+      const familyAccount = getAccountById(req.user.id);
+      if (familyAccount?.phone) {
+        const syncResult = syncFamilyBindingFromFamilySide(
+          account.id,           // 视障用户账号ID
+          req.user.id,          // 家属账号ID
+          familyAccount.phone,  // 家属手机号
+          familyAccount.nickname || familyAccount.username, // 家属称呼
+          relation              // 关系(来自使用者表单)
+        );
+        if (syncResult.success) {
+          log('FAMILY', `反向同步家属绑定成功: 视障账号${account.id} ← 家属${req.user.id}`);
+        } else {
+          log('FAMILY', `反向同步家属绑定失败: ${syncResult.error}`, 'warn');
+        }
+      }
+    }
   }
 
   const id = addUser({ name, age, relation, phone, emergency_contact, emergency_phone, health_notes, bound_account_id });
@@ -53,7 +74,7 @@ router.delete('/users/:id', (req, res) => {
 });
 
 // 编辑使用者信息
-router.put('/users/:id', (req, res) => {
+router.put('/users/:id', authRequired, (req, res) => {
   const { name, age, relation, phone, emergency_contact, emergency_phone, health_notes, bind_phone } = req.body;
   if (!name) return res.status(400).json({ error: '请填写姓名' });
 
@@ -63,10 +84,29 @@ router.put('/users/:id', (req, res) => {
     if (bind_phone && bind_phone.trim()) {
       const account = findUserAccountByPhone(bind_phone.trim());
       if (!account) {
-        return res.status(404).json({ error: `未找到手机号为"${bind_phone}"的视障用户,请确认手机号正确且该账号身份为使用者` });
+        return res.status(404).json({ error: `该账号未注册（手机号${bind_phone}），请确认手机号正确且该账号身份为使用者` });
       }
       bound_account_id = account.id;
       log('FAMILY', `家属编辑绑定视障账号: ${bind_phone} (account_id=${account.id})`);
+
+      // 反向同步: 在视障端的family_bindings表插入active记录
+      if (req.user?.id) {
+        const familyAccount = getAccountById(req.user.id);
+        if (familyAccount?.phone) {
+          const syncResult = syncFamilyBindingFromFamilySide(
+            account.id,
+            req.user.id,
+            familyAccount.phone,
+            familyAccount.nickname || familyAccount.username,
+            relation
+          );
+          if (syncResult.success) {
+            log('FAMILY', `编辑反向同步家属绑定成功: 视障账号${account.id} ← 家属${req.user.id}`);
+          } else {
+            log('FAMILY', `编辑反向同步家属绑定失败: ${syncResult.error}`, 'warn');
+          }
+        }
+      }
     } else {
       bound_account_id = null; // 解绑
     }

@@ -32,3 +32,13 @@ Thumbs.db
 # 部署缓存
 .vercel
 .render
+
+# Capacitor/Android 构建产物(保留源码,排除编译输出)
+android/app/build/
+android/.gradle/
+android/captures/
+android/local.properties
+android/app/release/
+*.apk
+*.aab
+*.keystore

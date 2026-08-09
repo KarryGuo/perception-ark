@@ -454,6 +454,79 @@ export function removeFamilyBinding(bindingId, userAccountId) {
   }
 }
 
+/**
+ * 获取视障用户的已绑定(active)家属,供SOS页面紧急联系人使用
+ * 关联accounts表获取家属最新nickname,确保信息同步
+ * @param {number} userAccountId
+ * @returns {array} [{ id, name, phone, relation, bindingId, status }]
+ */
+export function getActiveFamilyBindingsAsContacts(userAccountId) {
+  if (!db) return [];
+  try {
+    const rows = db.prepare(`
+      SELECT fb.id AS bindingId, fb.family_phone, fb.family_name, fb.relation, fb.status,
+             a.id AS account_id, a.nickname, a.username, a.role
+      FROM family_bindings fb
+      LEFT JOIN accounts a ON fb.family_account_id = a.id
+      WHERE fb.user_account_id = ? AND fb.status = 'active'
+      ORDER BY fb.bound_at DESC, fb.invited_at DESC
+    `).all(userAccountId);
+    return rows.map(r => ({
+      id: r.bindingId,
+      name: r.family_name || r.nickname || r.username || r.family_phone,
+      phone: r.family_phone,
+      relation: r.relation || '家属',
+      bindingId: r.bindingId,
+      status: r.status
+    }));
+  } catch (err) {
+    log('A05', `获取SOS家属联系人失败: ${err.message}`, 'error');
+    return [];
+  }
+}
+
+/**
+ * 家属端添加/编辑使用者时,反向同步到视障端的family_bindings表
+ * 确保视障用户登录后SOS页面和设置页能看到被家属绑定的信息
+ * @param {number} userAccountId 视障用户账号ID
+ * @param {number} familyAccountId 家属账号ID
+ * @param {string} familyPhone 家属手机号
+ * @param {string} familyName 家属称呼(可选)
+ * @param {string} relation 关系(可选)
+ * @returns {object} { success, bindingId, status }
+ */
+export function syncFamilyBindingFromFamilySide(userAccountId, familyAccountId, familyPhone, familyName, relation) {
+  if (!db) return { success: false, error: '数据库未初始化' };
+  if (!userAccountId || !familyAccountId || !familyPhone) {
+    return { success: false, error: '参数不完整' };
+  }
+  const phone = familyPhone.trim();
+  try {
+    // 检查是否已存在绑定记录(同一视障用户+同一家属手机号)
+    const existing = db.prepare('SELECT * FROM family_bindings WHERE user_account_id = ? AND family_phone = ?').get(userAccountId, phone);
+    const now = new Date().toISOString();
+    if (existing) {
+      // 已存在: 升级为active状态(家属端已绑定说明双方都已注册)
+      db.prepare(`
+        UPDATE family_bindings
+        SET family_account_id = ?, family_name = COALESCE(?, family_name), relation = COALESCE(?, relation),
+            status = 'active', bound_at = COALESCE(bound_at, ?)
+        WHERE id = ?
+      `).run(familyAccountId, familyName || null, relation || null, now, existing.id);
+      return { success: true, bindingId: existing.id, status: 'active', updated: true };
+    }
+    // 不存在: 新增active绑定
+    const result = db.prepare(`
+      INSERT INTO family_bindings (user_account_id, family_account_id, family_phone, family_name, relation, status, invited_at, bound_at)
+      VALUES (?, ?, ?, ?, ?, 'active', ?, ?)
+    `).run(userAccountId, familyAccountId, phone, familyName || null, relation || null, now, now);
+    return { success: true, bindingId: result.lastInsertRowid, status: 'active' };
+  } catch (err) {
+    log('A05', `反向同步家属绑定失败: ${err.message}`, 'error');
+    return { success: false, error: err.message };
+  }
+}
+
 // ===== 管理员功能 =====
 /**
  * 获取所有账号列表(管理员用,过滤password_hash)

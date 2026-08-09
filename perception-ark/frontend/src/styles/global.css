@@ -484,6 +484,13 @@ input { font-family: inherit; }
 }
 .am-fam-submit-btn:active { transform: scale(.97); }
 
+/* 表单错误提示(如:该账号未注册) */
+.am-fam-form-error {
+  margin-top: 6px; padding: 10px 12px; border-radius: 8px;
+  background: rgba(255, 77, 109, 0.12); border: 1px solid rgba(255, 77, 109, 0.4);
+  color: #ff6b8a; font-size: .9rem; line-height: 1.4; text-align: center;
+}
+
 /* 使用者卡片 */
 .am-fam-user-list { display: flex; flex-direction: column; gap: 10px; }
 .am-fam-user-card {

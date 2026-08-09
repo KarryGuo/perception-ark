@@ -498,9 +498,18 @@ function AppMobileUser() {
   }, [asr.transcript]);
 
   useEffect(() => {
-    api.familyContacts().then(r => setContacts(r.contacts || [])).catch(() => {});
+    // 视障端SOS联系人: 从family_bindings表读取用户在设置中绑定的active家属
+    // 确保显示的是视障用户自己绑定的家属,而非家属端users表数据
+    api.getFamilyContacts().then(r => setContacts(r.contacts || [])).catch(() => {});
     api.familyUsers().then(r => setFavorites(r.users || [])).catch(() => {});
   }, []);
+
+  // 切换到SOS页时刷新紧急联系人(用户可能在设置页刚绑定了新家属)
+  useEffect(() => {
+    if (activeTab === 'sos') {
+      api.getFamilyContacts().then(r => setContacts(r.contacts || [])).catch(() => {});
+    }
+  }, [activeTab]);
 
   const switchTab = useCallback((tab) => {
     setActiveTab(tab);
@@ -1843,14 +1852,14 @@ function AppMobileUser() {
               {contacts.length === 0 ? (
                 <div className="am-contacts-empty">
                   <div>暂无联系人</div>
-                  <div className="hint">请在Web端家属管理中添加</div>
+                  <div className="hint">请在设置-SOS与家属绑定中添加家属</div>
                 </div>
               ) : (
                 contacts.map((c, i) => (
-                  <div key={i} className="am-contact-item">
+                  <div key={c.id || i} className="am-contact-item">
                     <div className="am-contact-info">
                       <div className="name">{c.name}</div>
-                      <div className="relation">{c.relation || '紧急联系人'}</div>
+                      <div className="relation">{c.relation || '家属'}{c.phone ? ` · ${c.phone}` : ''}</div>
                     </div>
                     <a href={`tel:${c.phone}`} className="am-contact-call">📞 呼叫</a>
                   </div>

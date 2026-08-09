@@ -113,6 +113,8 @@ export const api = {
     }),
   // 获取家属绑定列表
   getFamilyList: () => request('/auth/family/list'),
+  // 获取视障用户SOS紧急联系人(从family_bindings表读取active家属)
+  getFamilyContacts: () => request('/auth/family/contacts'),
   // 解绑家属
   unbindFamily: (bindingId) =>
     request(`/auth/family/unbind/${bindingId}`, { method: 'DELETE' }),

@@ -31,6 +31,7 @@ export default function Family() {
   });
   const [liveAlert, setLiveAlert] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [formError, setFormError] = useState(null); // 表单错误提示(如:该账号未注册)
 
   const loadData = useCallback(async (silent = false) => {
     if (silent) setRefreshing(true);
@@ -89,6 +90,7 @@ export default function Family() {
   const handleAddUser = useCallback(async (e) => {
     e.preventDefault();
     if (!formData.name.trim()) return;
+    setFormError(null); // 清除上次的错误提示
     try {
       const payload = {
         ...formData,
@@ -106,7 +108,13 @@ export default function Family() {
       setEditingUserId(null);
       loadUsers();
     } catch (err) {
-      alert(`${editingUserId ? '编辑' : '添加'}失败: ` + err.message);
+      // 捕获后端返回的错误,特别是"该账号未注册"提示
+      const errMsg = err.message || '';
+      if (errMsg.includes('未注册') || errMsg.includes('该账号')) {
+        setFormError(`该账号未注册,请确认手机号正确且对方已注册视障人员账号`);
+      } else {
+        setFormError(`${editingUserId ? '编辑' : '添加'}失败: ${errMsg}`);
+      }
     }
   }, [formData, editingUserId, loadUsers]);
 
@@ -130,6 +138,7 @@ export default function Family() {
   const handleCancelForm = useCallback(() => {
     setShowAddForm(false);
     setEditingUserId(null);
+    setFormError(null);
     setFormData({ name: '', age: '', relation: '', phone: '', emergency_contact: '', emergency_phone: '', health_notes: '', bind_phone: '' });
   }, []);
 
@@ -427,7 +436,10 @@ export default function Family() {
                   <FamFormInput placeholder="紧急电话" value={formData.emergency_phone} onChange={v => setFormData({ ...formData, emergency_phone: v })} />
                 </div>
                 <FamFormInput placeholder="健康备注(如:高血压)" value={formData.health_notes} onChange={v => setFormData({ ...formData, health_notes: v })} />
-                <FamFormInput placeholder="绑定视障人员手机号" value={formData.bind_phone} onChange={v => setFormData({ ...formData, bind_phone: v })} />
+                <FamFormInput placeholder="绑定视障人员手机号(未注册将提示)" value={formData.bind_phone} onChange={v => setFormData({ ...formData, bind_phone: v })} />
+                {formError && (
+                  <div className="am-fam-form-error" role="alert">{formError}</div>
+                )}
                 <button type="submit" className="am-fam-submit-btn">{editingUserId ? '保存修改' : '确认绑定'}</button>
               </form>
             )}

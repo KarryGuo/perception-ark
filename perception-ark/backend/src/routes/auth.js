@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
-import { createAccount, getAccountByUsername, getAccountById, getAccountByPhone, updateAccountProfile, deleteAccount, getSecurityQuestion, verifySecurityAnswer, resetPassword, updateSecurity, addFamilyBinding, getFamilyBindings, removeFamilyBinding } from '../services/memory-store.js';
+import { createAccount, getAccountByUsername, getAccountById, getAccountByPhone, updateAccountProfile, deleteAccount, getSecurityQuestion, verifySecurityAnswer, resetPassword, updateSecurity, addFamilyBinding, getFamilyBindings, removeFamilyBinding, getActiveFamilyBindingsAsContacts } from '../services/memory-store.js';
 import { generateToken, authRequired } from '../services/auth.js';
 import { sendFamilyInviteSms } from '../services/sms.js';
 import { log } from '../utils/logger.js';
@@ -497,8 +497,9 @@ router.post('/family/bind', authRequired, async (req, res) => {
     }
     res.json({
       success: true,
-      message: result.status === 'active' ? '家属绑定成功' : '已发送短信邀请家属注册,对方注册后自动绑定',
+      message: result.status === 'active' ? '家属绑定成功' : '该用户还没有注册,已发送短信邀请,对方注册后将自动完成绑定',
       status: result.status,
+      not_registered: result.status === 'pending',
       familyAccount: result.familyAccount,
       smsSent
     });
@@ -516,6 +517,20 @@ router.get('/family/list', authRequired, (req, res) => {
   try {
     const list = getFamilyBindings(req.user.id);
     res.json({ success: true, list });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * 获取视障用户SOS紧急联系人(从family_bindings表读取active家属)
+ * GET /api/auth/family/contacts
+ * 供视障端SOS页面使用,确保显示用户在设置中绑定的家属
+ */
+router.get('/family/contacts', authRequired, (req, res) => {
+  try {
+    const contacts = getActiveFamilyBindingsAsContacts(req.user.id);
+    res.json({ success: true, contacts });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }

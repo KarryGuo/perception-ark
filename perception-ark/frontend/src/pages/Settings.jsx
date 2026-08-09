@@ -93,11 +93,20 @@ export default function Settings() {
     try {
       const res = await api.bindFamily(familyPhone.trim(), familyName.trim(), familyRelation.trim());
       if (res?.success) {
-        // 语音告知用户绑定结果: 已注册直接绑定 / 未注册已发短信邀请
-        const speakText = res.status === 'active'
-          ? '家属绑定成功'
-          : '已通过短信通知该账号注册家属端,对方注册后将自动完成绑定';
-        setFamilyMsg({ type: 'ok', text: res.message || speakText });
+        // 区分三种状态: 已注册直接绑定 / 未注册(发短信邀请) / 其他
+        let speakText, msgType;
+        if (res.status === 'active') {
+          speakText = '家属绑定成功';
+          msgType = 'ok';
+        } else if (res.not_registered) {
+          // 未注册: 红字提示该用户还没有注册,但同时已发送邀请
+          speakText = '该用户还没有注册,已发送短信邀请,对方注册后将自动完成绑定';
+          msgType = 'err';
+        } else {
+          speakText = '已发送短信邀请,对方注册后将自动完成绑定';
+          msgType = 'ok';
+        }
+        setFamilyMsg({ type: msgType, text: res.message || speakText });
         speak(speakText);
         setFamilyPhone(''); setFamilyName(''); setFamilyRelation('');
         loadFamilyList();
