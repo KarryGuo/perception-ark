@@ -513,6 +513,39 @@ function AppMobileUser() {
     }
   }, [activeTab]);
 
+  // 切换到导航页时主动触发精确定位(确保实时展示用户当前位置)
+  // 解决: 之前导航页只被动使用全局location,可能仍是IP定位的粗略结果
+  const navLocatingRef = useRef(false); // 防止重复触发
+  const latestLocationRef = useRef(null); // 跟踪最新location(避免闭包陈旧)
+  useEffect(() => { latestLocationRef.current = location; }, [location]);
+  useEffect(() => {
+    if (activeTab !== 'navigate') return;
+    if (navLocatingRef.current) return;
+    navLocatingRef.current = true;
+    showToast('正在定位当前位置...');
+    forceLocate().then(async (pos) => {
+      navLocatingRef.current = false;
+      if (pos) {
+        // 等待逆地理编码更新到 location state(最多等1.5秒)
+        let addr = latestLocationRef.current?.address || '';
+        if (!addr) {
+          for (let i = 0; i < 6; i++) {
+            await new Promise(r => setTimeout(r, 250));
+            if (latestLocationRef.current?.address) { addr = latestLocationRef.current.address; break; }
+          }
+        }
+        const speakText = addr
+          ? `已定位到当前位置,${addr}`
+          : `已定位到当前位置,经纬度${pos.lat.toFixed(5)},${pos.lng.toFixed(5)}`;
+        speak(speakText);
+        showToast('已定位到最新位置');
+      } else {
+        speak('定位失败,请检查GPS或网络,可点击左上角定位按钮重试');
+        showToast('定位失败,请点击定位按钮重试');
+      }
+    });
+  }, [activeTab, forceLocate, speak, showToast]);
+
   const switchTab = useCallback((tab) => {
     setActiveTab(tab);
     activeTabRef.current = tab;
