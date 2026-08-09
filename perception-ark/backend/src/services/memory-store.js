@@ -181,6 +181,11 @@ export function initMemoryStore() {
       db.exec("ALTER TABLE users ADD COLUMN bound_account_id INTEGER");
       log('A05', 'users 表已补列 bound_account_id');
     }
+    // 补列 family_account_id: 记录是哪个家属账号添加的,用于数据隔离
+    if (!userCols.includes('family_account_id')) {
+      db.exec("ALTER TABLE users ADD COLUMN family_account_id INTEGER");
+      log('A05', 'users 表已补列 family_account_id');
+    }
   } catch (e) {
     log('A05', `users 表补列检查失败: ${e.message}`, 'warn');
   }
@@ -338,16 +343,21 @@ export function deleteAccount(id) {
 // ===== 使用者管理(家属端绑定) =====
 export function addUser(user) {
   if (!db) return null;
-  const { name, age, relation, phone, emergency_contact, emergency_phone, health_notes, bound_account_id } = user;
+  const { name, age, relation, phone, emergency_contact, emergency_phone, health_notes, bound_account_id, family_account_id } = user;
   const result = db.prepare(`
-    INSERT INTO users (name, age, relation, phone, emergency_contact, emergency_phone, health_notes, bound_at, bound_account_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(name, age || null, relation || '', phone || '', emergency_contact || '', emergency_phone || '', health_notes || '', new Date().toISOString(), bound_account_id || null);
+    INSERT INTO users (name, age, relation, phone, emergency_contact, emergency_phone, health_notes, bound_at, bound_account_id, family_account_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(name, age || null, relation || '', phone || '', emergency_contact || '', emergency_phone || '', health_notes || '', new Date().toISOString(), bound_account_id || null, family_account_id || null);
   return result.lastInsertRowid;
 }
 
-export function getAllUsers() {
+// 按家属账号过滤获取使用者列表(数据隔离: 每个家属只能看到自己添加的使用者)
+export function getAllUsers(familyAccountId) {
   if (!db) return [];
+  if (familyAccountId) {
+    return db.prepare('SELECT * FROM users WHERE family_account_id = ? ORDER BY bound_at DESC').all(familyAccountId);
+  }
+  // 未传familyAccountId时返回全部(向后兼容,仅用于管理后台等场景)
   return db.prepare('SELECT * FROM users ORDER BY bound_at DESC').all();
 }
 

@@ -25,7 +25,7 @@ function privacyFilterLocation(location) {
 // 使用者列表(家属绑定的被守护人)
 // 合并两个来源: 1.家属主动添加的(users表) 2.视障端邀请自动建立的(family_bindings反向查询)
 router.get('/users', authRequired, (req, res) => {
-  const manualUsers = getAllUsers();
+  const manualUsers = getAllUsers(req.user.id);
   // 反向查询: 通过family_bindings自动绑定的视障人员(视障端发起邀请,家属注册后自动激活)
   const invitedUsers = getFamilyBoundVisuallyImpairedUsers(req.user.id);
   // 合并去重(以bound_account_id为键)
@@ -50,7 +50,7 @@ router.post('/users', authRequired, (req, res) => {
     log('FAMILY', `家属通过手机号绑定视障账号: ${bind_phone} (account_id=${account.id})`);
   }
 
-  const id = addUser({ name, age, relation, phone, emergency_contact, emergency_phone, health_notes, bound_account_id });
+  const id = addUser({ name, age, relation, phone, emergency_contact, emergency_phone, health_notes, bound_account_id, family_account_id: req.user.id });
 
   // 反向同步到视障端family_bindings表(新机制: pending 等待视障确认 / autoActivated 双方互邀请直接 active)
   let bindStatus = 'none';
@@ -204,7 +204,7 @@ router.get('/overview', authRequired, (req, res) => {
   const context = getContext();
   const stats = getStats();
   const sosEvents = getSosEvents(5);
-  const manualUsers = getAllUsers();
+  const manualUsers = getAllUsers(req.user.id);
   const invitedUsers = getFamilyBoundVisuallyImpairedUsers(req.user.id);
   // 合并去重
   const seenAccountIds = new Set(manualUsers.filter(u => u.bound_account_id).map(u => u.bound_account_id));
@@ -255,8 +255,8 @@ router.get('/sos', (req, res) => {
 });
 
 // 紧急联系人 - 从已绑定的使用者信息中提取
-router.get('/contacts', (req, res) => {
-  const users = getAllUsers();
+router.get('/contacts', authRequired, (req, res) => {
+  const users = getAllUsers(req.user.id);
   const contacts = users
     .filter(u => u.emergency_contact && u.emergency_phone)
     .map((u, i) => ({
@@ -299,7 +299,7 @@ router.get('/dashboard', authRequired, (req, res) => {
   const context = getContext();
   const stats = getStats();
   const memStats = getMemoryStats();
-  const manualUsers = getAllUsers();
+  const manualUsers = getAllUsers(req.user.id);
   // 反向查询: 通过family_bindings自动绑定的视障人员(视障端发起邀请,家属注册后自动激活)
   const invitedUsers = getFamilyBoundVisuallyImpairedUsers(req.user.id);
   // 合并去重(以bound_account_id为键),与/overview和/users接口保持一致
