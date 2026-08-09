@@ -83,7 +83,10 @@ function AppMobileUser() {
   const spatialAudio = useSpatialAudio();
   const asr = useSpeechRecognition();
   const camera = useCamera();
-  const { location } = useGeolocation();
+  const { location, forceLocate } = useGeolocation();
+  // 最新位置ref(用于导航/POI搜索前强制刷新,避免闭包陈旧)
+  const locationRef = useRef(null);
+  useEffect(() => { locationRef.current = location; }, [location]);
 
   const messagesEndRef = useRef(null);
   const isPressingRef = useRef(null);
@@ -193,14 +196,25 @@ function AppMobileUser() {
         const text = interim.replace(/\s/g, '');
         const detected = WAKE_WORDS.find(w => text.includes(w));
         if (detected) {
+          // 检测到唤醒词: 立即停止唤醒词监听 + 抑制自动重启(防止onend抢占麦克风)
           try { recognition.stop(); } catch(ex) {}
           wakeListeningRef.current = false;
+          suppressWakeRef.current = true; // 关键: 阻止onend回调自动重启唤醒词
           setWakeDialogue(true);
           spatialAudio.beep('正前方', 0.12, 880);
+          showToast('🎤 我在，请说...');
+          wakePendingRef.current = '';
+          // TTS播报"我在请说",onEnd后延迟1500ms启动命令ASR(等TTS尾音完全消散,避免回声)
           speak('我在，请说', { rate: 1.05, onEnd: () => {
             setTimeout(() => {
               const CmdRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-              if (!CmdRec) return;
+              if (!CmdRec) {
+                // 不支持命令识别: 直接恢复唤醒词监听
+                suppressWakeRef.current = false;
+                setWakeDialogue(false);
+                wakeStartRef.current?.();
+                return;
+              }
               const cmdRec = new CmdRec();
               cmdRec.lang = 'zh-CN';
               cmdRec.continuous = false;
@@ -214,7 +228,11 @@ function AppMobileUser() {
                     gotResult = true;
                     handleVoiceInputRef.current?.(t);
                     setWakeDialogue(false);
-                    setTimeout(() => wakeStartRef.current?.(), 800);
+                    // 命令处理完再重启唤醒词监听
+                    setTimeout(() => {
+                      suppressWakeRef.current = false;
+                      wakeStartRef.current?.();
+                    }, 800);
                   } else {
                     setSubtitle(`👂 ${t}`);
                   }
@@ -222,25 +240,34 @@ function AppMobileUser() {
               };
               cmdRec.onerror = () => {
                 setWakeDialogue(false); setSubtitle('');
+                suppressWakeRef.current = false;
                 setTimeout(() => wakeStartRef.current?.(), 1000);
               };
               cmdRec.onend = () => {
                 if (!gotResult) {
                   setWakeDialogue(false); setSubtitle('');
+                  suppressWakeRef.current = false;
                   setTimeout(() => wakeStartRef.current?.(), 1000);
                 }
               };
-              cmdRec.start();
+              try {
+                cmdRec.start();
+              } catch (err) {
+                // 命令ASR启动失败: 恢复唤醒词监听
+                suppressWakeRef.current = false;
+                setWakeDialogue(false);
+                setTimeout(() => wakeStartRef.current?.(), 1000);
+                return;
+              }
               if (dialogueTimeoutRef.current) clearTimeout(dialogueTimeoutRef.current);
               dialogueTimeoutRef.current = setTimeout(() => {
                 try { cmdRec.abort(); } catch(ex) {}
                 setWakeDialogue(false); setSubtitle('');
+                suppressWakeRef.current = false;
                 wakeStartRef.current?.();
               }, 8000);
-            }, 300);
+            }, 1500); // 1500ms: 等TTS尾音完全消散再启动命令ASR,避免回声循环
           }});
-          showToast('🎤 我在，请说...');
-          wakePendingRef.current = '';
         }
       };
       recognition.onerror = () => {
@@ -251,6 +278,7 @@ function AppMobileUser() {
       };
       recognition.onend = () => {
         wakeListeningRef.current = false;
+        // 仅在未被抑制(非唤醒对话中)且唤醒开关开启时自动重启
         if (voiceWakeActive && !wakeDialogue && !suppressWakeRef.current) {
           setTimeout(() => { if (!suppressWakeRef.current) wakeStartRef.current?.(); }, 800);
         }
@@ -484,20 +512,31 @@ function AppMobileUser() {
     showToast(`已切换到${names[tab]}`);
   }, [showToast]);
 
-  // ===== 按住说话 =====
-  const handlePressStart = useCallback((e) => {
-    // 移动端touch事件后会合成mouse事件,阻止双触发
-    if (e && e.type === 'touchstart') { e.preventDefault(); }
-    // 防重入: 已在按住状态则跳过(合成mouse事件防护)
-    if (isPressingRef.current === true) return;
+  // ===== 点击说话(切换模式: 点击开始录入,再点击结束) =====
+  const handleToggleSpeak = useCallback(() => {
+    // 当前正在录音 → 结束录音
+    if (isPressingRef.current === true) {
+      isPressingRef.current = false;
+      if (asr.listening) asr.stop();
+      setTimeout(() => {
+        setSubtitle('');
+        // 恢复唤醒词监听
+        suppressWakeRef.current = false;
+        if (voiceWakeActive && !wakeListeningRef.current) {
+          wakeStartRef.current?.();
+        }
+      }, 1500);
+      return;
+    }
+    // 当前未录音 → 开始录入
     // 先停止TTS播报,防止麦克风拾取TTS音频形成回声循环
     stopSpeak();
     isProcessingRef.current = false;
     isPressingRef.current = true;
-    // 抑制唤醒词自动重启,避免与按住说话的ASR抢占麦克风
+    // 抑制唤醒词自动重启,避免与点击说话的ASR抢占麦克风
     suppressWakeRef.current = true;
     if (!asr.supported) { showToast('当前浏览器不支持语音识别'); return; }
-    // 暂停唤醒词监听,避免与按住说话的ASR冲突(浏览器只允许一个recognition实例)
+    // 暂停唤醒词监听,避免与ASR冲突(浏览器只允许一个recognition实例)
     if (wakeListeningRef.current) {
       try { wakeAsrRef.current?.abort(); } catch(e2) {}
       wakeListeningRef.current = false;
@@ -508,25 +547,8 @@ function AppMobileUser() {
         asr.start();
       }
     }, 200);
-    setSubtitle('正在聆听...');
-  }, [asr, showToast, stopSpeak]);
-
-  const handlePressEnd = useCallback((e) => {
-    // 移动端touch事件后会合成mouse事件,阻止双触发
-    if (e && e.type === 'touchend') { e.preventDefault(); }
-    // 防重入: 不在按住状态则跳过(合成mouse事件防护)
-    if (isPressingRef.current !== true) return;
-    isPressingRef.current = false;
-    if (asr.listening) asr.stop();
-    setTimeout(() => {
-      setSubtitle('');
-      // 恢复唤醒词监听: 先清除抑制标志,再重启
-      suppressWakeRef.current = false;
-      if (voiceWakeActive && !wakeListeningRef.current) {
-        wakeStartRef.current?.();
-      }
-    }, 1500);
-  }, [asr, voiceWakeActive]);
+    setSubtitle('正在聆听...再次点击结束');
+  }, [asr, voiceWakeActive, showToast, stopSpeak]);
 
   useEffect(() => {
     if (!asr.transcript || isPressingRef.current === null) return;
@@ -1270,7 +1292,7 @@ function AppMobileUser() {
     const destination = (dest || navInput).trim();
     if (!destination) { showToast('请输入目的地'); speak('请告诉我您要去哪里'); return; }
     setBusy(true);
-    setSubtitle('正在规划路线...');
+    setSubtitle('正在定位并规划路线...');
     addMessage('user', `导航到${destination}`);
     // 保存到历史搜索记录(去重,最多保留10条)
     setNavHistory(prev => {
@@ -1284,7 +1306,10 @@ function AppMobileUser() {
     setPoiLoading(false);
     if (poiSearchTimerRef.current) { clearTimeout(poiSearchTimerRef.current); poiSearchTimerRef.current = null; }
     try {
-      const res = await api.navigate(destination, location?.lat, location?.lng);
+      // 导航前强制刷新定位,确保使用最新位置(避免旧位置导致路线起点错误)
+      const freshLoc = await forceLocate();
+      const curLoc = freshLoc || locationRef.current;
+      const res = await api.navigate(destination, curLoc?.lat, curLoc?.lng);
       setNavInput('');
       if (res?.success && res.result) {
         drawRouteFromResult(res.result);
@@ -1300,7 +1325,7 @@ function AppMobileUser() {
       addMessage('assistant', errText); setSubtitle(errText);
     }
     finally { setBusy(false); }
-  }, [navInput, location, addMessage, showToast, speak, drawRouteFromResult, formatNavResult]);
+  }, [navInput, location, forceLocate, addMessage, showToast, speak, drawRouteFromResult, formatNavResult]);
 
   // ===== 出行导航启动(从识别页出行按钮触发,必须在handleNavigate之后定义) =====
   const startTravelNavigate = useCallback((dest) => {
@@ -1316,12 +1341,15 @@ function AppMobileUser() {
   // ===== 智能导航流程: 搜索附近POI → 播报列表 → 等待用户选择 =====
   const startSmartNavigation = useCallback(async (keyword) => {
     setBusy(true);
-    setSubtitle(`正在搜索附近的${keyword}...`);
+    setSubtitle(`正在定位并搜索附近的${keyword}...`);
     addMessage('user', `导航到${keyword}`);
     speak(`好的，正在为您搜索附近的${keyword}`);
     switchTab('navigate');
     try {
-      const res = await callWithRetry(() => api.poiSearch(keyword, location?.lat, location?.lng));
+      // POI搜索前强制刷新定位,确保使用最新位置(避免旧位置搜出错误POI)
+      const freshLoc = await forceLocate();
+      const curLoc = freshLoc || locationRef.current;
+      const res = await callWithRetry(() => api.poiSearch(keyword, curLoc?.lat, curLoc?.lng));
       if (res?.success && res.pois?.length > 0) {
         const topPois = res.pois.slice(0, 3);
         setPendingPois(topPois);
@@ -1362,7 +1390,7 @@ function AppMobileUser() {
     } finally {
       setBusy(false);
     }
-  }, [location, addMessage, speak, switchTab, callWithRetry, handleNavigate]);
+  }, [location, forceLocate, addMessage, speak, switchTab, callWithRetry, handleNavigate]);
 
   // ===== 选择POI并开始导航 → 自动开启出行模式 =====
   const selectPoiAndNavigate = useCallback(async (index) => {
@@ -1899,10 +1927,10 @@ function AppMobileUser() {
               ) : (
                 <button
                   className={`am-input-box-press ${asr.listening ? 'listening' : ''}`}
-                  onMouseDown={handlePressStart} onMouseUp={handlePressEnd}
-                  onTouchStart={handlePressStart} onTouchEnd={handlePressEnd}
+                  onClick={handleToggleSpeak}
+                  aria-label={asr.listening ? '结束说话' : '点击说话'}
                 >
-                  <span className="icon">🎤</span><span>{asr.listening ? '松开发送' : '按住说话'}</span>
+                  <span className="icon">🎤</span><span>{asr.listening ? '结束说话' : '点击说话'}</span>
                 </button>
               )}
 
@@ -1970,10 +1998,10 @@ function AppMobileUser() {
               ) : (
                 <button
                   className={`am-input-box-press ${asr.listening ? 'listening' : ''}`}
-                  onMouseDown={handlePressStart} onMouseUp={handlePressEnd}
-                  onTouchStart={handlePressStart} onTouchEnd={handlePressEnd}
+                  onClick={handleToggleSpeak}
+                  aria-label={asr.listening ? '结束说话' : '点击说话'}
                 >
-                  <span className="icon">🎤</span><span>{asr.listening ? '松开发送' : '按住说话'}</span>
+                  <span className="icon">🎤</span><span>{asr.listening ? '结束说话' : '点击说话'}</span>
                 </button>
               )}
 
@@ -2013,9 +2041,8 @@ function AppMobileUser() {
               />
               <button
                 className={`am-find-voice ${asr.listening ? 'listening' : ''}`}
-                onMouseDown={handlePressStart} onMouseUp={handlePressEnd}
-                onTouchStart={handlePressStart} onTouchEnd={handlePressEnd}
-                title="按住说出物品名"
+                onClick={handleToggleSpeak}
+                title="点击说出物品名"
               >🎤</button>
             </div>
             <div className="am-find-actions">
@@ -2049,9 +2076,8 @@ function AppMobileUser() {
               />
               <button
                 className={`am-find-voice ${asr.listening ? 'listening' : ''}`}
-                onMouseDown={handlePressStart} onMouseUp={handlePressEnd}
-                onTouchStart={handlePressStart} onTouchEnd={handlePressEnd}
-                title="按住说出目的地"
+                onClick={handleToggleSpeak}
+                title="点击说出目的地"
               >🎤</button>
             </div>
             <div className="am-find-actions">

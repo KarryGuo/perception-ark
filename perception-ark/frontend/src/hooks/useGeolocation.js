@@ -90,7 +90,6 @@ function locateByBrowserHigh() {
     }
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        // WGS-84 → GCJ-02 转换,防止与高德SDK坐标系不一致导致位置偏移
         const gcj = wgs84ToGcj02(pos.coords.latitude, pos.coords.longitude);
         resolve({
           lat: gcj.lat,
@@ -164,8 +163,6 @@ function distance(lat1, lng1, lat2, lng2) {
 }
 
 // ==================== 全局单例 ====================
-// 多组件(Web端Glasses + 移动端AppMobile)共享同一个定位状态,
-// 避免重复发起定位 + 重复watchPosition导致地图跳动
 let globalLocation = null;
 let globalListeners = new Set();
 let globalInitStarted = false;
@@ -177,6 +174,9 @@ function notifyListeners() {
   globalListeners.forEach(fn => fn(globalLocation));
 }
 
+/**
+ * 应用新位置(直接设置,不再用回调式更新避免丢坐标)
+ */
 function setGlobalLocation(pos) {
   globalLocation = pos;
   notifyListeners();
@@ -187,9 +187,9 @@ function setGlobalLocation(pos) {
  * 规则:
  * 1. 第一次定位直接应用
  * 2. 已有精确定位(accuracy < 1000m)后,不再接受IP级(accuracy > 5000m)结果
- * 3. 新位置与旧位置移动距离 > 30米 且 精度优于(或同级别)旧位置 才更新(防止GPS抖动)
- * 4. 新位置精度比旧位置差3倍以上时拒绝(防止低精度结果拉偏位置)
- * 5. 短时间(10秒)内位移异常大(>500米)视为漂移,拒绝
+ * 3. 新位置精度比旧位置差3倍以上时拒绝(防止低精度结果拉偏位置)
+ * 4. 移动距离 < 10米视为抖动(防止地图跳动),但精度显著更好时更新精度
+ * 5. 短时间(5秒)内位移异常大(>300米)视为漂移,拒绝
  */
 async function applyLocation(pos) {
   // 第一次定位直接应用
@@ -242,33 +242,35 @@ async function applyLocation(pos) {
     return;
   }
 
-  // 移动距离过滤: <30米视为抖动(防止地图跳动)
+  // 移动距离过滤: <10米视为抖动(防止地图跳动)
   const moved = distance(pos.lat, pos.lng, lastPosRef.lat, lastPosRef.lng);
-  if (moved < 30) {
-    // 即使没移动,如果精度显著更好也更新精度信息
+  if (moved < 10) {
+    // 即使没移动,如果精度显著更好也更新精度信息(修复: 之前用回调式更新会丢坐标)
     if (pos.accuracy < lastPosRef.accuracy * 0.5) {
       lastPosRef.accuracy = pos.accuracy;
-      setGlobalLocation(prev => prev ? { ...prev, accuracy: pos.accuracy } : null);
+      if (globalLocation) {
+        setGlobalLocation({ ...globalLocation, accuracy: pos.accuracy });
+      }
     }
     return;
   }
 
-  // 短时间(10秒)内位移异常大(>500米)视为GPS漂移,拒绝
+  // 短时间(5秒)内位移异常大(>300米)视为GPS漂移,拒绝
   const now = Date.now();
   const elapsed = now - (lastPosRef.timestamp || now);
-  if (elapsed < 10000 && moved > 500) {
+  if (elapsed < 5000 && moved > 300) {
     return;
   }
 
-  // 移动了 > 30米,接受新位置
+  // 移动了 > 10米,接受新位置
   lastPosRef.lat = pos.lat;
   lastPosRef.lng = pos.lng;
   lastPosRef.accuracy = pos.accuracy;
   lastPosRef.timestamp = now;
   if (pos.accuracy < 1000) preciseLocatedRef.value = true;
 
-  setGlobalLocation(prev => prev ? {
-    ...prev,
+  setGlobalLocation(globalLocation ? {
+    ...globalLocation,
     lat: pos.lat,
     lng: pos.lng,
     accuracy: pos.accuracy,
@@ -291,7 +293,6 @@ async function initLocation() {
 
   const tasks = [];
 
-  // Task 1: AMap.Geolocation (GPS/基站, 最精确)
   tasks.push(
     locateByAmapGeo()
       .then(async (pos) => {
@@ -301,7 +302,6 @@ async function initLocation() {
       .catch(err => console.warn('[Geo] AMap GPS失败:', err.message))
   );
 
-  // Task 2: 浏览器原生GPS
   tasks.push(
     locateByBrowserHigh()
       .then(async (pos) => {
@@ -311,7 +311,6 @@ async function initLocation() {
       .catch(err => console.warn('[Geo] 浏览器GPS失败:', err.message))
   );
 
-  // Task 3: CitySearch IP定位(快速兜底)
   tasks.push(
     locateByCitySearch()
       .then(async (pos) => {
@@ -326,7 +325,7 @@ async function initLocation() {
 
 /**
  * 启动持续监听(只启动一次,全局共享)
- * 降频策略: maximumAge=10000 允许10秒缓存,减少GPS唤醒频率,降低耗电
+ * 优化: maximumAge=2000(2秒缓存),平衡耗电和实时性
  */
 function startWatch() {
   if (globalWatchStarted) return;
@@ -338,8 +337,8 @@ function startWatch() {
       if (!AMap.Geolocation) return;
       const geo = new AMap.Geolocation({
         enableHighAccuracy: true,
-        timeout: 20000,
-        maximumAge: 10000,
+        timeout: 15000,
+        maximumAge: 2000,
         convert: true
       });
       geo.watchPosition((status, result) => {
@@ -357,29 +356,45 @@ function startWatch() {
   if (navigator.geolocation) {
     navigator.geolocation.watchPosition(
       (pos) => {
-        // WGS-84 → GCJ-02 转换,防止与高德坐标系不一致导致位置乱跳
         const gcj = wgs84ToGcj02(pos.coords.latitude, pos.coords.longitude);
         applyLocation({ lat: gcj.lat, lng: gcj.lng, accuracy: pos.coords.accuracy || 100, source: 'browser-watch' });
       },
       () => {},
-      // maximumAge=10000: 允许使用10秒内的缓存位置,减少GPS硬件唤醒,降低耗电
-      { enableHighAccuracy: true, timeout: 30000, maximumAge: 10000 }
+      { enableHighAccuracy: true, timeout: 20000, maximumAge: 2000 }
     );
   }
 }
 
 /**
+ * 强制刷新定位(导航/POI搜索前调用,确保位置最新)
+ */
+async function forceRefreshLocation() {
+  try {
+    const pos = await locateByAmapGeo().catch(() => null) || await locateByBrowserHigh().catch(() => null);
+    if (pos) {
+      // 强制应用: 重置lastPosRef以跳过移动阈值过滤
+      lastPosRef.lat = null;
+      lastPosRef.lng = null;
+      lastPosRef.accuracy = Infinity;
+      lastPosRef.timestamp = 0;
+      preciseLocatedRef.value = false;
+      await applyLocation(pos);
+      return pos;
+    }
+  } catch (err) {
+    console.warn('[Geo] 强制刷新定位失败:', err.message);
+  }
+  return null;
+}
+
+/**
  * 地理位置 Hook (全局单例版)
- * - 多组件共享同一个定位状态,不会重复发起定位
- * - 20米移动阈值过滤GPS抖动,防止地图跳动
- * - 精确定位后拒绝IP级结果,防止跳回城市中心
  */
 export function useGeolocation() {
   const [location, setLocalLocation] = useState(globalLocation);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(!globalLocation);
 
-  // 订阅全局位置更新
   useEffect(() => {
     const listener = (pos) => {
       setLocalLocation(pos);
@@ -387,13 +402,11 @@ export function useGeolocation() {
     };
     globalListeners.add(listener);
 
-    // 首次挂载: 如果全局还没开始定位,启动
     if (!globalInitStarted) {
       setLoading(true);
       initLocation().finally(() => setLoading(false));
     }
 
-    // 启动持续监听
     startWatch();
 
     return () => {
@@ -404,7 +417,6 @@ export function useGeolocation() {
   // 手动刷新定位
   const update = useCallback(() => {
     setLoading(true);
-    // 重置状态,允许重新定位
     lastPosRef.lat = null;
     lastPosRef.lng = null;
     lastPosRef.accuracy = Infinity;
@@ -414,5 +426,13 @@ export function useGeolocation() {
     initLocation().finally(() => setLoading(false));
   }, []);
 
-  return { location, error, loading, update };
+  // 强制精确定位(导航前调用)
+  const forceLocate = useCallback(async () => {
+    setLoading(true);
+    const pos = await forceRefreshLocation();
+    setLoading(false);
+    return pos;
+  }, []);
+
+  return { location, error, loading, update, forceLocate };
 }
