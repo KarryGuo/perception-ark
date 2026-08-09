@@ -47,6 +47,7 @@ function AppMobileUser() {
   const [textInput, setTextInput] = useState('');
   const [showFavorites, setShowFavorites] = useState(false); // 导航页收藏浮层
   const [activeMode, setActiveMode] = useState(null); // null | 'analyze' | 'travel' | 'read' | 'traffic' | 'find'
+  const [oneShotAction, setOneShotAction] = useState(null); // null | 'recognize' | 'read' 一次性操作类型(用于按钮激活态区分)
   const [showTextInput, setShowTextInput] = useState(false); // 识别页文字输入模式
   const [findTarget, setFindTarget] = useState(''); // 寻物目标
   const [showFindInput, setShowFindInput] = useState(false); // 寻物目标输入浮层
@@ -79,6 +80,7 @@ function AppMobileUser() {
   const handleVoiceInputRef = useRef(null);
   const navDialogueModeRef = useRef(null); // 同步引用(避免useCallback闭包陈旧)
   const pendingPoisRef = useRef([]); // 同步引用
+  const activeTabRef = useRef('recognize'); // 同步引用: 跟踪当前tab,用于异步操作完成后判断是否还需要speak
 
   const { speak, stop: stopSpeak, speaking: ttsSpeaking, setVoiceByName, setVoiceByGender, voice: currentVoice } = useSpeechSynthesis();
   const spatialAudio = useSpatialAudio();
@@ -513,15 +515,19 @@ function AppMobileUser() {
 
   const switchTab = useCallback((tab) => {
     setActiveTab(tab);
+    activeTabRef.current = tab;
     setShowFindInput(false);
     setShowTravelInput(false);
     setShowNavHistory(false);
     setPoiSuggestions([]);
     setPoiLoading(false);
     if (poiSearchTimerRef.current) { clearTimeout(poiSearchTimerRef.current); poiSearchTimerRef.current = null; }
+    // 切换tab时立即停止TTS播报(如:快速识别正在播报时切到导航/SOS,应立即停止)
+    stopSpeak();
+    setSubtitle('');
     const names = { recognize: '识别', navigate: '导航', sos: '紧急呼救' };
     showToast(`已切换到${names[tab]}`);
-  }, [showToast]);
+  }, [showToast, stopSpeak]);
 
   // ===== 点击说话(切换模式: 点击开始录入,再点击结束) =====
   const handleToggleSpeak = useCallback(() => {
@@ -768,7 +774,10 @@ function AppMobileUser() {
   // ===== 一次性全场景识别(点击"识别"按钮) =====
   const handleOneShotRecognize = useCallback(async () => {
     if (busy) return;
+    // 停止之前正在进行的TTS播报(避免队列堆积,立即响应新操作)
+    stopSpeak();
     setBusy(true);
+    setOneShotAction('recognize');
     setSubtitle('正在识别画面中的所有物体...');
     addMessage('user', '🔍 识别所有物体');
     try {
@@ -785,7 +794,8 @@ function AppMobileUser() {
       if (res?.success && res.result) {
         const text = String(res.result);
         addMessage('assistant', text);
-        speak(text);
+        // 仅在识别tab时才播报(避免切到导航/SOS后API延迟返回仍播报识别结果)
+        if (activeTabRef.current === 'recognize') speak(text);
         setSubtitle(text.length > 80 ? text.substring(0, 80) + '...' : text);
       } else {
         const fallback = '未能识别到物体，请重试。';
@@ -799,13 +809,17 @@ function AppMobileUser() {
       setSubtitle(errText);
     } finally {
       setBusy(false);
+      setOneShotAction(null);
     }
-  }, [busy, captureImage, addMessage, speak, callWithRetry]);
+  }, [busy, captureImage, addMessage, speak, callWithRetry, stopSpeak]);
 
   // ===== 一次性OCR阅读(点击"阅读"按钮) =====
   const handleOneShotRead = useCallback(async () => {
     if (busy) return;
+    // 停止之前正在进行的TTS播报(避免队列堆积,立即响应新操作)
+    stopSpeak();
     setBusy(true);
+    setOneShotAction('read');
     setSubtitle('正在拍照并读取文字内容...');
     addMessage('user', '📖 阅读文字');
     try {
@@ -821,7 +835,8 @@ function AppMobileUser() {
       if (res?.success && res.result) {
         const text = String(res.result);
         addMessage('assistant', text);
-        speak(text);
+        // 仅在识别tab时才播报(避免切到导航/SOS后API延迟返回仍播报阅读结果)
+        if (activeTabRef.current === 'recognize') speak(text);
         setSubtitle(text.length > 80 ? text.substring(0, 80) + '...' : text);
       } else {
         const fallback = '未能识别到文字内容，请重试。';
@@ -835,8 +850,9 @@ function AppMobileUser() {
       setSubtitle(errText);
     } finally {
       setBusy(false);
+      setOneShotAction(null);
     }
-  }, [busy, captureImage, addMessage, speak, callWithRetry]);
+  }, [busy, captureImage, addMessage, speak, callWithRetry, stopSpeak]);
 
   // ===== 出行导航启动(从识别页出行按钮触发) =====
   // 注意: startTravelNavigate 已移至 handleNavigate 之后定义(避免TDZ)
@@ -852,6 +868,9 @@ function AppMobileUser() {
   };
 
   const toggleMode = useCallback((mode) => {
+    // 切换任何模式前,先停止当前正在进行的TTS播报(如:快速识别长文本播报中切换到出行/红绿灯,应立即停止)
+    stopSpeak();
+
     // 寻物模式特殊处理: 需要先说出/输入要找的物品
     if (mode === 'find') {
       setActiveMode(prev => {
@@ -898,7 +917,6 @@ function AppMobileUser() {
     if (mode === 'analyze') {
       if (activeMode) {
         setActiveMode(null);
-        speak(`${modeNames[activeMode]}已关闭`);
       }
       handleOneShotRecognize();
       return;
@@ -908,7 +926,6 @@ function AppMobileUser() {
     if (mode === 'read') {
       if (activeMode) {
         setActiveMode(null);
-        speak(`${modeNames[activeMode]}已关闭`);
       }
       handleOneShotRead();
       return;
@@ -948,7 +965,7 @@ function AppMobileUser() {
         return mode;
       }
     });
-  }, [speak, showToast, addMessage, activeMode, handleOneShotRecognize, handleOneShotRead]);
+  }, [speak, showToast, addMessage, activeMode, handleOneShotRecognize, handleOneShotRead, stopSpeak]);
 
   // 寻物目标确认后开始寻找
   const startFindMode = useCallback((target) => {
@@ -1935,13 +1952,13 @@ function AppMobileUser() {
 
             {/* 五个模式按钮一行 */}
             <div className="am-quick-row">
-              <button className={`am-quick-icon ${busy ? 'active' : ''}`} onClick={() => { vibrateClick(); toggleMode('analyze'); }} aria-label="识别画面中所有物体">
+              <button className={`am-quick-icon ${oneShotAction === 'recognize' ? 'active' : ''}`} onClick={() => { vibrateClick(); toggleMode('analyze'); }} aria-label="识别画面中所有物体">
                 <span className="icon">⚡</span><span className="label">识别</span>
               </button>
               <button className={`am-quick-icon ${activeMode === 'travel' ? 'active' : ''}`} onClick={() => { vibrateClick(); toggleMode('travel'); }} aria-label="出行导航">
                 <span className="icon">🚶</span><span className="label">出行</span>
               </button>
-              <button className={`am-quick-icon ${busy ? 'active' : ''}`} onClick={() => { vibrateClick(); toggleMode('read'); }} aria-label="拍照阅读文字">
+              <button className={`am-quick-icon ${oneShotAction === 'read' ? 'active' : ''}`} onClick={() => { vibrateClick(); toggleMode('read'); }} aria-label="拍照阅读文字">
                 <span className="icon">📖</span><span className="label">阅读</span>
               </button>
               <button className={`am-quick-icon ${activeMode === 'traffic' ? 'active' : ''}`} onClick={() => { vibrateClick(); toggleMode('traffic'); }} aria-label="红绿灯识别">
