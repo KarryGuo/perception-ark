@@ -61,9 +61,10 @@ function AppMobileUser() {
   const [poiSuggestions, setPoiSuggestions] = useState([]); // POI搜索建议(输入联想)
   const [poiLoading, setPoiLoading] = useState(false); // POI搜索加载中
   const [ttsRate, setTtsRate] = useState(() => parseFloat(localStorage.getItem('ark_tts_rate')) || 0.95);
-  const [navInputMode, setNavInputMode] = useState(false); // 导航页: false=按住说话, true=文字输入
+  const [navInputMode, setNavInputMode] = useState(false); // 导航页: false=点击说话, true=文字输入
   const [voiceWakeActive, setVoiceWakeActive] = useState(true); // 语音唤醒免手动开关
   const [wakeDialogue, setWakeDialogue] = useState(false); // 唤醒后对话模式
+  const [isRecording, setIsRecording] = useState(false); // 点击说话录音状态(独立于asr.listening,防止浏览器自动超时导致按钮变回)
   const [firstUse, setFirstUse] = useState(() => !localStorage.getItem('ark_first_use_done'));
   const [tutorialStep, setTutorialStep] = useState(0);
   const [persistentError, setPersistentError] = useState(null); // 持久错误显示
@@ -90,10 +91,11 @@ function AppMobileUser() {
 
   const messagesEndRef = useRef(null);
   const isPressingRef = useRef(null);
-  const suppressWakeRef = useRef(false); // 按住说话期间抑制唤醒词自动重启
+  const suppressWakeRef = useRef(false); // 点击说话期间抑制唤醒词自动重启
   const modeIntervalRef = useRef(null); // 连续分析定时器
   const isProcessingRef = useRef(false); // 命令处理中标志(防止TTS音频被ASR重新拾取导致循环)
   const poiSearchTimerRef = useRef(null);
+  const asrRetryCountRef = useRef(0); // ASR自动重启重试计数(防止无限循环)
   const wakeStartRef = useRef(null);
   const wakeStopRef = useRef(null);
   const lastTravelSpeakRef = useRef(''); // 出行模式上次播报文本(去重,避免重复播报相同内容)
@@ -515,8 +517,10 @@ function AppMobileUser() {
   // ===== 点击说话(切换模式: 点击开始录入,再点击结束) =====
   const handleToggleSpeak = useCallback(() => {
     // 当前正在录音 → 结束录音
-    if (isPressingRef.current === true) {
+    if (isRecording) {
+      setIsRecording(false);
       isPressingRef.current = false;
+      asrRetryCountRef.current = 0;
       if (asr.listening) asr.stop();
       setTimeout(() => {
         setSubtitle('');
@@ -533,9 +537,11 @@ function AppMobileUser() {
     stopSpeak();
     isProcessingRef.current = false;
     isPressingRef.current = true;
+    setIsRecording(true);
+    asrRetryCountRef.current = 0;
     // 抑制唤醒词自动重启,避免与点击说话的ASR抢占麦克风
     suppressWakeRef.current = true;
-    if (!asr.supported) { showToast('当前浏览器不支持语音识别'); return; }
+    if (!asr.supported) { showToast('当前浏览器不支持语音识别'); setIsRecording(false); isPressingRef.current = false; return; }
     // 暂停唤醒词监听,避免与ASR冲突(浏览器只允许一个recognition实例)
     if (wakeListeningRef.current) {
       try { wakeAsrRef.current?.abort(); } catch(e2) {}
@@ -548,7 +554,38 @@ function AppMobileUser() {
       }
     }, 200);
     setSubtitle('正在聆听...再次点击结束');
-  }, [asr, voiceWakeActive, showToast, stopSpeak]);
+  }, [isRecording, asr, voiceWakeActive, showToast, stopSpeak]);
+
+  // ===== 录音模式下ASR自动重启 =====
+  // 浏览器Web Speech API在continuous模式下仍可能因no-speech超时自动停止
+  // 此时isPressingRef仍为true(用户未主动结束),需要自动重启ASR保持录音
+  useEffect(() => {
+    if (isPressingRef.current && !asr.listening) {
+      const timer = setTimeout(() => {
+        if (isPressingRef.current && !asr.listening) {
+          const ok = asr.start();
+          if (!ok) {
+            asrRetryCountRef.current++;
+            if (asrRetryCountRef.current > 5) {
+              // 重试5次仍失败,放弃录音
+              setIsRecording(false);
+              isPressingRef.current = false;
+              asrRetryCountRef.current = 0;
+              suppressWakeRef.current = false;
+              setSubtitle('');
+              showToast('语音识别启动失败,请重试');
+              if (voiceWakeActive && !wakeListeningRef.current) {
+                wakeStartRef.current?.();
+              }
+            }
+          } else {
+            asrRetryCountRef.current = 0;
+          }
+        }
+      }, 300);
+      return () => clearTimeout(timer);
+    }
+  }, [asr.listening, asr, voiceWakeActive, showToast]);
 
   useEffect(() => {
     if (!asr.transcript || isPressingRef.current === null) return;
@@ -1776,7 +1813,7 @@ function AppMobileUser() {
         {activeTab === 'navigate' && (
           <>
             <button className="am-icon-btn" onClick={() => { vibrateClick(); setShowFavorites(!showFavorites); }} title="收藏位置" aria-label="收藏的位置">⭐</button>
-            <button className="am-icon-btn" onClick={() => { vibrateClick(); showToast('已获取位置'); }} title="定位" aria-label="获取当前位置">📍</button>
+            <button className="am-icon-btn" onClick={async () => { vibrateClick(); showToast('正在定位...'); const pos = await forceLocate(); showToast(pos ? '已更新到最新位置' : '定位失败,请检查GPS'); }} title="定位" aria-label="获取当前位置">📍</button>
           </>
         )}
         <button className="am-icon-btn" onClick={goSettings} title="设置" aria-label="打开设置">⚙️</button>
@@ -1926,11 +1963,11 @@ function AppMobileUser() {
                 />
               ) : (
                 <button
-                  className={`am-input-box-press ${asr.listening ? 'listening' : ''}`}
+                  className={`am-input-box-press ${isRecording ? 'listening' : ''}`}
                   onClick={handleToggleSpeak}
-                  aria-label={asr.listening ? '结束说话' : '点击说话'}
+                  aria-label={isRecording ? '结束说话' : '点击说话'}
                 >
-                  <span className="icon">🎤</span><span>{asr.listening ? '结束说话' : '点击说话'}</span>
+                  <span className="icon">🎤</span><span>{isRecording ? '结束说话' : '点击说话'}</span>
                 </button>
               )}
 
@@ -1997,11 +2034,11 @@ function AppMobileUser() {
                 />
               ) : (
                 <button
-                  className={`am-input-box-press ${asr.listening ? 'listening' : ''}`}
+                  className={`am-input-box-press ${isRecording ? 'listening' : ''}`}
                   onClick={handleToggleSpeak}
-                  aria-label={asr.listening ? '结束说话' : '点击说话'}
+                  aria-label={isRecording ? '结束说话' : '点击说话'}
                 >
-                  <span className="icon">🎤</span><span>{asr.listening ? '结束说话' : '点击说话'}</span>
+                  <span className="icon">🎤</span><span>{isRecording ? '结束说话' : '点击说话'}</span>
                 </button>
               )}
 
@@ -2040,7 +2077,7 @@ function AppMobileUser() {
                 autoFocus
               />
               <button
-                className={`am-find-voice ${asr.listening ? 'listening' : ''}`}
+                className={`am-find-voice ${isRecording ? 'listening' : ''}`}
                 onClick={handleToggleSpeak}
                 title="点击说出物品名"
               >🎤</button>
@@ -2075,7 +2112,7 @@ function AppMobileUser() {
                 autoFocus
               />
               <button
-                className={`am-find-voice ${asr.listening ? 'listening' : ''}`}
+                className={`am-find-voice ${isRecording ? 'listening' : ''}`}
                 onClick={handleToggleSpeak}
                 title="点击说出目的地"
               >🎤</button>

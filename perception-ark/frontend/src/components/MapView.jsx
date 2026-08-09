@@ -63,7 +63,8 @@ export default function MapView({ location, route, pois, className }) {
     };
   }, []);
 
-  // 位置变化时更新中心点和标记(带阈值过滤,防止地图跳动)
+  // 位置变化时更新标记和中心点
+  // marker总是更新(跟随真实位置),setCenter有阈值过滤(防止地图频繁跳动)
   const lastCenterRef = useRef(null);
   useEffect(() => {
     const mapInstance = mapInstanceRef.current;
@@ -73,16 +74,7 @@ export default function MapView({ location, route, pois, className }) {
 
     const lnglat = new AMap.LngLat(location.lng, location.lat);
 
-    // 移动距离 < 30米不重新setCenter(防止GPS抖动导致地图跳动)
-    if (lastCenterRef.current) {
-      const dLat = location.lat - lastCenterRef.current.lat;
-      const dLng = location.lng - lastCenterRef.current.lng;
-      const moved = Math.sqrt(dLat * dLat + dLng * dLng) * 111000;
-      if (moved < 30) return; // 跳过本次更新
-    }
-    lastCenterRef.current = { lat: location.lat, lng: location.lng };
-    mapInstance.setCenter(lnglat);
-
+    // 1. marker总是更新(跟随真实GPS位置,不跳过)
     if (markerRef.current) {
       markerRef.current.setPosition(lnglat);
     } else {
@@ -92,6 +84,20 @@ export default function MapView({ location, route, pois, className }) {
         anchor: 'center'
       });
       mapInstance.add(markerRef.current);
+    }
+
+    // 2. setCenter有阈值过滤(10米,防止GPS抖动导致地图频繁跳动)
+    if (lastCenterRef.current) {
+      const dLat = location.lat - lastCenterRef.current.lat;
+      const dLng = location.lng - lastCenterRef.current.lng;
+      const moved = Math.sqrt(dLat * dLat + dLng * dLng) * 111000;
+      if (moved >= 10) {
+        lastCenterRef.current = { lat: location.lat, lng: location.lng };
+        mapInstance.setCenter(lnglat);
+      }
+    } else {
+      lastCenterRef.current = { lat: location.lat, lng: location.lng };
+      mapInstance.setCenter(lnglat);
     }
 
     if (location.address) setAddr(location.address);
