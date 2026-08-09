@@ -119,6 +119,7 @@ export function initMemoryStore() {
       family_name TEXT,
       relation TEXT,
       status TEXT DEFAULT 'pending',
+      initiator TEXT DEFAULT 'user',
       invited_at TEXT,
       bound_at TEXT,
       UNIQUE(user_account_id, family_phone)
@@ -133,6 +134,10 @@ export function initMemoryStore() {
     }
     if (!fbCols.includes('relation')) {
       db.exec("ALTER TABLE family_bindings ADD COLUMN relation TEXT");
+    }
+    if (!fbCols.includes('initiator')) {
+      db.exec("ALTER TABLE family_bindings ADD COLUMN initiator TEXT DEFAULT 'user'");
+      log('A05', 'family_bindings 表已补列 initiator');
     }
   } catch (e) {
     log('A05', `family_bindings 表补列检查失败: ${e.message}`, 'warn');
@@ -207,7 +212,22 @@ export function createAccount(username, passwordHash, role = 'user', userId = nu
       INSERT INTO accounts (username, password_hash, role, user_id, created_at, phone, security_question, security_answer_hash)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(username, passwordHash, role, userId, new Date().toISOString(), phone || null, securityQuestion || null, securityAnswerHash || null);
-    return result.lastInsertRowid;
+    const accountId = result.lastInsertRowid;
+
+    // 家属账号创建时,自动激活所有指向该手机号的pending邀请
+    // 这样视障用户之前发出的绑定邀请,在家属注册瞬间自动完成绑定
+    if (role === 'family' && phone) {
+      try {
+        const activated = activatePendingFamilyBindings(Number(accountId), phone.trim());
+        if (activated > 0) {
+          log('AUTH', `家属注册自动激活 ${activated} 条pending邀请: ${username} (${phone})`);
+        }
+      } catch (e) {
+        log('AUTH', `激活pending邀请失败(不影响注册): ${e.message}`, 'warn');
+      }
+    }
+
+    return accountId;
   } catch (err) {
     if (err.message.includes('UNIQUE')) return null;
     throw err;
@@ -386,14 +406,16 @@ export function getAccountByPhone(phone) {
   return db.prepare('SELECT * FROM accounts WHERE phone = ?').get(phone.trim());
 }
 
-// ===== 家属绑定(视障端正向绑定) =====
+// ===== 家属绑定(双向确认机制) =====
 /**
  * 添加家属绑定(视障用户邀请家属)
+ * 新机制: 无论家属是否已注册,status 始终为 'pending',需家属端确认后才升级为 'active'
+ * 例外: 若家属端此前已发起对该视障用户的邀请(initiator='family'),则双方互邀请,直接 active
  * @param {number} userAccountId 视障用户账号ID
  * @param {string} familyPhone 家属手机号
  * @param {string} familyName 家属称呼(可选)
  * @param {string} relation 关系(可选)
- * @returns {object} { success, bindingId, familyAccount }
+ * @returns {object} { success, bindingId, familyAccount, status, autoActivated }
  */
 export function addFamilyBinding(userAccountId, familyPhone, familyName, relation) {
   if (!db) return { success: false, error: '数据库未初始化' };
@@ -406,21 +428,47 @@ export function addFamilyBinding(userAccountId, familyPhone, familyName, relatio
   // 查找家属账号是否已注册
   const familyAccount = db.prepare("SELECT id, username, role, nickname, phone FROM accounts WHERE phone = ? AND role = 'family'").get(phone);
   const now = new Date().toISOString();
+
+  // 双向互邀请优化: 检查家属端是否已发起对该视障用户的邀请
+  // 若存在 initiator='family' 且 status='pending' 的反向邀请,说明双方都想绑定,直接互相确认
+  if (familyAccount) {
+    const reverseInvitation = db.prepare(`
+      SELECT id FROM family_bindings
+      WHERE user_account_id = ? AND family_account_id = ? AND family_phone = ?
+        AND initiator = 'family' AND status = 'pending'
+    `).get(userAccountId, familyAccount.id, phone);
+    if (reverseInvitation) {
+      // 将反向邀请升级为 active,同时插入正向 active 记录
+      db.prepare(`UPDATE family_bindings SET status = 'active', bound_at = COALESCE(bound_at, ?) WHERE id = ?`)
+        .run(now, reverseInvitation.id);
+      try {
+        const result = db.prepare(`
+          INSERT INTO family_bindings (user_account_id, family_account_id, family_phone, family_name, relation, status, initiator, invited_at, bound_at)
+          VALUES (?, ?, ?, ?, ?, 'active', 'user', ?, ?)
+        `).run(userAccountId, familyAccount.id, phone, familyName || null, relation || null, now, now);
+        return { success: true, bindingId: result.lastInsertRowid, familyAccount, status: 'active', autoActivated: true };
+      } catch (err) {
+        log('A05', `双向互邀请插入正向记录失败: ${err.message}`, 'error');
+        return { success: false, error: err.message };
+      }
+    }
+  }
+
+  // 常规流程: status='pending',等待家属端确认
   try {
     const result = db.prepare(`
-      INSERT INTO family_bindings (user_account_id, family_account_id, family_phone, family_name, relation, status, invited_at, bound_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO family_bindings (user_account_id, family_account_id, family_phone, family_name, relation, status, initiator, invited_at, bound_at)
+      VALUES (?, ?, ?, ?, ?, 'pending', 'user', ?, ?)
     `).run(
       userAccountId,
       familyAccount?.id || null,
       phone,
       familyName || null,
       relation || null,
-      familyAccount ? 'active' : 'pending',
       now,
-      familyAccount ? now : null
+      null  // bound_at 留空,确认后填入
     );
-    return { success: true, bindingId: result.lastInsertRowid, familyAccount, status: familyAccount ? 'active' : 'pending' };
+    return { success: true, bindingId: result.lastInsertRowid, familyAccount, status: 'pending', autoActivated: false };
   } catch (err) {
     log('A05', `添加家属绑定失败: ${err.message}`, 'error');
     return { success: false, error: err.message };
@@ -451,6 +499,67 @@ export function removeFamilyBinding(bindingId, userAccountId) {
   } catch (err) {
     log('A05', `删除家属绑定失败: ${err.message}`, 'error');
     return false;
+  }
+}
+
+/**
+ * 家属账号注册时,回填 family_account_id 到所有指向该手机号的 pending 邀请
+ * 新机制: 不再自动激活(active),仅回填账号ID,等待家属端主动确认后才升级为 active
+ * @param {number} familyAccountId 新注册的家属账号ID
+ * @param {string} familyPhone 家属手机号
+ * @returns {number} 回填账号ID的邀请数量
+ */
+export function activatePendingFamilyBindings(familyAccountId, familyPhone) {
+  if (!db || !familyAccountId || !familyPhone) return 0;
+  const phone = familyPhone.trim();
+  try {
+    // 仅回填 family_account_id,不修改 status(保持 pending 等待家属确认)
+    const result = db.prepare(`
+      UPDATE family_bindings
+      SET family_account_id = ?
+      WHERE family_phone = ? AND status = 'pending' AND (family_account_id IS NULL OR family_account_id != ?)
+    `).run(familyAccountId, phone, familyAccountId);
+    return result.changes || 0;
+  } catch (err) {
+    log('A05', `回填家属账号ID失败: ${err.message}`, 'error');
+    return 0;
+  }
+}
+
+/**
+ * 反向查询: 家属账号通过family_bindings绑定的所有视障人员
+ * 供家属端"我的"tab显示,确保视障端发起的邀请在家属端也能看到
+ * @param {number} familyAccountId 家属账号ID
+ * @returns {array} 视障人员列表(格式与users表兼容)
+ */
+export function getFamilyBoundVisuallyImpairedUsers(familyAccountId) {
+  if (!db || !familyAccountId) return [];
+  try {
+    const rows = db.prepare(`
+      SELECT fb.id AS binding_id, fb.user_account_id, fb.family_name, fb.relation,
+             fb.invited_at, fb.bound_at,
+             a.username, a.nickname, a.phone, a.role
+      FROM family_bindings fb
+      JOIN accounts a ON fb.user_account_id = a.id
+      WHERE fb.family_account_id = ? AND fb.status = 'active'
+      ORDER BY fb.bound_at DESC, fb.invited_at DESC
+    `).all(familyAccountId);
+    return rows.map(r => ({
+      id: `bind_${r.binding_id}`,
+      name: r.nickname || r.username || '视障用户',
+      age: null,
+      relation: r.relation || '被守护人',
+      phone: r.phone || '',
+      emergency_contact: null,
+      emergency_phone: null,
+      health_notes: null,
+      bound_at: r.bound_at || r.invited_at,
+      bound_account_id: r.user_account_id,
+      binding_source: 'invitation'
+    }));
+  } catch (err) {
+    log('A05', `反向查询家属绑定的视障人员失败: ${err.message}`, 'error');
+    return [];
   }
 }
 
@@ -487,13 +596,14 @@ export function getActiveFamilyBindingsAsContacts(userAccountId) {
 
 /**
  * 家属端添加/编辑使用者时,反向同步到视障端的family_bindings表
- * 确保视障用户登录后SOS页面和设置页能看到被家属绑定的信息
+ * 新机制: status='pending', initiator='family',需要视障端确认后才升级为 'active'
+ * 例外: 若视障端已发起对该家属的邀请(initiator='user' 且 status='pending'),则双方互邀请,直接 active
  * @param {number} userAccountId 视障用户账号ID
  * @param {number} familyAccountId 家属账号ID
  * @param {string} familyPhone 家属手机号
  * @param {string} familyName 家属称呼(可选)
  * @param {string} relation 关系(可选)
- * @returns {object} { success, bindingId, status }
+ * @returns {object} { success, bindingId, status, autoActivated }
  */
 export function syncFamilyBindingFromFamilySide(userAccountId, familyAccountId, familyPhone, familyName, relation) {
   if (!db) return { success: false, error: '数据库未初始化' };
@@ -506,24 +616,164 @@ export function syncFamilyBindingFromFamilySide(userAccountId, familyAccountId, 
     const existing = db.prepare('SELECT * FROM family_bindings WHERE user_account_id = ? AND family_phone = ?').get(userAccountId, phone);
     const now = new Date().toISOString();
     if (existing) {
-      // 已存在: 升级为active状态(家属端已绑定说明双方都已注册)
+      // 双向互邀请优化: 若已存在的是视障端发起的邀请(initiator='user' 且 pending),说明双方互邀请,直接 active
+      if (existing.initiator === 'user' && existing.status === 'pending') {
+        db.prepare(`
+          UPDATE family_bindings
+          SET family_account_id = ?, family_name = COALESCE(?, family_name), relation = COALESCE(?, relation),
+              status = 'active', bound_at = COALESCE(bound_at, ?)
+          WHERE id = ?
+        `).run(familyAccountId, familyName || null, relation || null, now, existing.id);
+        return { success: true, bindingId: existing.id, status: 'active', autoActivated: true, updated: true };
+      }
+      // 已存在且非互邀请场景: 更新 family_account_id,保持原 status
       db.prepare(`
         UPDATE family_bindings
-        SET family_account_id = ?, family_name = COALESCE(?, family_name), relation = COALESCE(?, relation),
-            status = 'active', bound_at = COALESCE(bound_at, ?)
+        SET family_account_id = ?, family_name = COALESCE(?, family_name), relation = COALESCE(?, relation)
         WHERE id = ?
-      `).run(familyAccountId, familyName || null, relation || null, now, existing.id);
-      return { success: true, bindingId: existing.id, status: 'active', updated: true };
+      `).run(familyAccountId, familyName || null, relation || null, existing.id);
+      return { success: true, bindingId: existing.id, status: existing.status, autoActivated: false, updated: true };
     }
-    // 不存在: 新增active绑定
+    // 不存在: 新增 pending 绑定(initiator='family'),等待视障端确认
     const result = db.prepare(`
-      INSERT INTO family_bindings (user_account_id, family_account_id, family_phone, family_name, relation, status, invited_at, bound_at)
-      VALUES (?, ?, ?, ?, ?, 'active', ?, ?)
-    `).run(userAccountId, familyAccountId, phone, familyName || null, relation || null, now, now);
-    return { success: true, bindingId: result.lastInsertRowid, status: 'active' };
+      INSERT INTO family_bindings (user_account_id, family_account_id, family_phone, family_name, relation, status, initiator, invited_at, bound_at)
+      VALUES (?, ?, ?, ?, ?, 'pending', 'family', ?, ?)
+    `).run(userAccountId, familyAccountId, phone, familyName || null, relation || null, now, null);
+    return { success: true, bindingId: result.lastInsertRowid, status: 'pending', autoActivated: false };
   } catch (err) {
     log('A05', `反向同步家属绑定失败: ${err.message}`, 'error');
     return { success: false, error: err.message };
+  }
+}
+
+/**
+ * 确认家属绑定(被邀请方确认后,status: pending → active)
+ * 根据 initiator 判断确认方:
+ *   - initiator='user' (视障端发起) → 家属是确认方,验证 family_account_id == confirmerAccountId
+ *   - initiator='family' (家属端发起) → 视障是确认方,验证 user_account_id == confirmerAccountId
+ * @param {number} bindingId 绑定记录ID
+ * @param {number} confirmerAccountId 确认者账号ID
+ * @param {'user'|'family'} confirmerRole 确认者角色
+ * @returns {object} { success, status, binding }
+ */
+export function confirmFamilyBinding(bindingId, confirmerAccountId, confirmerRole) {
+  if (!db || !bindingId || !confirmerAccountId) return { success: false, error: '参数不完整' };
+  try {
+    const binding = db.prepare('SELECT * FROM family_bindings WHERE id = ?').get(bindingId);
+    if (!binding) return { success: false, error: '绑定记录不存在' };
+    if (binding.status !== 'pending') return { success: false, error: `当前状态为 ${binding.status},无法确认` };
+
+    // 权限校验: 根据 initiator 判断谁有权确认
+    if (binding.initiator === 'user') {
+      // 视障端发起的邀请 → 家属确认
+      if (confirmerRole !== 'family') return { success: false, error: '无权确认(需家属端确认)' };
+      if (!binding.family_account_id || binding.family_account_id !== confirmerAccountId) {
+        return { success: false, error: '无权确认(账号不匹配)' };
+      }
+    } else if (binding.initiator === 'family') {
+      // 家属端发起的邀请 → 视障确认
+      if (confirmerRole !== 'user') return { success: false, error: '无权确认(需视障端确认)' };
+      if (binding.user_account_id !== confirmerAccountId) {
+        return { success: false, error: '无权确认(账号不匹配)' };
+      }
+    } else {
+      return { success: false, error: `未知的发起方: ${binding.initiator}` };
+    }
+
+    const now = new Date().toISOString();
+    db.prepare(`
+      UPDATE family_bindings SET status = 'active', bound_at = COALESCE(bound_at, ?) WHERE id = ?
+    `).run(now, bindingId);
+    log('A05', `家属绑定确认成功: bindingId=${bindingId} confirmer=${confirmerAccountId}(${confirmerRole})`);
+    return { success: true, status: 'active', binding: { ...binding, status: 'active', bound_at: now } };
+  } catch (err) {
+    log('A05', `确认家属绑定失败: ${err.message}`, 'error');
+    return { success: false, error: err.message };
+  }
+}
+
+/**
+ * 拒绝家属绑定(被邀请方拒绝,删除该 pending 记录)
+ * 权限校验逻辑同 confirmFamilyBinding
+ * @param {number} bindingId 绑定记录ID
+ * @param {number} confirmerAccountId 拒绝者账号ID
+ * @param {'user'|'family'} confirmerRole 拒绝者角色
+ * @returns {object} { success, deleted }
+ */
+export function rejectFamilyBinding(bindingId, confirmerAccountId, confirmerRole) {
+  if (!db || !bindingId || !confirmerAccountId) return { success: false, error: '参数不完整' };
+  try {
+    const binding = db.prepare('SELECT * FROM family_bindings WHERE id = ?').get(bindingId);
+    if (!binding) return { success: false, error: '绑定记录不存在' };
+    if (binding.status !== 'pending') return { success: false, error: `当前状态为 ${binding.status},无法拒绝` };
+
+    if (binding.initiator === 'user') {
+      if (confirmerRole !== 'family' || !binding.family_account_id || binding.family_account_id !== confirmerAccountId) {
+        return { success: false, error: '无权拒绝(账号不匹配)' };
+      }
+    } else if (binding.initiator === 'family') {
+      if (confirmerRole !== 'user' || binding.user_account_id !== confirmerAccountId) {
+        return { success: false, error: '无权拒绝(账号不匹配)' };
+      }
+    } else {
+      return { success: false, error: `未知的发起方: ${binding.initiator}` };
+    }
+
+    db.prepare('DELETE FROM family_bindings WHERE id = ?').run(bindingId);
+    log('A05', `家属绑定被拒绝: bindingId=${bindingId} rejector=${confirmerAccountId}(${confirmerRole})`);
+    return { success: true, deleted: true };
+  } catch (err) {
+    log('A05', `拒绝家属绑定失败: ${err.message}`, 'error');
+    return { success: false, error: err.message };
+  }
+}
+
+/**
+ * 家属端待确认列表(视障端发起的邀请,等待家属确认)
+ * 查询条件: family_account_id = me AND initiator='user' AND status='pending'
+ * @param {number} familyAccountId 家属账号ID
+ * @returns {array} [{ id, user_account_id, family_phone, family_name, relation, invited_at, vi_account_id, vi_username, vi_nickname, vi_phone }]
+ */
+export function getPendingConfirmFamilyBindings(familyAccountId) {
+  if (!db || !familyAccountId) return [];
+  try {
+    const rows = db.prepare(`
+      SELECT fb.id, fb.invited_at,
+             fb.family_phone, fb.family_name, fb.relation,
+             a.id AS user_account_id, a.username AS user_username, a.nickname AS user_nickname, a.phone AS user_phone
+      FROM family_bindings fb
+      JOIN accounts a ON fb.user_account_id = a.id
+      WHERE fb.family_account_id = ? AND fb.initiator = 'user' AND fb.status = 'pending'
+      ORDER BY fb.invited_at DESC
+    `).all(familyAccountId);
+    return rows;
+  } catch (err) {
+    log('A05', `查询家属端待确认列表失败: ${err.message}`, 'error');
+    return [];
+  }
+}
+
+/**
+ * 视障端待确认列表(家属端发起的邀请,等待视障用户确认)
+ * 查询条件: user_account_id = me AND initiator='family' AND status='pending'
+ * @param {number} userAccountId 视障用户账号ID
+ * @returns {array} [{ id, family_account_id, family_phone, family_name, relation, invited_at, family_username, family_nickname }]
+ */
+export function getPendingConfirmViBindings(userAccountId) {
+  if (!db || !userAccountId) return [];
+  try {
+    const rows = db.prepare(`
+      SELECT fb.id, fb.family_account_id, fb.family_phone, fb.family_name, fb.relation, fb.invited_at,
+             a.username AS family_username, a.nickname AS family_nickname
+      FROM family_bindings fb
+      JOIN accounts a ON fb.family_account_id = a.id
+      WHERE fb.user_account_id = ? AND fb.initiator = 'family' AND fb.status = 'pending'
+      ORDER BY fb.invited_at DESC
+    `).all(userAccountId);
+    return rows;
+  } catch (err) {
+    log('A05', `查询视障端待确认列表失败: ${err.message}`, 'error');
+    return [];
   }
 }
 

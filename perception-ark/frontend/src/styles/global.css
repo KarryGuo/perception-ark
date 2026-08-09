@@ -491,6 +491,13 @@ input { font-family: inherit; }
   color: #ff6b8a; font-size: .9rem; line-height: 1.4; text-align: center;
 }
 
+/* 表单成功/信息提示(如:邀请已发送待确认) */
+.am-fam-form-info {
+  margin-top: 6px; padding: 10px 12px; border-radius: 8px;
+  background: rgba(0, 255, 163, 0.1); border: 1px solid rgba(0, 255, 163, 0.35);
+  color: var(--bio-emerald); font-size: .9rem; line-height: 1.4; text-align: center;
+}
+
 /* 使用者卡片 */
 .am-fam-user-list { display: flex; flex-direction: column; gap: 10px; }
 .am-fam-user-card {
@@ -515,7 +522,20 @@ input { font-family: inherit; }
 .am-fam-user-edit:active { background: rgba(0,255,163,0.2); transform: scale(.92); }
 .am-fam-form-title { font-size: .95rem; font-weight: 600; color: var(--ink); margin-bottom: 10px; }
 .am-fam-user-phone { font-size: .82rem; color: var(--bio-cyan); font-family: 'Space Grotesk', monospace; margin-top: 8px; }
-.am-fam-user-bound { font-size: .8rem; color: var(--bio-emerald); margin-top: 6px; }
+.am-fam-user-bound { font-size: .8rem; margin-top: 6px; display: flex; align-items: center; gap: 4px; }
+.am-fam-bind-badge {
+  display: inline-block; padding: 3px 8px; border-radius: 5px; font-size: .72rem;
+  font-weight: 600; font-family: 'Space Grotesk', monospace;
+}
+.am-fam-bind-badge.active {
+  background: rgba(0, 255, 163, 0.12); color: var(--bio-emerald);
+  border: 1px solid rgba(0, 255, 163, 0.3);
+}
+.am-fam-bind-badge.unbound {
+  background: rgba(136, 147, 168, 0.1); color: var(--ink-muted);
+  border: 1px solid rgba(136, 147, 168, 0.25);
+}
+.am-fam-bind-source { font-size: .72rem; color: var(--ink-muted); }
 .am-fam-user-emergency { font-size: .8rem; color: var(--ink-soft); margin-top: 6px; }
 .am-fam-user-health { font-size: .8rem; color: var(--bio-amber); margin-top: 6px; }
 
@@ -549,6 +569,140 @@ input { font-family: inherit; }
 
 /* 空状态 */
 .am-fam-empty { padding: 22px; text-align: center; color: var(--ink-muted); font-size: .85rem; }
+
+/* ===== 家属端 待确认邀请 + 确认对话框 ===== */
+.am-fam-pending-section {
+  margin-top: 14px; margin-bottom: 14px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.am-fam-pending-banner {
+  padding: 10px 14px; border-radius: 10px;
+  background: rgba(0, 229, 255, 0.1); border: 1px solid rgba(0, 229, 255, 0.35);
+  color: var(--bio-cyan); font-size: .85rem; font-weight: 600;
+  display: flex; align-items: center; gap: 8px;
+  animation: ark-pulse-pending 2.4s ease-in-out infinite;
+}
+.am-fam-pending-icon { font-size: 1rem; }
+@keyframes ark-pulse-pending {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(0, 229, 255, 0.4); }
+  50% { box-shadow: 0 0 16px 2px rgba(0, 229, 255, 0.2); }
+}
+.am-fam-pending-card {
+  padding: 12px 14px; border-radius: 12px;
+  background: rgba(0, 0, 0, 0.3);
+  border: 1px solid rgba(0, 229, 255, 0.25);
+  display: flex; justify-content: space-between; align-items: center; gap: 10px;
+}
+.am-fam-pending-info { flex: 1; min-width: 0; }
+.am-fam-pending-name {
+  font-size: .95rem; font-weight: 600; color: var(--ink);
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+}
+.am-fam-pending-relation {
+  font-size: .72rem; color: var(--ink-muted); font-weight: 400;
+}
+.am-fam-pending-phone {
+  font-size: .78rem; color: var(--bio-cyan); font-family: 'Space Grotesk', monospace;
+  margin-top: 4px;
+}
+.am-fam-pending-status {
+  display: inline-block; margin-top: 6px;
+  padding: 3px 8px; border-radius: 5px; font-size: .7rem; font-weight: 600;
+  font-family: 'Space Grotesk', monospace;
+}
+.am-fam-pending-status.pending-me {
+  background: rgba(0, 229, 255, 0.12); color: var(--bio-cyan);
+  border: 1px solid rgba(0, 229, 255, 0.3);
+}
+.am-fam-pending-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.am-fam-confirm-btn, .am-fam-reject-btn {
+  padding: 8px 14px; border-radius: 8px; font-size: .8rem; font-weight: 600;
+  font-family: inherit; cursor: pointer; min-height: 40px; min-width: 48px;
+  transition: all .15s;
+}
+.am-fam-confirm-btn {
+  background: rgba(0, 255, 163, 0.12); color: var(--bio-emerald);
+  border: 1px solid rgba(0, 255, 163, 0.35);
+}
+.am-fam-confirm-btn:active { transform: scale(.92); background: rgba(0, 255, 163, 0.22); }
+.am-fam-reject-btn {
+  background: rgba(255, 46, 126, 0.1); color: var(--bio-magenta);
+  border: 1px solid rgba(255, 46, 126, 0.3);
+}
+.am-fam-reject-btn:active { transform: scale(.92); background: rgba(255, 46, 126, 0.2); }
+
+/* 确认对话框(语音+手动双确认) */
+.am-fam-confirm-overlay {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 9999;
+  background: rgba(0, 0, 0, 0.72); backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px; animation: ark-fade-in 0.2s ease;
+}
+@keyframes ark-fade-in { from { opacity: 0; } to { opacity: 1; } }
+.am-fam-confirm-modal {
+  position: relative; width: 100%; max-width: 400px;
+  background: var(--void-3); border: 1px solid rgba(0, 229, 255, 0.4);
+  border-radius: 18px; padding: 24px 20px 20px;
+  box-shadow: 0 16px 48px rgba(0, 229, 255, 0.15);
+  animation: ark-modal-pop 0.25s ease;
+}
+@keyframes ark-modal-pop {
+  from { transform: scale(.92); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+.am-fam-confirm-title {
+  font-size: 1.05rem; font-weight: 700; color: var(--bio-cyan);
+  text-align: center; margin-bottom: 14px;
+}
+.am-fam-confirm-body { margin-bottom: 16px; }
+.am-fam-confirm-text {
+  font-size: .92rem; color: var(--ink); line-height: 1.6; text-align: center;
+  margin-bottom: 8px;
+}
+.am-fam-confirm-text strong { color: var(--bio-emerald); font-weight: 700; }
+.am-fam-confirm-relation {
+  font-size: .85rem; color: var(--ink-soft); text-align: center; margin-bottom: 4px;
+}
+.am-fam-confirm-phone {
+  font-size: .82rem; color: var(--bio-cyan); text-align: center;
+  font-family: 'Space Grotesk', monospace; margin-bottom: 10px;
+}
+.am-fam-confirm-hint {
+  font-size: .8rem; color: var(--ink-muted); text-align: center;
+  padding: 8px 10px; border-radius: 8px;
+  background: rgba(0, 229, 255, 0.06); border: 1px solid rgba(0, 229, 255, 0.15);
+}
+.am-fam-confirm-error {
+  font-size: .8rem; color: #ff6b8a; text-align: center;
+  margin-top: 8px; padding: 6px 10px; border-radius: 6px;
+  background: rgba(255, 77, 109, 0.1);
+}
+.am-fam-confirm-actions { display: flex; gap: 10px; }
+.am-fam-confirm-btn-large, .am-fam-reject-btn-large {
+  flex: 1; padding: 13px; border-radius: 10px; font-size: .92rem; font-weight: 700;
+  font-family: inherit; cursor: pointer; min-height: 48px; transition: transform .15s;
+}
+.am-fam-confirm-btn-large {
+  background: linear-gradient(135deg, var(--bio-emerald), var(--bio-cyan));
+  color: var(--void); border: none;
+}
+.am-fam-confirm-btn-large:active { transform: scale(.96); }
+.am-fam-confirm-btn-large:disabled { opacity: .6; cursor: not-allowed; }
+.am-fam-reject-btn-large {
+  background: rgba(255, 46, 126, 0.12); color: var(--bio-magenta);
+  border: 1px solid rgba(255, 46, 126, 0.35);
+}
+.am-fam-reject-btn-large:active { transform: scale(.96); }
+.am-fam-reject-btn-large:disabled { opacity: .6; cursor: not-allowed; }
+.am-fam-confirm-close {
+  position: absolute; top: 8px; right: 12px;
+  width: 36px; height: 36px; border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08); color: var(--ink-muted);
+  border: none; font-size: 1.4rem; cursor: pointer; line-height: 1;
+  display: flex; align-items: center; justify-content: center;
+}
+.am-fam-confirm-close:active { transform: scale(.9); color: var(--ink); }
 
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .6; } }
@@ -3152,6 +3306,19 @@ input:focus-visible,
   background: rgba(255,182,39,0.12);
   color: var(--bio-amber);
 }
+.sp-family-status.pending-me {
+  background: rgba(0,200,255,0.12);
+  color: #00b8e6;
+  animation: ark-pulse-pending 2s ease-in-out infinite;
+}
+.sp-family-status.pending-other {
+  background: rgba(255,182,39,0.12);
+  color: var(--bio-amber);
+}
+@keyframes ark-pulse-pending {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
 .sp-unbind-btn {
   padding: 8px 14px;
   background: rgba(255,46,126,0.08);
@@ -3166,6 +3333,157 @@ input:focus-visible,
   min-height: 40px;
 }
 .sp-unbind-btn:hover { background: rgba(255,46,126,0.15); }
+
+/* 确认按钮 */
+.sp-confirm-btn {
+  padding: 8px 14px;
+  background: rgba(0,255,163,0.08);
+  border: 1px solid rgba(0,255,163,0.25);
+  border-radius: 8px;
+  color: var(--bio-emerald);
+  font-size: .8rem;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all .2s;
+  min-height: 40px;
+}
+.sp-confirm-btn:hover { background: rgba(0,255,163,0.15); }
+.sp-confirm-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* 家属卡片操作按钮组 */
+.sp-family-actions {
+  display: flex;
+  gap: 6px;
+}
+
+/* 待确认邀请提醒横幅 */
+.sp-pending-confirm-notice {
+  margin-top: 12px;
+}
+.sp-pending-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: rgba(0,200,255,0.08);
+  border: 1px solid rgba(0,200,255,0.25);
+  border-radius: 8px;
+  font-size: .85rem;
+  color: #00b8e6;
+  font-weight: 500;
+  margin-bottom: 8px;
+}
+.sp-pending-icon {
+  font-size: 1rem;
+}
+.sp-pending-card {
+  border-color: rgba(0,200,255,0.25);
+  background: rgba(0,200,255,0.04);
+}
+
+/* 确认对话框 */
+.sp-confirm-modal-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  padding: 20px;
+  animation: ark-fade-in 0.2s ease;
+}
+@keyframes ark-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.sp-confirm-modal {
+  position: relative;
+  background: var(--void-2, #1a1a2e);
+  border: 1px solid var(--gb, rgba(255,255,255,0.08));
+  border-radius: 16px;
+  padding: 28px 24px 24px;
+  max-width: 420px;
+  width: 100%;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  animation: ark-modal-slide 0.3s ease;
+}
+@keyframes ark-modal-slide {
+  from { transform: translateY(20px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+.sp-confirm-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--ink, #fff);
+  margin: 0 0 16px;
+  text-align: center;
+}
+.sp-confirm-body {
+  margin-bottom: 20px;
+}
+.sp-confirm-text {
+  font-size: .95rem;
+  color: var(--ink, #fff);
+  line-height: 1.6;
+  margin: 0 0 8px;
+}
+.sp-confirm-text strong {
+  color: var(--bio-emerald, #00ffa3);
+  font-weight: 600;
+}
+.sp-confirm-relation {
+  font-size: .9rem;
+  color: var(--ink-muted, #888);
+  margin: 0 0 6px;
+}
+.sp-confirm-phone {
+  font-size: .9rem;
+  color: var(--ink-muted, #888);
+  font-family: 'Space Grotesk', monospace;
+  margin: 0 0 12px;
+}
+.sp-confirm-hint {
+  font-size: .85rem;
+  color: #00b8e6;
+  padding: 8px 12px;
+  background: rgba(0,200,255,0.08);
+  border-radius: 8px;
+  margin: 0;
+  text-align: center;
+}
+.sp-confirm-actions {
+  display: flex;
+  gap: 10px;
+}
+.sp-confirm-btn-large {
+  flex: 1;
+  padding: 14px;
+  font-size: .95rem;
+  min-height: 48px;
+}
+.sp-confirm-close {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  background: none;
+  border: none;
+  color: var(--ink-muted, #888);
+  font-size: 1.5rem;
+  cursor: pointer;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: all .2s;
+}
+.sp-confirm-close:hover {
+  background: rgba(255,255,255,0.08);
+  color: var(--ink, #fff);
+}
 
 .sp-account-msg {
   margin-top: 8px;

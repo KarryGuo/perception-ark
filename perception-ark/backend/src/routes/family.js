@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getSosEvents, getMemoryStats, getAllRoutes, searchFaces, getAllUsers, addUser, deleteUser, updateUser, getAllHabits, findUserAccountByPhone, syncFamilyBindingFromFamilySide, getAccountById } from '../services/memory-store.js';
+import { getSosEvents, getMemoryStats, getAllRoutes, searchFaces, getAllUsers, addUser, deleteUser, updateUser, getAllHabits, findUserAccountByPhone, syncFamilyBindingFromFamilySide, getAccountById, getFamilyBoundVisuallyImpairedUsers, confirmFamilyBinding, rejectFamilyBinding, getPendingConfirmFamilyBindings } from '../services/memory-store.js';
 import { getContext, getStats } from '../agents/orchestrator.js';
 import { authRequired } from '../services/auth.js';
 import { log } from '../utils/logger.js';
@@ -23,8 +23,15 @@ function privacyFilterLocation(location) {
 }
 
 // 使用者列表(家属绑定的被守护人)
-router.get('/users', (req, res) => {
-  res.json({ users: getAllUsers() });
+// 合并两个来源: 1.家属主动添加的(users表) 2.视障端邀请自动建立的(family_bindings反向查询)
+router.get('/users', authRequired, (req, res) => {
+  const manualUsers = getAllUsers();
+  // 反向查询: 通过family_bindings自动绑定的视障人员(视障端发起邀请,家属注册后自动激活)
+  const invitedUsers = getFamilyBoundVisuallyImpairedUsers(req.user.id);
+  // 合并去重(以bound_account_id为键)
+  const seenAccountIds = new Set(manualUsers.filter(u => u.bound_account_id).map(u => u.bound_account_id));
+  const merged = [...manualUsers, ...invitedUsers.filter(u => !seenAccountIds.has(u.bound_account_id))];
+  res.json({ users: merged });
 });
 
 // 添加使用者(绑定信息) - 支持通过 bind_phone 手机号绑定视障账号
@@ -41,36 +48,108 @@ router.post('/users', authRequired, (req, res) => {
     }
     bound_account_id = account.id;
     log('FAMILY', `家属通过手机号绑定视障账号: ${bind_phone} (account_id=${account.id})`);
+  }
 
-    // 反向同步: 在视障端的family_bindings表插入active记录
-    // 确保视障用户登录后SOS和设置里能看到被家属绑定的信息
-    if (req.user?.id) {
-      const familyAccount = getAccountById(req.user.id);
-      if (familyAccount?.phone) {
-        const syncResult = syncFamilyBindingFromFamilySide(
-          account.id,           // 视障用户账号ID
-          req.user.id,          // 家属账号ID
-          familyAccount.phone,  // 家属手机号
-          familyAccount.nickname || familyAccount.username, // 家属称呼
-          relation              // 关系(来自使用者表单)
-        );
-        if (syncResult.success) {
-          log('FAMILY', `反向同步家属绑定成功: 视障账号${account.id} ← 家属${req.user.id}`);
-        } else {
-          log('FAMILY', `反向同步家属绑定失败: ${syncResult.error}`, 'warn');
+  const id = addUser({ name, age, relation, phone, emergency_contact, emergency_phone, health_notes, bound_account_id });
+
+  // 反向同步到视障端family_bindings表(新机制: pending 等待视障确认 / autoActivated 双方互邀请直接 active)
+  let bindStatus = 'none';
+  let bindMessage = null;
+  if (bound_account_id && req.user?.id) {
+    const familyAccount = getAccountById(req.user.id);
+    if (familyAccount?.phone) {
+      const syncResult = syncFamilyBindingFromFamilySide(
+        bound_account_id, req.user.id, familyAccount.phone,
+        familyAccount.nickname || familyAccount.username, relation
+      );
+      if (syncResult.success) {
+        bindStatus = syncResult.status;
+        if (syncResult.autoActivated) {
+          bindMessage = '双方互邀请,绑定成功';
+        } else if (syncResult.status === 'pending') {
+          bindMessage = '已发送邀请,等待视障用户确认后绑定生效';
+        } else if (syncResult.status === 'active') {
+          bindMessage = '绑定成功';
         }
+        log('FAMILY', `反向同步家属绑定: 视障账号${bound_account_id} ← 家属${req.user.id} status=${syncResult.status}`);
+      } else {
+        log('FAMILY', `反向同步家属绑定失败: ${syncResult.error}`, 'warn');
       }
     }
   }
 
-  const id = addUser({ name, age, relation, phone, emergency_contact, emergency_phone, health_notes, bound_account_id });
-  res.json({ success: true, id, bound_account_id });
+  res.json({
+    success: true,
+    id,
+    bound_account_id,
+    bindStatus,
+    needsConfirm: bindStatus === 'pending',
+    autoActivated: bindStatus === 'active' && bindMessage === '双方互邀请,绑定成功',
+    message: bindMessage
+  });
 });
 
 // 删除使用者
 router.delete('/users/:id', (req, res) => {
   const changes = deleteUser(parseInt(req.params.id));
   res.json({ success: true, changes });
+});
+
+/**
+ * 家属端待确认列表(视障端发起的邀请,等待家属确认)
+ * GET /api/family/pending-confirm
+ */
+router.get('/pending-confirm', authRequired, (req, res) => {
+  try {
+    const list = getPendingConfirmFamilyBindings(req.user.id);
+    res.json({ success: true, list });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * 家属确认视障端发起的邀请
+ * POST /api/family/confirm/:bindingId
+ */
+router.post('/confirm/:bindingId', authRequired, (req, res) => {
+  try {
+    const bindingId = parseInt(req.params.bindingId);
+    if (!bindingId) {
+      return res.status(400).json({ success: false, error: '无效的绑定ID' });
+    }
+    const result = confirmFamilyBinding(bindingId, req.user.id, 'family');
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+    log('FAMILY', `家属 ${req.user.username} 确认视障邀请: bindingId=${bindingId}`);
+    res.json({ success: true, message: '已确认绑定', status: result.status });
+  } catch (err) {
+    log('FAMILY', `家属确认邀请失败: ${err.message}`, 'error');
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * 家属拒绝视障端发起的邀请
+ * POST /api/family/reject/:bindingId
+ */
+router.post('/reject/:bindingId', authRequired, (req, res) => {
+  try {
+    const bindingId = parseInt(req.params.bindingId);
+    if (!bindingId) {
+      return res.status(400).json({ success: false, error: '无效的绑定ID' });
+    }
+    const result = rejectFamilyBinding(bindingId, req.user.id, 'family');
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+    log('FAMILY', `家属 ${req.user.username} 拒绝视障邀请: bindingId=${bindingId}`);
+    res.json({ success: true, message: '已拒绝邀请' });
+  } catch (err) {
+    log('FAMILY', `家属拒绝邀请失败: ${err.message}`, 'error');
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 // 编辑使用者信息
@@ -120,11 +199,16 @@ router.put('/users/:id', authRequired, (req, res) => {
 });
 
 // 家属端首页数据 - 实时状态总览
-router.get('/overview', (req, res) => {
+// 合并users表和family_bindings反向查询,确保视障端邀请的绑定也能显示
+router.get('/overview', authRequired, (req, res) => {
   const context = getContext();
   const stats = getStats();
   const sosEvents = getSosEvents(5);
-  const users = getAllUsers();
+  const manualUsers = getAllUsers();
+  const invitedUsers = getFamilyBoundVisuallyImpairedUsers(req.user.id);
+  // 合并去重
+  const seenAccountIds = new Set(manualUsers.filter(u => u.bound_account_id).map(u => u.bound_account_id));
+  const users = [...manualUsers, ...invitedUsers.filter(u => !seenAccountIds.has(u.bound_account_id))];
 
   // 从已绑定的使用者中提取紧急联系人
   const primaryUser = users[0];

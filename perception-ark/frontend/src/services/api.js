@@ -118,6 +118,14 @@ export const api = {
   // 解绑家属
   unbindFamily: (bindingId) =>
     request(`/auth/family/unbind/${bindingId}`, { method: 'DELETE' }),
+  // 视障端: 待确认的家属邀请列表(家属端发起,等待视障确认)
+  getFamilyPendingConfirm: () => request('/auth/family/pending-confirm'),
+  // 视障端: 确认家属邀请
+  confirmFamilyInvitation: (bindingId) =>
+    request(`/auth/family/confirm/${bindingId}`, { method: 'POST' }),
+  // 视障端: 拒绝家属邀请
+  rejectFamilyInvitation: (bindingId) =>
+    request(`/auth/family/reject/${bindingId}`, { method: 'POST' }),
 
   // 系统
   health: () => request('/health'),
@@ -264,6 +272,14 @@ export const api = {
     }),
   familyDeleteUser: (id) =>
     request(`/family/users/${id}`, { method: 'DELETE' }),
+  // 家属端: 待确认的视障邀请列表(视障端发起,等待家属确认)
+  familyPendingConfirm: () => request('/family/pending-confirm'),
+  // 家属端: 确认视障邀请
+  familyConfirmInvitation: (bindingId) =>
+    request(`/family/confirm/${bindingId}`, { method: 'POST' }),
+  // 家属端: 拒绝视障邀请
+  familyRejectInvitation: (bindingId) =>
+    request(`/family/reject/${bindingId}`, { method: 'POST' }),
   // 管理端新增
   familyDashboard: () => request('/family/dashboard'),
   familyRecognitionHistory: (limit) => request(`/family/recognition-history${limit ? `?limit=${limit}` : ''}`),

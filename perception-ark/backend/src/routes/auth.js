@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
-import { createAccount, getAccountByUsername, getAccountById, getAccountByPhone, updateAccountProfile, deleteAccount, getSecurityQuestion, verifySecurityAnswer, resetPassword, updateSecurity, addFamilyBinding, getFamilyBindings, removeFamilyBinding, getActiveFamilyBindingsAsContacts } from '../services/memory-store.js';
+import { createAccount, getAccountByUsername, getAccountById, getAccountByPhone, updateAccountProfile, deleteAccount, getSecurityQuestion, verifySecurityAnswer, resetPassword, updateSecurity, addFamilyBinding, getFamilyBindings, removeFamilyBinding, getActiveFamilyBindingsAsContacts, confirmFamilyBinding, rejectFamilyBinding, getPendingConfirmViBindings } from '../services/memory-store.js';
 import { generateToken, authRequired } from '../services/auth.js';
 import { sendFamilyInviteSms } from '../services/sms.js';
 import { log } from '../utils/logger.js';
@@ -485,21 +485,35 @@ router.post('/family/bind', authRequired, async (req, res) => {
       }
       return res.status(500).json({ success: false, error: result.error });
     }
-    log('AUTH', `用户 ${myAccount.username} 绑定家属: ${phoneTrim} (status=${result.status})`);
+    log('AUTH', `用户 ${myAccount.username} 绑定家属: ${phoneTrim} (status=${result.status}, autoActivated=${!!result.autoActivated})`);
     // 家属未注册时发送短信邀请
     let smsSent = false;
-    if (result.status === 'pending') {
+    const familyNotRegistered = result.status === 'pending' && !result.familyAccount;
+    if (familyNotRegistered) {
       const smsResult = await sendFamilyInviteSms(phoneTrim, myAccount.nickname || myAccount.username);
       smsSent = smsResult.success;
       if (!smsSent) {
         log('AUTH', `家属邀请短信发送失败: ${smsResult.error}`, 'warn');
       }
     }
+    // 新机制: 需对方确认。autoActivated=true 表示双方互邀请直接成功
+    let message;
+    if (result.autoActivated) {
+      message = '双方互邀请,绑定成功';
+    } else if (result.status === 'active') {
+      message = '家属绑定成功';
+    } else if (familyNotRegistered) {
+      message = '该用户还没有注册,已发送短信邀请,对方注册并确认后绑定生效';
+    } else {
+      message = '已发送邀请,等待家属确认后绑定生效';
+    }
     res.json({
       success: true,
-      message: result.status === 'active' ? '家属绑定成功' : '该用户还没有注册,已发送短信邀请,对方注册后将自动完成绑定',
+      message,
       status: result.status,
-      not_registered: result.status === 'pending',
+      not_registered: familyNotRegistered,
+      needsConfirm: result.status === 'pending' && !result.autoActivated,
+      autoActivated: !!result.autoActivated,
       familyAccount: result.familyAccount,
       smsSent
     });
@@ -518,6 +532,64 @@ router.get('/family/list', authRequired, (req, res) => {
     const list = getFamilyBindings(req.user.id);
     res.json({ success: true, list });
   } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * 视障端待确认列表(家属端发起的邀请,等待视障用户确认)
+ * GET /api/auth/family/pending-confirm
+ * 返回需要当前视障用户确认的家属邀请列表
+ */
+router.get('/family/pending-confirm', authRequired, (req, res) => {
+  try {
+    const list = getPendingConfirmViBindings(req.user.id);
+    res.json({ success: true, list });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * 视障用户确认家属邀请(家属端发起的邀请)
+ * POST /api/auth/family/confirm/:bindingId
+ */
+router.post('/family/confirm/:bindingId', authRequired, (req, res) => {
+  try {
+    const bindingId = parseInt(req.params.bindingId);
+    if (!bindingId) {
+      return res.status(400).json({ success: false, error: '无效的绑定ID' });
+    }
+    const result = confirmFamilyBinding(bindingId, req.user.id, 'user');
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+    log('AUTH', `视障用户 ${req.user.username} 确认家属邀请: bindingId=${bindingId}`);
+    res.json({ success: true, message: '已确认绑定', status: result.status });
+  } catch (err) {
+    log('AUTH', `确认家属邀请失败: ${err.message}`, 'error');
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
+ * 视障用户拒绝家属邀请
+ * POST /api/auth/family/reject/:bindingId
+ */
+router.post('/family/reject/:bindingId', authRequired, (req, res) => {
+  try {
+    const bindingId = parseInt(req.params.bindingId);
+    if (!bindingId) {
+      return res.status(400).json({ success: false, error: '无效的绑定ID' });
+    }
+    const result = rejectFamilyBinding(bindingId, req.user.id, 'user');
+    if (!result.success) {
+      return res.status(400).json(result);
+    }
+    log('AUTH', `视障用户 ${req.user.username} 拒绝家属邀请: bindingId=${bindingId}`);
+    res.json({ success: true, message: '已拒绝邀请' });
+  } catch (err) {
+    log('AUTH', `拒绝家属邀请失败: ${err.message}`, 'error');
     res.status(500).json({ success: false, error: err.message });
   }
 });

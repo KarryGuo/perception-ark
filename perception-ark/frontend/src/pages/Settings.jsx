@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useAuth } from '../hooks/useAuth.jsx';
-import { useSpeechSynthesis } from '../hooks/useSpeech.js';
+import { useSpeechSynthesis, useSpeechRecognition } from '../hooks/useSpeech.js';
 import { api } from '../services/api.js';
 
 /**
@@ -11,6 +11,7 @@ import { api } from '../services/api.js';
 export default function Settings() {
   const { user, logout, updateUser } = useAuth();
   const { speak } = useSpeechSynthesis();
+  const { start: asrStart, stop: asrStop, reset: asrReset, transcript: asrText, listening: asrListening, supported: asrSupported } = useSpeechRecognition();
 
   // ===== 音频设置 =====
   const [ttsRate, setTtsRate] = useState(() => parseFloat(localStorage.getItem('ark_tts_rate')) || 0.95);
@@ -76,6 +77,13 @@ export default function Settings() {
   const [familyBinding, setFamilyBinding] = useState(false);
   const [familyMsg, setFamilyMsg] = useState(null);
 
+  // ===== 待确认的家属邀请(家属端发起,等待视障用户确认) =====
+  const [pendingConfirmList, setPendingConfirmList] = useState([]);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [currentConfirmItem, setCurrentConfirmItem] = useState(null);
+  const [confirmProcessing, setConfirmProcessing] = useState(false);
+  const announcedIdsRef = useRef(new Set()); // 已语音播报过的邀请ID,避免重复播报
+
   const loadFamilyList = useCallback(async () => {
     try {
       const res = await api.getFamilyList();
@@ -85,6 +93,28 @@ export default function Settings() {
     }
   }, []);
 
+  // 加载待确认的家属邀请(家属端发起,等待视障用户确认)
+  const loadPendingConfirm = useCallback(async () => {
+    try {
+      const res = await api.getFamilyPendingConfirm();
+      if (res?.success && Array.isArray(res.list)) {
+        setPendingConfirmList(res.list);
+        // 对新出现的邀请进行语音播报提示
+        res.list.forEach(item => {
+          if (!announcedIdsRef.current.has(item.id)) {
+            announcedIdsRef.current.add(item.id);
+            const familyName = item.family_nickname || item.family_username || item.family_phone || '家属';
+            const relation = item.relation || '家属';
+            const phoneText = item.family_phone ? `,对方手机号${item.family_phone}` : '';
+            speak(`收到来自${familyName}的家属绑定邀请,关系为${relation}${phoneText}。请确认是否绑定。说"确认绑定"或点击确认按钮,说"拒绝"或点击拒绝按钮。`, { urgent: true });
+          }
+        });
+      }
+    } catch (err) {
+      console.warn('[Settings] 加载待确认邀请失败:', err.message);
+    }
+  }, [speak]);
+
   const handleBindFamily = useCallback(async () => {
     setFamilyMsg(null);
     if (!familyPhone.trim()) { setFamilyMsg({ type: 'err', text: '请输入家属手机号' }); return; }
@@ -93,17 +123,19 @@ export default function Settings() {
     try {
       const res = await api.bindFamily(familyPhone.trim(), familyName.trim(), familyRelation.trim());
       if (res?.success) {
-        // 区分三种状态: 已注册直接绑定 / 未注册(发短信邀请) / 其他
+        // 新机制: 需对方确认。autoActivated=true 表示双方互邀请直接成功
         let speakText, msgType;
-        if (res.status === 'active') {
+        if (res.autoActivated) {
+          speakText = '双方互邀请,绑定成功';
+          msgType = 'ok';
+        } else if (res.status === 'active') {
           speakText = '家属绑定成功';
           msgType = 'ok';
         } else if (res.not_registered) {
-          // 未注册: 红字提示该用户还没有注册,但同时已发送邀请
-          speakText = '该用户还没有注册,已发送短信邀请,对方注册后将自动完成绑定';
+          speakText = '该用户还没有注册,已发送短信邀请,对方注册并确认后绑定生效';
           msgType = 'err';
         } else {
-          speakText = '已发送短信邀请,对方注册后将自动完成绑定';
+          speakText = '已发送邀请,等待家属确认后绑定生效';
           msgType = 'ok';
         }
         setFamilyMsg({ type: msgType, text: res.message || speakText });
@@ -119,6 +151,62 @@ export default function Settings() {
       setFamilyBinding(false);
     }
   }, [familyPhone, familyName, familyRelation, loadFamilyList, speak]);
+
+  // 确认家属邀请
+  const handleConfirmFamilyInvitation = useCallback(async (bindingId) => {
+    setConfirmProcessing(true);
+    try {
+      const res = await api.confirmFamilyInvitation(bindingId);
+      if (res?.success) {
+        speak('已确认绑定');
+        setShowConfirmModal(false);
+        setCurrentConfirmItem(null);
+        asrStop();
+        announcedIdsRef.current.delete(bindingId);
+        loadPendingConfirm();
+        loadFamilyList();
+      } else {
+        setFamilyMsg({ type: 'err', text: res?.error || '确认失败' });
+      }
+    } catch (err) {
+      setFamilyMsg({ type: 'err', text: `确认失败: ${err.message}` });
+    } finally {
+      setConfirmProcessing(false);
+    }
+  }, [speak, asrStop, loadPendingConfirm, loadFamilyList]);
+
+  // 拒绝家属邀请
+  const handleRejectFamilyInvitation = useCallback(async (bindingId) => {
+    setConfirmProcessing(true);
+    try {
+      const res = await api.rejectFamilyInvitation(bindingId);
+      if (res?.success) {
+        speak('已拒绝邀请');
+        setShowConfirmModal(false);
+        setCurrentConfirmItem(null);
+        asrStop();
+        announcedIdsRef.current.delete(bindingId);
+        loadPendingConfirm();
+      } else {
+        setFamilyMsg({ type: 'err', text: res?.error || '拒绝失败' });
+      }
+    } catch (err) {
+      setFamilyMsg({ type: 'err', text: `拒绝失败: ${err.message}` });
+    } finally {
+      setConfirmProcessing(false);
+    }
+  }, [speak, asrStop, loadPendingConfirm]);
+
+  // 打开确认对话框并启动语音识别
+  const openConfirmModal = useCallback((item) => {
+    setCurrentConfirmItem(item);
+    setShowConfirmModal(true);
+    asrReset();
+    // 启动ASR监听"确认绑定"/"拒绝"指令
+    if (asrSupported) {
+      asrStart();
+    }
+  }, [asrReset, asrSupported, asrStart]);
 
   const handleUnbindFamily = useCallback(async (bindingId) => {
     if (!confirm('确认解绑该家属?')) return;
@@ -167,10 +255,35 @@ export default function Settings() {
     localStorage.setItem('ark_high_contrast', String(highContrast));
   }, [highContrast]);
 
-  // 页面加载时获取家属绑定列表
+  // 页面加载时获取家属绑定列表 + 定时拉取待确认邀请
   useEffect(() => {
     loadFamilyList();
-  }, [loadFamilyList]);
+    loadPendingConfirm();
+    // 每30秒轮询一次待确认邀请
+    const timer = setInterval(loadPendingConfirm, 30000);
+    return () => clearInterval(timer);
+  }, [loadFamilyList, loadPendingConfirm]);
+
+  // ASR 语音指令监听: 当确认对话框打开时,识别"确认绑定"/"拒绝"指令
+  useEffect(() => {
+    if (!showConfirmModal || !currentConfirmItem || !asrText) return;
+    const text = asrText.trim();
+    // 匹配确认指令
+    if (/^(确认|确认绑定|同意|好的|确定)/.test(text)) {
+      handleConfirmFamilyInvitation(currentConfirmItem.id);
+      asrReset();
+    } else if (/^(拒绝|拒绝绑定|不同意|取消|不要)/.test(text)) {
+      handleRejectFamilyInvitation(currentConfirmItem.id);
+      asrReset();
+    }
+  }, [asrText, showConfirmModal, currentConfirmItem, handleConfirmFamilyInvitation, handleRejectFamilyInvitation, asrReset]);
+
+  // 组件卸载时停止ASR
+  useEffect(() => {
+    return () => {
+      if (asrListening) asrStop();
+    };
+  }, [asrListening, asrStop]);
 
   const handleSaveRate = useCallback((rate) => {
     localStorage.setItem('ark_tts_rate', String(rate));
@@ -702,33 +815,150 @@ export default function Settings() {
                 <div className="sp-item">
                   <label className="sp-label"><span>已绑定家属 ({familyList.length})</span></label>
                   <div className="sp-family-list">
-                    {familyList.map(f => (
-                      <div key={f.id} className="sp-family-card">
-                        <div className="sp-family-info">
-                          <div className="sp-family-name">
-                            {f.family_name || f.family_phone}
-                            {f.relation && <span className="sp-family-relation">({f.relation})</span>}
+                    {familyList.map(f => {
+                      // 状态判定: active=已绑定 / pending+initiator=user=待对方确认 / pending+initiator=family=待我确认 / pending+无accountId=待注册
+                      const isPendingMe = f.status === 'pending' && f.initiator === 'family';
+                      const isPendingOther = f.status === 'pending' && f.initiator === 'user' && f.family_account_id;
+                      const isPendingUnregistered = f.status === 'pending' && !f.family_account_id;
+                      const statusText = f.status === 'active' ? '已绑定'
+                        : isPendingMe ? '待我确认'
+                        : isPendingOther ? '待对方确认'
+                        : '待注册';
+                      return (
+                        <div key={f.id} className="sp-family-card">
+                          <div className="sp-family-info">
+                            <div className="sp-family-name">
+                              {f.family_name || f.family_phone}
+                              {f.relation && <span className="sp-family-relation">({f.relation})</span>}
+                            </div>
+                            <div className="sp-family-phone">{f.family_phone}</div>
+                            <div className={`sp-family-status ${f.status} ${isPendingMe ? 'pending-me' : ''} ${isPendingOther ? 'pending-other' : ''}`}>
+                              {statusText}
+                            </div>
                           </div>
-                          <div className="sp-family-phone">{f.family_phone}</div>
-                          <div className={`sp-family-status ${f.status}`}>
-                            {f.status === 'active' ? '已绑定' : '待注册'}
-                          </div>
+                          {isPendingMe ? (
+                            // 待我确认: 显示确认/拒绝按钮
+                            <div className="sp-family-actions">
+                              <button
+                                className="sp-confirm-btn"
+                                onClick={() => openConfirmModal(f)}
+                                aria-label={`确认绑定 ${f.family_name || f.family_phone}`}
+                              >
+                                确认
+                              </button>
+                              <button
+                                className="sp-unbind-btn"
+                                onClick={() => handleRejectFamilyInvitation(f.id)}
+                                aria-label={`拒绝 ${f.family_name || f.family_phone}`}
+                              >
+                                拒绝
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              className="sp-unbind-btn"
+                              onClick={() => handleUnbindFamily(f.id)}
+                              aria-label={`解绑 ${f.family_name || f.family_phone}`}
+                            >
+                              解绑
+                            </button>
+                          )}
                         </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* 待确认邀请提醒(家属端发起的邀请,数量>0时显示) */}
+              {pendingConfirmList.length > 0 && (
+                <div className="sp-item sp-pending-confirm-notice">
+                  <div className="sp-pending-banner">
+                    <span className="sp-pending-icon">🔔</span>
+                    <span>您有 {pendingConfirmList.length} 条家属绑定邀请待确认</span>
+                  </div>
+                  {pendingConfirmList.map(item => (
+                    <div key={item.id} className="sp-family-card sp-pending-card">
+                      <div className="sp-family-info">
+                        <div className="sp-family-name">
+                          {item.family_nickname || item.family_username || item.family_phone}
+                          {item.relation && <span className="sp-family-relation">({item.relation})</span>}
+                        </div>
+                        <div className="sp-family-phone">{item.family_phone}</div>
+                        <div className="sp-family-status pending-me">待我确认</div>
+                      </div>
+                      <div className="sp-family-actions">
+                        <button
+                          className="sp-confirm-btn"
+                          onClick={() => openConfirmModal(item)}
+                          aria-label={`确认 ${item.family_nickname || item.family_phone} 的绑定邀请`}
+                        >
+                          确认
+                        </button>
                         <button
                           className="sp-unbind-btn"
-                          onClick={() => handleUnbindFamily(f.id)}
-                          aria-label={`解绑 ${f.family_name || f.family_phone}`}
+                          onClick={() => handleRejectFamilyInvitation(item.id)}
+                          aria-label={`拒绝 ${item.family_nickname || item.family_phone} 的绑定邀请`}
                         >
-                          解绑
+                          拒绝
                         </button>
                       </div>
-                    ))}
-                  </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
           )}
         </section>
+
+        {/* ===== 家属绑定确认对话框(语音+手动双确认) ===== */}
+        {showConfirmModal && currentConfirmItem && (
+          <div className="sp-confirm-modal-overlay" role="dialog" aria-modal="true" aria-label="家属绑定确认">
+            <div className="sp-confirm-modal">
+              <h3 className="sp-confirm-title">家属绑定确认</h3>
+              <div className="sp-confirm-body">
+                <p className="sp-confirm-text">
+                  收到来自 <strong>{currentConfirmItem.family_nickname || currentConfirmItem.family_username || currentConfirmItem.family_phone}</strong>
+                  {' '}的家属绑定邀请
+                </p>
+                {currentConfirmItem.relation && (
+                  <p className="sp-confirm-relation">关系：{currentConfirmItem.relation}</p>
+                )}
+                <p className="sp-confirm-phone">家属手机号：{currentConfirmItem.family_phone}</p>
+                <p className="sp-confirm-hint">
+                  {asrSupported && asrListening
+                    ? '🎤 正在聆听...请说"确认绑定"或"拒绝"'
+                    : '请点击下方按钮确认或拒绝'}
+                </p>
+              </div>
+              <div className="sp-confirm-actions">
+                <button
+                  className="sp-confirm-btn sp-confirm-btn-large"
+                  onClick={() => handleConfirmFamilyInvitation(currentConfirmItem.id)}
+                  disabled={confirmProcessing}
+                  aria-label="确认绑定"
+                >
+                  {confirmProcessing ? '处理中...' : '✓ 确认绑定'}
+                </button>
+                <button
+                  className="sp-unbind-btn sp-confirm-btn-large"
+                  onClick={() => handleRejectFamilyInvitation(currentConfirmItem.id)}
+                  disabled={confirmProcessing}
+                  aria-label="拒绝邀请"
+                >
+                  ✗ 拒绝
+                </button>
+              </div>
+              <button
+                className="sp-confirm-close"
+                onClick={() => { setShowConfirmModal(false); setCurrentConfirmItem(null); asrStop(); }}
+                aria-label="关闭对话框"
+              >
+                ×
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* ===== 问答对话设置 ===== */}
         <section className="sp-section">

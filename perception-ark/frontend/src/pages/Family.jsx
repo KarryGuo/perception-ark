@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { api } from '../services/api.js';
 import { useAuth } from '../hooks/useAuth.jsx';
 import { useWebSocket } from '../hooks/useWebSocket.js';
+import { useSpeechSynthesis, useSpeechRecognition } from '../hooks/useSpeech.js';
 
 // 顶部药丸Tab(与视障端统一框架)
 const TABS = [
@@ -13,6 +14,8 @@ const TABS = [
 
 export default function Family() {
   const { user: currentUser, logout } = useAuth();
+  const { speak } = useSpeechSynthesis();
+  const { start: asrStart, stop: asrStop, reset: asrReset, transcript: asrText, listening: asrListening, supported: asrSupported } = useSpeechRecognition();
   const [dashboard, setDashboard] = useState(null);
   const [sosEvents, setSosEvents] = useState([]);
   const [contacts, setContacts] = useState([]);
@@ -32,6 +35,14 @@ export default function Family() {
   const [liveAlert, setLiveAlert] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const [formError, setFormError] = useState(null); // 表单错误提示(如:该账号未注册)
+  const [formInfo, setFormInfo] = useState(null); // 表单成功提示(如:邀请已发送待确认)
+
+  // ===== 待确认邀请(视障端发起,等待家属确认) =====
+  const [pendingConfirmList, setPendingConfirmList] = useState([]);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [currentConfirmItem, setCurrentConfirmItem] = useState(null);
+  const [confirmProcessing, setConfirmProcessing] = useState(false);
+  const announcedIdsRef = useRef(new Set()); // 已语音播报过的邀请ID,避免重复播报
 
   const loadData = useCallback(async (silent = false) => {
     if (silent) setRefreshing(true);
@@ -66,15 +77,115 @@ export default function Family() {
     }
   }, []);
 
+  // 加载待确认邀请(视障端发起,等待家属确认)
+  const loadPendingConfirm = useCallback(async () => {
+    try {
+      const res = await api.familyPendingConfirm();
+      if (res?.success && Array.isArray(res.list)) {
+        setPendingConfirmList(res.list);
+        // 对新出现的邀请进行语音播报提示(仅在非编辑表单状态,避免干扰)
+        res.list.forEach(item => {
+          if (!announcedIdsRef.current.has(item.id)) {
+            announcedIdsRef.current.add(item.id);
+            const viName = item.user_nickname || item.user_username || item.user_phone || '视障人员';
+            const relation = item.relation || '家属';
+            const phoneText = item.user_phone ? `,对方手机号${item.user_phone}` : '';
+            speak(`收到来自${viName}的绑定邀请,关系为${relation}${phoneText}。请确认是否绑定。说"确认绑定"或点击确认按钮,说"拒绝"或点击拒绝按钮。`, { urgent: true });
+          }
+        });
+      }
+    } catch (err) {
+      console.warn('[Family] 加载待确认邀请失败:', err.message);
+    }
+  }, [speak]);
+
+  // 确认视障端发起的邀请
+  const handleConfirmInvitation = useCallback(async (bindingId) => {
+    setConfirmProcessing(true);
+    try {
+      const res = await api.familyConfirmInvitation(bindingId);
+      if (res?.success) {
+        speak('已确认绑定');
+        setShowConfirmModal(false);
+        setCurrentConfirmItem(null);
+        asrStop();
+        announcedIdsRef.current.delete(bindingId);
+        loadPendingConfirm();
+        loadUsers();
+      } else {
+        setFormError(res?.error || '确认失败');
+      }
+    } catch (err) {
+      setFormError(`确认失败: ${err.message}`);
+    } finally {
+      setConfirmProcessing(false);
+    }
+  }, [speak, asrStop, loadPendingConfirm, loadUsers]);
+
+  // 拒绝视障端发起的邀请
+  const handleRejectInvitation = useCallback(async (bindingId) => {
+    setConfirmProcessing(true);
+    try {
+      const res = await api.familyRejectInvitation(bindingId);
+      if (res?.success) {
+        speak('已拒绝邀请');
+        setShowConfirmModal(false);
+        setCurrentConfirmItem(null);
+        asrStop();
+        announcedIdsRef.current.delete(bindingId);
+        loadPendingConfirm();
+      } else {
+        setFormError(res?.error || '拒绝失败');
+      }
+    } catch (err) {
+      setFormError(`拒绝失败: ${err.message}`);
+    } finally {
+      setConfirmProcessing(false);
+    }
+  }, [speak, asrStop, loadPendingConfirm]);
+
+  // 打开确认对话框并启动ASR监听
+  const openConfirmModal = useCallback((item) => {
+    setCurrentConfirmItem(item);
+    setShowConfirmModal(true);
+    setFormError(null);
+    asrReset();
+    if (asrSupported) {
+      asrStart();
+    }
+  }, [asrReset, asrSupported, asrStart]);
+
   useEffect(() => {
     loadData();
     loadUsers();
+    loadPendingConfirm();
     const interval = setInterval(() => {
       loadData(true);
       loadUsers();
+      loadPendingConfirm();
     }, 5000);
     return () => clearInterval(interval);
-  }, [loadData, loadUsers]);
+  }, [loadData, loadUsers, loadPendingConfirm]);
+
+  // ASR 语音指令监听: 当确认对话框打开时,识别"确认绑定"/"拒绝"指令
+  useEffect(() => {
+    if (!showConfirmModal || !currentConfirmItem || !asrText) return;
+    const text = asrText.trim();
+    if (/^(确认|确认绑定|同意|好的|确定)/.test(text)) {
+      handleConfirmInvitation(currentConfirmItem.id);
+      asrReset();
+    } else if (/^(拒绝|拒绝绑定|不同意|取消|不要)/.test(text)) {
+      handleRejectInvitation(currentConfirmItem.id);
+      asrReset();
+    }
+  }, [asrText, showConfirmModal, currentConfirmItem, handleConfirmInvitation, handleRejectInvitation, asrReset]);
+
+  // 组件卸载时停止ASR
+  useEffect(() => {
+    return () => {
+      if (asrListening) asrStop();
+    };
+  }, [asrListening, asrStop]);
 
   const { connected } = useWebSocket(useCallback((event) => {
     if (event.type === 'sos') {
@@ -91,6 +202,7 @@ export default function Family() {
     e.preventDefault();
     if (!formData.name.trim()) return;
     setFormError(null); // 清除上次的错误提示
+    setFormInfo(null);
     try {
       const payload = {
         ...formData,
@@ -99,9 +211,27 @@ export default function Family() {
       if (editingUserId) {
         // 编辑模式
         await api.familyUpdateUser(editingUserId, payload);
+        setFormInfo('已保存修改');
       } else {
-        // 添加模式
-        await api.familyAddUser(payload);
+        // 添加模式: 处理后端返回的绑定状态(needsConfirm/autoActivated)
+        const res = await api.familyAddUser(payload);
+        if (res?.success && formData.bind_phone?.trim()) {
+          // 填写了绑定手机号,根据后端返回状态提示
+          if (res.autoActivated) {
+            setFormInfo('双方互邀请,绑定成功');
+            speak('双方互邀请,绑定成功');
+          } else if (res.needsConfirm) {
+            setFormInfo('已发送邀请,等待视障用户确认后绑定生效');
+            speak('已发送邀请,等待视障用户确认后绑定生效');
+          } else if (res.bindStatus === 'active') {
+            setFormInfo('绑定成功');
+            speak('绑定成功');
+          } else if (res.message) {
+            setFormInfo(res.message);
+          }
+        } else if (res?.success) {
+          setFormInfo('已添加使用者');
+        }
       }
       setFormData({ name: '', age: '', relation: '', phone: '', emergency_contact: '', emergency_phone: '', health_notes: '', bind_phone: '' });
       setShowAddForm(false);
@@ -116,7 +246,7 @@ export default function Family() {
         setFormError(`${editingUserId ? '编辑' : '添加'}失败: ${errMsg}`);
       }
     }
-  }, [formData, editingUserId, loadUsers]);
+  }, [formData, editingUserId, loadUsers, speak]);
 
   // 点击编辑使用者: 预填表单数据并进入编辑模式
   const handleEditUser = useCallback((u) => {
@@ -440,8 +570,48 @@ export default function Family() {
                 {formError && (
                   <div className="am-fam-form-error" role="alert">{formError}</div>
                 )}
+                {formInfo && (
+                  <div className="am-fam-form-info" role="status">{formInfo}</div>
+                )}
                 <button type="submit" className="am-fam-submit-btn">{editingUserId ? '保存修改' : '确认绑定'}</button>
               </form>
+            )}
+
+            {/* 待确认邀请提醒(视障端发起,等待家属确认) */}
+            {pendingConfirmList.length > 0 && (
+              <div className="am-fam-pending-section" role="region" aria-label="待确认绑定邀请">
+                <div className="am-fam-pending-banner">
+                  <span className="am-fam-pending-icon">🔔</span>
+                  <span>您有 {pendingConfirmList.length} 条视障用户绑定邀请待确认</span>
+                </div>
+                {pendingConfirmList.map(item => {
+                  const viName = item.user_nickname || item.user_username || item.user_phone || '视障用户';
+                  return (
+                    <div key={item.id} className="am-fam-pending-card">
+                      <div className="am-fam-pending-info">
+                        <div className="am-fam-pending-name">
+                          {viName}
+                          {item.relation && <span className="am-fam-pending-relation">({item.relation})</span>}
+                        </div>
+                        {item.user_phone && <div className="am-fam-pending-phone">📱 {item.user_phone}</div>}
+                        <div className="am-fam-pending-status pending-me">待我确认</div>
+                      </div>
+                      <div className="am-fam-pending-actions">
+                        <button
+                          className="am-fam-confirm-btn"
+                          onClick={() => openConfirmModal(item)}
+                          aria-label={`确认 ${viName} 的绑定邀请`}
+                        >确认</button>
+                        <button
+                          className="am-fam-reject-btn"
+                          onClick={() => handleRejectInvitation(item.id)}
+                          aria-label={`拒绝 ${viName} 的绑定邀请`}
+                        >拒绝</button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             )}
 
             {users.length === 0 ? (
@@ -471,7 +641,16 @@ export default function Family() {
                       </div>
                     </div>
                     {u.phone && <div className="am-fam-user-phone">📱 {u.phone}</div>}
-                    {u.bound_account_id && <div className="am-fam-user-bound">🔗 已绑定视障账号 (ID: {u.bound_account_id})</div>}
+                    {u.bound_account_id ? (
+                      <div className="am-fam-user-bound">
+                        <span className="am-fam-bind-badge active">🔗 已绑定视障账号</span>
+                        {u.binding_source === 'invitation' && <span className="am-fam-bind-source"> · 通过邀请</span>}
+                      </div>
+                    ) : (
+                      <div className="am-fam-user-bound">
+                        <span className="am-fam-bind-badge unbound">○ 未绑定视障账号</span>
+                      </div>
+                    )}
                     {u.emergency_contact && <div className="am-fam-user-emergency">紧急联系人: {u.emergency_contact} {u.emergency_phone}</div>}
                     {u.health_notes && <div className="am-fam-user-health">⚕ {u.health_notes}</div>}
                   </div>
@@ -506,6 +685,60 @@ export default function Family() {
 
         <div className="am-fam-footer">感知方舟家属端 · 守护安全 · 让家属安心</div>
       </div>
+
+      {/* ===== 家属绑定确认对话框(语音+手动双确认) ===== */}
+      {showConfirmModal && currentConfirmItem && (
+        <div className="am-fam-confirm-overlay" role="dialog" aria-modal="true" aria-label="视障用户绑定确认">
+          <div className="am-fam-confirm-modal">
+            <h3 className="am-fam-confirm-title">🔔 绑定邀请确认</h3>
+            <div className="am-fam-confirm-body">
+              <p className="am-fam-confirm-text">
+                收到来自 <strong>{currentConfirmItem.user_nickname || currentConfirmItem.user_username || currentConfirmItem.user_phone || '视障用户'}</strong>
+                {' '}的家属绑定邀请
+              </p>
+              {currentConfirmItem.relation && (
+                <p className="am-fam-confirm-relation">关系：{currentConfirmItem.relation}</p>
+              )}
+              {currentConfirmItem.user_phone && (
+                <p className="am-fam-confirm-phone">视障用户手机号：{currentConfirmItem.user_phone}</p>
+              )}
+              <p className="am-fam-confirm-hint">
+                {asrSupported && asrListening
+                  ? '🎤 正在聆听...请说"确认绑定"或"拒绝"'
+                  : '请点击下方按钮确认或拒绝'}
+              </p>
+              {formError && (
+                <p className="am-fam-confirm-error" role="alert">{formError}</p>
+              )}
+            </div>
+            <div className="am-fam-confirm-actions">
+              <button
+                className="am-fam-confirm-btn-large"
+                onClick={() => handleConfirmInvitation(currentConfirmItem.id)}
+                disabled={confirmProcessing}
+                aria-label="确认绑定"
+              >
+                {confirmProcessing ? '处理中...' : '✓ 确认绑定'}
+              </button>
+              <button
+                className="am-fam-reject-btn-large"
+                onClick={() => handleRejectInvitation(currentConfirmItem.id)}
+                disabled={confirmProcessing}
+                aria-label="拒绝邀请"
+              >
+                ✗ 拒绝
+              </button>
+            </div>
+            <button
+              className="am-fam-confirm-close"
+              onClick={() => { setShowConfirmModal(false); setCurrentConfirmItem(null); setFormError(null); asrStop(); }}
+              aria-label="关闭对话框"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
