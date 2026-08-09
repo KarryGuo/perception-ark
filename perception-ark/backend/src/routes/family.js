@@ -295,11 +295,16 @@ router.get('/habits', (req, res) => {
 });
 
 // 综合仪表盘数据
-router.get('/dashboard', (req, res) => {
+router.get('/dashboard', authRequired, (req, res) => {
   const context = getContext();
   const stats = getStats();
   const memStats = getMemoryStats();
-  const users = getAllUsers();
+  const manualUsers = getAllUsers();
+  // 反向查询: 通过family_bindings自动绑定的视障人员(视障端发起邀请,家属注册后自动激活)
+  const invitedUsers = getFamilyBoundVisuallyImpairedUsers(req.user.id);
+  // 合并去重(以bound_account_id为键),与/overview和/users接口保持一致
+  const seenAccountIds = new Set(manualUsers.filter(u => u.bound_account_id).map(u => u.bound_account_id));
+  const users = [...manualUsers, ...invitedUsers.filter(u => !seenAccountIds.has(u.bound_account_id))];
   const routes = getAllRoutes();
   const sosEvents = getSosEvents(50);
   const habits = getAllHabits();
