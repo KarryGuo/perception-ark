@@ -13,35 +13,60 @@ export function useCamera() {
   const canvasRef = useRef(null);
   const facingModeRef = useRef('environment');
 
-  // 启动摄像头
+  // 启动摄像头(带降级回退: facingMode不存在时依次回退到任意摄像头)
   const start = useCallback(async () => {
     setError(null);
-    try {
-      if (!navigator.mediaDevices?.getUserMedia) {
-        throw new Error('当前浏览器不支持摄像头API，请使用Chrome/Edge/Safari');
+    if (!navigator.mediaDevices?.getUserMedia) {
+      const msg = '当前浏览器不支持摄像头API，请使用Chrome/Edge/Safari';
+      setError(msg);
+      return false;
+    }
+    // 降级约束链: 后置摄像头 → 前置摄像头 → 任意摄像头
+    // 同时降低分辨率到640x480(AI分析足够,显著降低发烫和耗电)
+    const constraintChain = [
+      { video: { facingMode: facingModeRef.current, width: { ideal: 640 }, height: { ideal: 480 } }, audio: false },
+      { video: { facingMode: facingModeRef.current === 'environment' ? 'user' : 'environment', width: { ideal: 640 }, height: { ideal: 480 } }, audio: false },
+      { video: { width: { ideal: 640 }, height: { ideal: 480 } }, audio: false },
+      { video: true, audio: false }
+    ];
+    let s = null;
+    let lastErr = null;
+    for (const constraints of constraintChain) {
+      try {
+        s = await navigator.mediaDevices.getUserMedia(constraints);
+        break;
+      } catch (err) {
+        lastErr = err;
+        // NotFoundError/OverconstrainedError: 该facingMode不可用,尝试下一个约束
+        if (err.name === 'NotFoundError' || err.name === 'OverconstrainedError' || err.name === 'NotReadableError') {
+          continue;
+        }
+        // NotAllowedError: 用户拒绝授权,无需继续尝试
+        if (err.name === 'NotAllowedError' || err.name === 'SecurityError') {
+          break;
+        }
       }
-      const s = await navigator.mediaDevices.getUserMedia({
-        video: {
-          facingMode: facingModeRef.current, // 根据当前选择的前后摄像头
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
-        },
-        audio: false
-      });
-      setStream(s);
-      if (videoRef.current) {
-        videoRef.current.srcObject = s;
-        await videoRef.current.play().catch(() => {});
-      }
-      setActive(true);
-      console.log('[Camera] 摄像头已启动 facingMode:', facingModeRef.current);
-      return true;
-    } catch (err) {
+    }
+    if (!s) {
+      const err = lastErr || new Error('摄像头启动失败');
       console.error('[Camera] 启动失败:', err);
-      setError(err.message);
+      // 给出更友好的错误提示
+      let friendly = err.message || '摄像头无法启动';
+      if (err.name === 'NotAllowedError') friendly = '摄像头权限被拒绝，请在浏览器设置中允许摄像头权限';
+      else if (err.name === 'NotFoundError') friendly = '未检测到摄像头设备';
+      else if (err.name === 'NotReadableError') friendly = '摄像头被其他程序占用，请关闭后重试';
+      setError(friendly);
       setActive(false);
       return false;
     }
+    setStream(s);
+    if (videoRef.current) {
+      videoRef.current.srcObject = s;
+      await videoRef.current.play().catch(() => {});
+    }
+    setActive(true);
+    console.log('[Camera] 摄像头已启动 facingMode:', facingModeRef.current);
+    return true;
   }, []);
 
   // 切换前后摄像头

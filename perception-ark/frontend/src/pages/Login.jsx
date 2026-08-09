@@ -33,8 +33,10 @@ export default function Login() {
   const [smsCode, setSmsCode] = useState('');
   const [smsSending, setSmsSending] = useState(false);
   const [smsCountdown, setSmsCountdown] = useState(0); // 倒计时(秒)
-  const [smsHint, setSmsHint] = useState(''); // 验证码提示(开发模式显示验证码)
+  const [smsHint, setSmsHint] = useState(''); // 验证码提示(体验模式显示验证码)
   const countdownRef = useRef(null);
+  // 手机登录身份选择: 'user'(视障人员) | 'family'(家属)
+  const [smsRole, setSmsRole] = useState('user');
 
   // 已登录且非本次手动登录(如页面刷新/直接访问)则按角色跳转
   useEffect(() => {
@@ -100,9 +102,9 @@ export default function Login() {
     try {
       const res = await api.sendSms(smsPhone.trim());
       if (res.success) {
-        // 开发模式: 后端返回 devCode,前端显示提示
+        // 体验模式: 后端返回 devCode,前端显示提示
         if (res.devCode) {
-          setSmsHint(`验证码已发送(开发模式): ${res.devCode}`);
+          setSmsHint(`验证码已发送(体验模式): ${res.devCode}`);
         } else {
           setSmsHint('验证码已发送至手机,请注意查收');
         }
@@ -137,6 +139,17 @@ export default function Login() {
       if (loginUser.role === 'admin') {
         logout();
         setError('管理员账号不支持手机验证码登录,请使用账号密码登录');
+        return;
+      }
+      // 身份校验: 视障人员入口仅允许user角色,家属入口仅允许family角色
+      if (smsRole === 'user' && loginUser.role === 'family') {
+        logout();
+        setError('该手机号为家属账号,请选择"家属"身份登录');
+        return;
+      }
+      if (smsRole === 'family' && loginUser.role !== 'family') {
+        logout();
+        setError('该手机号为视障人员账号,请选择"视障人员"身份登录');
         return;
       }
       goHomeByRole(loginUser.role);
@@ -184,6 +197,36 @@ export default function Login() {
         {/* ===== 手机验证码登录 ===== */}
         {loginMethod === 'sms' && (
           <form onSubmit={handleSmsLogin} className="auth-form">
+            {/* 登录身份选择: 视障人员 / 家属 */}
+            <div className="auth-field">
+              <label>登录身份</label>
+              <div className="auth-radio-group">
+                <label className={`auth-radio ${smsRole === 'user' ? 'active' : ''}`}>
+                  <input
+                    type="radio"
+                    value="user"
+                    checked={smsRole === 'user'}
+                    onChange={() => { setSmsRole('user'); setError(''); }}
+                  />
+                  视障人员
+                </label>
+                <label className={`auth-radio ${smsRole === 'family' ? 'active' : ''}`}>
+                  <input
+                    type="radio"
+                    value="family"
+                    checked={smsRole === 'family'}
+                    onChange={() => { setSmsRole('family'); setError(''); }}
+                  />
+                  家属
+                </label>
+              </div>
+              <div style={{ fontSize: '.72rem', color: 'var(--ink-muted)', marginTop: 6 }}>
+                {smsRole === 'user'
+                  ? '视障人员账号登录后进入视障端,使用智能感知功能'
+                  : '家属账号登录后进入家属端,查看亲人位置和接收SOS通知'}
+              </div>
+            </div>
+
             <div className="auth-field">
               <label htmlFor="sms-phone">手机号码</label>
               <input

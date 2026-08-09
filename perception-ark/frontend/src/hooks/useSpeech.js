@@ -1,9 +1,29 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 
+// 已知中文男声/女声音色名称(跨平台匹配: Windows/macOS/iOS/Android)
+const FEMALE_VOICE_KEYWORDS = ['Huihui', 'Yaoyao', 'Tingting', 'Xiaoxiao', 'Xiaoyi', 'Yunyang', 'Yunxia', 'Meijia', 'Sinji', 'Female', '女', 'Ting-Ting'];
+const MALE_VOICE_KEYWORDS = ['Kangkang', 'Yunxi', 'Yunjian', 'Yunye', 'Lianna', 'Male', '男'];
+
+/**
+ * 按性别匹配中文语音: 优先匹配已知音色名,找不到则返回null(用音调模拟)
+ */
+function findVoiceByGender(voices, gender) {
+  if (!voices || voices.length === 0) return null;
+  const cnVoices = voices.filter(v => v.lang && v.lang.startsWith('zh'));
+  const pool = cnVoices.length > 0 ? cnVoices : voices;
+  const keywords = gender === 'male' ? MALE_VOICE_KEYWORDS : FEMALE_VOICE_KEYWORDS;
+  for (const kw of keywords) {
+    const found = pool.find(v => v.name && v.name.toLowerCase().includes(kw.toLowerCase()));
+    if (found) return found;
+  }
+  return null;
+}
+
 /**
  * 语音合成 Hook (TTS) - 浏览器原生
  * 支持中文语音播报、流式分句播报
- * 音色/语速从localStorage读取(设置页可调)
+ * 音色/语速/性别从localStorage读取(设置页可调)
+ * 优化: 预热语音引擎 + onend驱动队列,减少首次播报延迟
  */
 export function useSpeechSynthesis() {
   const [speaking, setSpeaking] = useState(false);
@@ -15,16 +35,28 @@ export function useSpeechSynthesis() {
   const stoppedRef = useRef(false);
   // 跟踪所有playNext的setTimeout,stop()时全部清除
   const playNextTimersRef = useRef([]);
+  // 音色性别: 'male' | 'female' | null(无偏好,用具体voice)
+  const genderRef = useRef(null);
 
-  // 从localStorage读取用户设置的语速和音色(设置页可调)
+  // 从localStorage读取用户设置的语速和音色
   const getSavedRate = () => {
     const r = parseFloat(localStorage.getItem('ark_tts_rate'));
     return isNaN(r) ? 0.95 : r;
   };
+  const getSavedGender = () => localStorage.getItem('ark_tts_gender') || '';
   const getSavedVoice = (voices) => {
     const name = localStorage.getItem('ark_tts_voice') || '';
     if (!name || !voices) return null;
     return voices.find(v => v.name === name) || null;
+  };
+
+  // 根据性别计算音调(找不到对应音色时用音调模拟性别特征)
+  // 女声柔美: pitch 1.2; 男声阳光: pitch 0.8
+  const getPitchForGender = () => {
+    const g = genderRef.current || getSavedGender();
+    if (g === 'female') return 1.2;
+    if (g === 'male') return 0.8;
+    return 1.0;
   };
 
   useEffect(() => {
@@ -34,26 +66,42 @@ export function useSpeechSynthesis() {
     }
     setSupported(true);
 
-    // 加载中文语音
+    // 加载中文语音(预热: 多次重试确保voices已就绪,减少首次播报延迟)
     const loadVoices = () => {
       const voices = window.speechSynthesis.getVoices();
-      // 优先使用用户设置的音色,否则默认中文语音
+      if (!voices || voices.length === 0) return; // 还没就绪,等onvoiceschanged
+
+      // 优先用户设置的具体音色
       const saved = getSavedVoice(voices);
       if (saved) {
         setVoice(saved);
-        console.log('[TTS] 已加载用户音色:', saved.name);
         return;
       }
+      // 按性别匹配
+      const gender = getSavedGender();
+      if (gender) {
+        genderRef.current = gender;
+        const matched = findVoiceByGender(voices, gender);
+        if (matched) {
+          setVoice(matched);
+          return;
+        }
+      }
+      // 默认中文语音
       const cnVoice = voices.find(v => v.lang === 'zh-CN')
         || voices.find(v => v.lang.startsWith('zh'))
         || voices[0];
-      if (cnVoice) {
-        setVoice(cnVoice);
-        console.log('[TTS] 已选择语音:', cnVoice.name, cnVoice.lang);
-      }
+      if (cnVoice) setVoice(cnVoice);
     };
     loadVoices();
     window.speechSynthesis.onvoiceschanged = loadVoices;
+
+    // 预热: 部分浏览器首次speak会有较长延迟,主动触发一次空加载加速引擎初始化
+    try {
+      const warmup = new SpeechSynthesisUtterance('');
+      warmup.volume = 0;
+      window.speechSynthesis.speak(warmup);
+    } catch (e) {}
 
     return () => {
       window.speechSynthesis.cancel();
@@ -66,8 +114,33 @@ export function useSpeechSynthesis() {
     const v = voices.find(vv => vv.name === name);
     if (v) {
       setVoice(v);
+      genderRef.current = null;
       localStorage.setItem('ark_tts_voice', name);
+      localStorage.removeItem('ark_tts_gender');
+    } else if (name === '') {
+      localStorage.removeItem('ark_tts_voice');
+      localStorage.removeItem('ark_tts_gender');
+      genderRef.current = null;
+      // 恢复默认中文音色
+      const cn = voices.find(v => v.lang === 'zh-CN') || voices.find(v => v.lang.startsWith('zh'));
+      if (cn) setVoice(cn);
     }
+  }, []);
+
+  // 按性别切换音色: 女声柔美 / 男声阳光
+  const setVoiceByGender = useCallback((gender) => {
+    const voices = window.speechSynthesis.getVoices() || [];
+    const matched = findVoiceByGender(voices, gender);
+    if (matched) {
+      setVoice(matched);
+      localStorage.setItem('ark_tts_gender', gender);
+      localStorage.removeItem('ark_tts_voice'); // 性别优先于具体音色
+    } else {
+      // 找不到对应音色,仅设置性别标记,用音调模拟
+      localStorage.setItem('ark_tts_gender', gender);
+      localStorage.removeItem('ark_tts_voice');
+    }
+    genderRef.current = gender;
   }, []);
 
   const speak = useCallback((text, options = {}) => {
@@ -84,7 +157,6 @@ export function useSpeechSynthesis() {
     if (urgent) {
       window.speechSynthesis.cancel();
       utterQueueRef.current = [];
-      // 清除所有pending的playNext定时器
       playNextTimersRef.current.forEach(t => clearTimeout(t));
       playNextTimersRef.current = [];
     }
@@ -94,6 +166,8 @@ export function useSpeechSynthesis() {
 
     // 语速优先级: 调用方传入 > localStorage设置 > 紧急/默认
     const finalRate = rate || getSavedRate();
+    // 音调: 性别模拟(女声柔美高音调 / 男声阳光低音调)
+    const basePitch = getPitchForGender();
 
     sentences.forEach((sentence, idx) => {
       const trimmed = sentence.trim();
@@ -103,7 +177,7 @@ export function useSpeechSynthesis() {
       if (voice) utter.voice = voice;
       utter.lang = 'zh-CN';
       utter.rate = urgent ? Math.min(finalRate * 1.1, 1.5) : finalRate;
-      utter.pitch = urgent ? 1.2 : 1.0;
+      utter.pitch = urgent ? Math.min(basePitch * 1.2, 1.5) : basePitch;
       utter.volume = urgent ? 1.0 : 0.9;
 
       if (idx === 0) setSpeaking(true);
@@ -119,6 +193,8 @@ export function useSpeechSynthesis() {
           currentUtterRef.current = null;
           if (onEnd) onEnd();
         }
+        // onend驱动下一句(比100ms轮询更快,减少播报延迟)
+        playNext();
       };
 
       utter.onerror = () => {
@@ -129,15 +205,14 @@ export function useSpeechSynthesis() {
       utterQueueRef.current.push(utter);
     });
 
-    // 依次播放
+    // 依次播放(onend驱动 + 轮询兜底,双保险)
     const playNext = () => {
-      // 停止标志检查: stop()后不再推进
       if (stoppedRef.current) return;
       const next = utterQueueRef.current.shift();
       if (next) {
         window.speechSynthesis.speak(next);
-        // 某些浏览器需要轮询推进 - 跟踪定时器以便stop清除
-        const timer = setTimeout(playNext, 100);
+        // 轮询兜底: 部分Chrome版本onend不触发,250ms轮询确保队列推进
+        const timer = setTimeout(playNext, 250);
         playNextTimersRef.current.push(timer);
       }
     };
@@ -146,20 +221,14 @@ export function useSpeechSynthesis() {
 
   const stop = useCallback(() => {
     if (!supported) return;
-    // 设置停止标志,阻止所有pending的playNext继续推进
     stoppedRef.current = true;
-    // 清除所有pending的playNext定时器
     playNextTimersRef.current.forEach(t => clearTimeout(t));
     playNextTimersRef.current = [];
     utterQueueRef.current = [];
 
-    // Chrome 已知 bug: 仅调用 cancel() 不能立即停止正在播放的音频
-    // 必须先 pause() 立即暂停音频输出, 再 cancel() 清空队列
-    // 然后在短延迟后再次 cancel() 确保浏览器内部状态彻底重置
     try { window.speechSynthesis.pause(); } catch (e) {}
     try { window.speechSynthesis.cancel(); } catch (e) {}
 
-    // 二次清理: 在新事件循环中再次 cancel, 解决 Chrome utterance 残留问题
     setTimeout(() => {
       try { window.speechSynthesis.cancel(); } catch (e) {}
       setTimeout(() => {
@@ -170,7 +239,7 @@ export function useSpeechSynthesis() {
     setSpeaking(false);
   }, [supported]);
 
-  return { speak, stop, speaking, supported, setVoiceByName, voice };
+  return { speak, stop, speaking, supported, setVoiceByName, setVoiceByGender, voice };
 }
 
 /**

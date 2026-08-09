@@ -15,6 +15,7 @@ export default function Settings() {
   // ===== 音频设置 =====
   const [ttsRate, setTtsRate] = useState(() => parseFloat(localStorage.getItem('ark_tts_rate')) || 0.95);
   const [ttsVoiceName, setTtsVoiceName] = useState(() => localStorage.getItem('ark_tts_voice') || '');
+  const [ttsGender, setTtsGender] = useState(() => localStorage.getItem('ark_tts_gender') || '');
   const [availableVoices, setAvailableVoices] = useState([]);
   const [testText, setTestText] = useState('这是一段测试语音，用于预览播报效果。');
 
@@ -172,11 +173,21 @@ export default function Settings() {
     const v = voices.find(vv => vv.name === name);
     if (v) {
       localStorage.setItem('ark_tts_voice', name);
+      localStorage.removeItem('ark_tts_gender'); // 具体音色优先于性别
       setTtsVoiceName(name);
+      setTtsGender('');
     } else if (name === '') {
       localStorage.removeItem('ark_tts_voice');
       setTtsVoiceName('');
     }
+  }, []);
+
+  // 按性别切换音色: 女声柔美 / 男声阳光
+  const handleSaveGender = useCallback((gender) => {
+    localStorage.setItem('ark_tts_gender', gender);
+    localStorage.removeItem('ark_tts_voice'); // 性别优先于具体音色
+    setTtsGender(gender);
+    setTtsVoiceName(''); // 清除具体音色选择
   }, []);
 
   const handleTestSpeak = useCallback(() => {
@@ -185,16 +196,31 @@ export default function Settings() {
     const utter = new SpeechSynthesisUtterance(testText);
     utter.lang = 'zh-CN';
     utter.rate = ttsRate;
+    // 应用性别音调: 女声柔美(高音调) / 男声阳光(低音调)
+    if (ttsGender === 'female') utter.pitch = 1.2;
+    else if (ttsGender === 'male') utter.pitch = 0.8;
+    else utter.pitch = 1.0;
     const voices = window.speechSynthesis.getVoices();
     if (ttsVoiceName) {
       const v = voices.find(vv => vv.name === ttsVoiceName);
       if (v) utter.voice = v;
+    } else if (ttsGender) {
+      // 按性别匹配中文音色
+      const FEMALE_KW = ['Huihui', 'Yaoyao', 'Tingting', 'Xiaoxiao', 'Xiaoyi', 'Yunyang', 'Yunxia', 'Meijia', 'Sinji', 'Female', '女'];
+      const MALE_KW = ['Kangkang', 'Yunxi', 'Yunjian', 'Yunye', 'Lianna', 'Male', '男'];
+      const kws = ttsGender === 'male' ? MALE_KW : FEMALE_KW;
+      const cn = voices.filter(v => v.lang && v.lang.startsWith('zh'));
+      const pool = cn.length > 0 ? cn : voices;
+      for (const kw of kws) {
+        const found = pool.find(v => v.name && v.name.toLowerCase().includes(kw.toLowerCase()));
+        if (found) { utter.voice = found; break; }
+      }
     } else {
       const cn = voices.find(v => v.lang === 'zh-CN') || voices.find(v => v.lang.startsWith('zh'));
       if (cn) utter.voice = cn;
     }
     window.speechSynthesis.speak(utter);
-  }, [testText, ttsRate, ttsVoiceName]);
+  }, [testText, ttsRate, ttsVoiceName, ttsGender]);
 
   const handleClearNavHistory = useCallback(() => {
     localStorage.removeItem('ark_nav_history');
@@ -819,6 +845,29 @@ export default function Settings() {
                   className="sp-slider"
                 />
                 <div className="sp-marks"><span>慢</span><span>正常</span><span>快</span></div>
+              </div>
+              <div className="sp-item">
+                <label className="sp-label"><span>播报性别</span></label>
+                <div className="auth-radio-group">
+                  <label className={`auth-radio ${ttsGender === 'female' ? 'active' : ''}`}>
+                    <input
+                      type="radio"
+                      value="female"
+                      checked={ttsGender === 'female'}
+                      onChange={() => handleSaveGender('female')}
+                    />
+                    女声(柔美)
+                  </label>
+                  <label className={`auth-radio ${ttsGender === 'male' ? 'active' : ''}`}>
+                    <input
+                      type="radio"
+                      value="male"
+                      checked={ttsGender === 'male'}
+                      onChange={() => handleSaveGender('male')}
+                    />
+                    男声(阳光)
+                  </label>
+                </div>
               </div>
               <div className="sp-item">
                 <label className="sp-label"><span>播报音色</span></label>

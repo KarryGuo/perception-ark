@@ -79,7 +79,7 @@ function AppMobileUser() {
   const navDialogueModeRef = useRef(null); // 同步引用(避免useCallback闭包陈旧)
   const pendingPoisRef = useRef([]); // 同步引用
 
-  const { speak, stop: stopSpeak, speaking: ttsSpeaking, setVoiceByName, voice: currentVoice } = useSpeechSynthesis();
+  const { speak, stop: stopSpeak, speaking: ttsSpeaking, setVoiceByName, setVoiceByGender, voice: currentVoice } = useSpeechSynthesis();
   const spatialAudio = useSpatialAudio();
   const asr = useSpeechRecognition();
   const camera = useCamera();
@@ -87,6 +87,7 @@ function AppMobileUser() {
 
   const messagesEndRef = useRef(null);
   const isPressingRef = useRef(null);
+  const suppressWakeRef = useRef(false); // 按住说话期间抑制唤醒词自动重启
   const modeIntervalRef = useRef(null); // 连续分析定时器
   const isProcessingRef = useRef(false); // 命令处理中标志(防止TTS音频被ASR重新拾取导致循环)
   const poiSearchTimerRef = useRef(null);
@@ -222,12 +223,14 @@ function AppMobileUser() {
       };
       recognition.onerror = () => {
         wakeListeningRef.current = false;
-        setTimeout(() => { if (voiceWakeActive) wakeStartRef.current?.(); }, 3000);
+        if (!suppressWakeRef.current) {
+          setTimeout(() => { if (voiceWakeActive && !suppressWakeRef.current) wakeStartRef.current?.(); }, 3000);
+        }
       };
       recognition.onend = () => {
         wakeListeningRef.current = false;
-        if (voiceWakeActive && !wakeDialogue) {
-          setTimeout(() => wakeStartRef.current?.(), 800);
+        if (voiceWakeActive && !wakeDialogue && !suppressWakeRef.current) {
+          setTimeout(() => { if (!suppressWakeRef.current) wakeStartRef.current?.(); }, 800);
         }
       };
       recognition.start();
@@ -275,13 +278,20 @@ function AppMobileUser() {
     return true;
   }, [camera, speak]);
 
-  // 摄像头首次启动(首次引导后或非首次)
+  // 摄像头按需启停: 仅在识别页且非引导中时保持开启,切换到导航/SOS页自动停止以省电降温
   useEffect(() => {
     if (firstUse) return;
-    if (!camera.active && !camera.error) {
-      startCamera();
+    if (activeTab === 'recognize') {
+      // 进入识别页: 启动摄像头
+      if (!camera.active && !camera.error) startCamera();
+    } else {
+      // 离开识别页: 停止摄像头流(释放硬件资源,降低发烫和耗电)
+      if (camera.active) {
+        camera.stop();
+        setPersistentError(null);
+      }
     }
-  }, [firstUse, camera.active, camera.error, startCamera]);
+  }, [firstUse, activeTab, camera.active, camera.error, startCamera, camera]);
 
   // 首次使用引导教程步骤文本
   const tutorialSteps = [
@@ -453,32 +463,43 @@ function AppMobileUser() {
   }, [showToast]);
 
   // ===== 按住说话 =====
-  const handlePressStart = useCallback(() => {
+  const handlePressStart = useCallback((e) => {
+    // 移动端touch事件后会合成mouse事件,阻止双触发
+    if (e && e.type === 'touchstart') { e.preventDefault(); }
+    // 防重入: 已在按住状态则跳过(合成mouse事件防护)
+    if (isPressingRef.current === true) return;
     // 先停止TTS播报,防止麦克风拾取TTS音频形成回声循环
     stopSpeak();
     isProcessingRef.current = false;
     isPressingRef.current = true;
+    // 抑制唤醒词自动重启,避免与按住说话的ASR抢占麦克风
+    suppressWakeRef.current = true;
     if (!asr.supported) { showToast('当前浏览器不支持语音识别'); return; }
     // 暂停唤醒词监听,避免与按住说话的ASR冲突(浏览器只允许一个recognition实例)
     if (wakeListeningRef.current) {
-      try { wakeAsrRef.current?.abort(); } catch(e) {}
+      try { wakeAsrRef.current?.abort(); } catch(e2) {}
       wakeListeningRef.current = false;
     }
-    // abort()是异步的,延迟150ms等浏览器释放麦克风资源后再启动ASR
+    // abort()是异步的,延迟200ms等浏览器完全释放麦克风资源后再启动ASR
     setTimeout(() => {
       if (isPressingRef.current) {
         asr.start();
       }
-    }, 150);
+    }, 200);
     setSubtitle('正在聆听...');
   }, [asr, showToast, stopSpeak]);
 
-  const handlePressEnd = useCallback(() => {
+  const handlePressEnd = useCallback((e) => {
+    // 移动端touch事件后会合成mouse事件,阻止双触发
+    if (e && e.type === 'touchend') { e.preventDefault(); }
+    // 防重入: 不在按住状态则跳过(合成mouse事件防护)
+    if (isPressingRef.current !== true) return;
     isPressingRef.current = false;
     if (asr.listening) asr.stop();
     setTimeout(() => {
       setSubtitle('');
-      // 恢复唤醒词监听
+      // 恢复唤醒词监听: 先清除抑制标志,再重启
+      suppressWakeRef.current = false;
       if (voiceWakeActive && !wakeListeningRef.current) {
         wakeStartRef.current?.();
       }

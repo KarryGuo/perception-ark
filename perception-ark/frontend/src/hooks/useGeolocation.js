@@ -3,7 +3,46 @@ import { api } from '../services/api.js';
 import { loadAmapSDK } from '../services/amap.js';
 
 /**
- * 高德 AMap.Geolocation - GPS/基站定位(最精确,移动端首选)
+ * WGS-84 转 GCJ-02 (火星坐标系)
+ * 浏览器原生GPS返回WGS-84坐标,高德地图使用GCJ-02坐标,
+ * 不转换会导致中国境内定位偏移100~500米,且与高德SDK结果交替更新时位置乱跳。
+ */
+const PI = Math.PI;
+const A = 6378245.0;
+const EE = 0.00669342162296594323;
+
+function outOfChina(lat, lng) {
+  return lng < 72.004 || lng > 137.8347 || lat < 0.8293 || lat > 55.8271;
+}
+function transformLat(x, y) {
+  let ret = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * x * y + 0.2 * Math.sqrt(Math.abs(x));
+  ret += (20.0 * Math.sin(6.0 * x * PI) + 20.0 * Math.sin(2.0 * x * PI)) * 2.0 / 3.0;
+  ret += (20.0 * Math.sin(y * PI) + 40.0 * Math.sin(y / 3.0 * PI)) * 2.0 / 3.0;
+  ret += (160.0 * Math.sin(y / 12.0 * PI) + 320 * Math.sin(y * PI / 30.0)) * 2.0 / 3.0;
+  return ret;
+}
+function transformLng(x, y) {
+  let ret = 300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * Math.sqrt(Math.abs(x));
+  ret += (20.0 * Math.sin(6.0 * x * PI) + 20.0 * Math.sin(2.0 * x * PI)) * 2.0 / 3.0;
+  ret += (20.0 * Math.sin(x * PI) + 40.0 * Math.sin(x / 3.0 * PI)) * 2.0 / 3.0;
+  ret += (150.0 * Math.sin(x / 12.0 * PI) + 300.0 * Math.sin(x / 30.0 * PI)) * 2.0 / 3.0;
+  return ret;
+}
+function wgs84ToGcj02(wgsLat, wgsLng) {
+  if (outOfChina(wgsLat, wgsLng)) return { lat: wgsLat, lng: wgsLng };
+  let dLat = transformLat(wgsLng - 105.0, wgsLat - 35.0);
+  let dLng = transformLng(wgsLng - 105.0, wgsLat - 35.0);
+  const radLat = wgsLat / 180.0 * PI;
+  let magic = Math.sin(radLat);
+  magic = 1 - EE * magic * magic;
+  const sqrtMagic = Math.sqrt(magic);
+  dLat = (dLat * 180.0) / ((A * (1 - EE)) / (magic * sqrtMagic) * PI);
+  dLng = (dLng * 180.0) / (A / sqrtMagic * Math.cos(radLat) * PI);
+  return { lat: wgsLat + dLat, lng: wgsLng + dLng };
+}
+
+/**
+ * 高德 AMap.Geolocation - GPS/基站定位(最精确,移动端首选,已转GCJ-02)
  */
 function locateByAmapGeo() {
   return new Promise((resolve, reject) => {
@@ -41,6 +80,7 @@ function locateByAmapGeo() {
 
 /**
  * 浏览器原生高精度定位(手机GPS,精度最高)
+ * 注意: 浏览器返回WGS-84坐标,需转换为GCJ-02以匹配高德地图
  */
 function locateByBrowserHigh() {
   return new Promise((resolve, reject) => {
@@ -49,12 +89,16 @@ function locateByBrowserHigh() {
       return;
     }
     navigator.geolocation.getCurrentPosition(
-      (pos) => resolve({
-        lat: pos.coords.latitude,
-        lng: pos.coords.longitude,
-        accuracy: pos.coords.accuracy,
-        source: 'browser-gps'
-      }),
+      (pos) => {
+        // WGS-84 → GCJ-02 转换,防止与高德SDK坐标系不一致导致位置偏移
+        const gcj = wgs84ToGcj02(pos.coords.latitude, pos.coords.longitude);
+        resolve({
+          lat: gcj.lat,
+          lng: gcj.lng,
+          accuracy: pos.coords.accuracy,
+          source: 'browser-gps'
+        });
+      },
       (err) => reject(err),
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
@@ -126,7 +170,7 @@ let globalLocation = null;
 let globalListeners = new Set();
 let globalInitStarted = false;
 let globalWatchStarted = false;
-const lastPosRef = { lat: null, lng: null, accuracy: Infinity };
+const lastPosRef = { lat: null, lng: null, accuracy: Infinity, timestamp: 0 };
 const preciseLocatedRef = { value: false };
 
 function notifyListeners() {
@@ -143,8 +187,9 @@ function setGlobalLocation(pos) {
  * 规则:
  * 1. 第一次定位直接应用
  * 2. 已有精确定位(accuracy < 1000m)后,不再接受IP级(accuracy > 5000m)结果
- * 3. 新位置与旧位置移动距离 > 20米 才更新(防止GPS抖动)
- * 4. 新位置精度必须优于旧位置,或同级别但移动了才更新
+ * 3. 新位置与旧位置移动距离 > 30米 且 精度优于(或同级别)旧位置 才更新(防止GPS抖动)
+ * 4. 新位置精度比旧位置差3倍以上时拒绝(防止低精度结果拉偏位置)
+ * 5. 短时间(10秒)内位移异常大(>500米)视为漂移,拒绝
  */
 async function applyLocation(pos) {
   // 第一次定位直接应用
@@ -152,6 +197,7 @@ async function applyLocation(pos) {
     lastPosRef.lat = pos.lat;
     lastPosRef.lng = pos.lng;
     lastPosRef.accuracy = pos.accuracy;
+    lastPosRef.timestamp = Date.now();
     if (pos.accuracy < 1000) preciseLocatedRef.value = true;
 
     setGlobalLocation({
@@ -191,9 +237,14 @@ async function applyLocation(pos) {
     return;
   }
 
-  // 移动距离过滤: <20米视为抖动(防止地图跳动)
+  // 新位置精度比旧位置差3倍以上时拒绝(防止低精度结果拉偏位置)
+  if (pos.accuracy > lastPosRef.accuracy * 3 && lastPosRef.accuracy !== Infinity) {
+    return;
+  }
+
+  // 移动距离过滤: <30米视为抖动(防止地图跳动)
   const moved = distance(pos.lat, pos.lng, lastPosRef.lat, lastPosRef.lng);
-  if (moved < 20) {
+  if (moved < 30) {
     // 即使没移动,如果精度显著更好也更新精度信息
     if (pos.accuracy < lastPosRef.accuracy * 0.5) {
       lastPosRef.accuracy = pos.accuracy;
@@ -202,10 +253,18 @@ async function applyLocation(pos) {
     return;
   }
 
-  // 移动了 > 20米,接受新位置
+  // 短时间(10秒)内位移异常大(>500米)视为GPS漂移,拒绝
+  const now = Date.now();
+  const elapsed = now - (lastPosRef.timestamp || now);
+  if (elapsed < 10000 && moved > 500) {
+    return;
+  }
+
+  // 移动了 > 30米,接受新位置
   lastPosRef.lat = pos.lat;
   lastPosRef.lng = pos.lng;
   lastPosRef.accuracy = pos.accuracy;
+  lastPosRef.timestamp = now;
   if (pos.accuracy < 1000) preciseLocatedRef.value = true;
 
   setGlobalLocation(prev => prev ? {
@@ -267,19 +326,20 @@ async function initLocation() {
 
 /**
  * 启动持续监听(只启动一次,全局共享)
+ * 降频策略: maximumAge=10000 允许10秒缓存,减少GPS唤醒频率,降低耗电
  */
 function startWatch() {
   if (globalWatchStarted) return;
   globalWatchStarted = true;
 
-  // AMap.Geolocation watchPosition
+  // AMap.Geolocation watchPosition (返回GCJ-02,无需转换)
   loadAmapSDK()
     .then((AMap) => {
       if (!AMap.Geolocation) return;
       const geo = new AMap.Geolocation({
         enableHighAccuracy: true,
         timeout: 20000,
-        maximumAge: 0,
+        maximumAge: 10000,
         convert: true
       });
       geo.watchPosition((status, result) => {
@@ -293,17 +353,17 @@ function startWatch() {
     })
     .catch(() => {});
 
-  // 浏览器原生watchPosition
+  // 浏览器原生watchPosition (返回WGS-84,需转GCJ-02)
   if (navigator.geolocation) {
     navigator.geolocation.watchPosition(
       (pos) => {
-        const lat = pos.coords.latitude;
-        const lng = pos.coords.longitude;
-        const accuracy = pos.coords.accuracy || 100;
-        applyLocation({ lat, lng, accuracy, source: 'browser-watch' });
+        // WGS-84 → GCJ-02 转换,防止与高德坐标系不一致导致位置乱跳
+        const gcj = wgs84ToGcj02(pos.coords.latitude, pos.coords.longitude);
+        applyLocation({ lat: gcj.lat, lng: gcj.lng, accuracy: pos.coords.accuracy || 100, source: 'browser-watch' });
       },
       () => {},
-      { enableHighAccuracy: true, timeout: 30000, maximumAge: 5000 }
+      // maximumAge=10000: 允许使用10秒内的缓存位置,减少GPS硬件唤醒,降低耗电
+      { enableHighAccuracy: true, timeout: 30000, maximumAge: 10000 }
     );
   }
 }
@@ -348,6 +408,7 @@ export function useGeolocation() {
     lastPosRef.lat = null;
     lastPosRef.lng = null;
     lastPosRef.accuracy = Infinity;
+    lastPosRef.timestamp = 0;
     preciseLocatedRef.value = false;
     globalInitStarted = false;
     initLocation().finally(() => setLoading(false));
