@@ -90,6 +90,10 @@ function AppMobileUser() {
   // 最新位置ref(用于导航/POI搜索前强制刷新,避免闭包陈旧)
   const locationRef = useRef(null);
   useEffect(() => { locationRef.current = location; }, [location]);
+  // TTS播报状态ref(同步引用): 唤醒词/命令ASR据此判断是否应忽略结果
+  // 防止TTS音频被麦克风拾取→误触发唤醒词→speak('我在请说')→generation递增→中断当前播报
+  const ttsSpeakingRef = useRef(false);
+  useEffect(() => { ttsSpeakingRef.current = ttsSpeaking; }, [ttsSpeaking]);
 
   const messagesEndRef = useRef(null);
   const isPressingRef = useRef(null);
@@ -193,6 +197,10 @@ function AppMobileUser() {
       wakeAsrRef.current = recognition;
       wakePendingRef.current = '';
       recognition.onresult = (e) => {
+        // TTS正在播报时忽略唤醒词(防止TTS音频被麦克风拾取→误识别为唤醒词
+        // → speak('我在请说') → generation递增 → 中断当前识别结果播报)
+        // 同时检查浏览器原生speaking状态,确保ref未同步的短暂窗口也能拦截
+        if (ttsSpeakingRef.current || (window.speechSynthesis && window.speechSynthesis.speaking)) return;
         let interim = '';
         for (let i = e.resultIndex; i < e.results.length; i++) {
           interim += e.results[i][0].transcript;
@@ -493,11 +501,13 @@ function AppMobileUser() {
   // 语音指令切换tab
   useEffect(() => {
     if (!asr.transcript) return;
+    // TTS正在播报时不处理ASR结果(避免TTS声音被拾取后误触发tab切换→stopSpeak中断播报)
+    if (ttsSpeaking) return;
     const text = asr.transcript;
     if (/打开识别|识别模式|切换识别/.test(text)) { switchTab('recognize'); asr.stop(); }
     else if (/打开导航|导航模式|切换导航/.test(text)) { switchTab('navigate'); asr.stop(); }
     else if (/紧急呼救|SOS|救命|呼救/.test(text)) { switchTab('sos'); asr.stop(); }
-  }, [asr.transcript]);
+  }, [asr.transcript, ttsSpeaking]);
 
   useEffect(() => {
     // 视障端SOS联系人: 从family_bindings表读取用户在设置中绑定的active家属
@@ -927,23 +937,24 @@ function AppMobileUser() {
       return;
     }
 
-    // 出行模式: 弹出目的地输入框,不进入连续检测
+    // 出行模式: 直接进入连续障碍物检测(不弹目的地输入框)
+    // 识别前方障碍物→播报距离+物体类型+避让方向(往左/往右/停下)
+    // 目的地导航仍可通过语音命令"导航到XX"触发智能导航流程
     if (mode === 'travel') {
-      // 如果当前在出行连续模式,则关闭
       if (activeMode === 'travel') {
         setActiveMode(null);
         speak('出行检测已关闭');
         showToast('出行检测已关闭');
         return;
       }
-      // 弹出目的地输入框
       if (activeMode) {
         speak(`${modeNames[activeMode]}已关闭`);
         setActiveMode(null);
       }
-      setShowTravelInput(true);
-      setTravelDest('');
-      speak('请告诉我您要去哪里');
+      speak('出行模式已开启，正在检测前方障碍物');
+      showToast('出行模式已开启');
+      addMessage('user', '开启出行模式');
+      setActiveMode('travel');
       return;
     }
 
@@ -1159,10 +1170,8 @@ function AppMobileUser() {
               const dirMatch = speakText.match(/(左前方|正前方|右前方|左方|右方)/);
               const dir = dirMatch ? dirMatch[1] : '正前方';
 
-              // 空间音效播报(WebSocket未连接时使用本地TTS)
-              if (!connected) {
-                spatialAudio.speakDirectional(speakText, dir, { urgent: isUrgent });
-              }
+              // 本地空间音效播报(不依赖后端WebSocket推送,因为/scene路由silent:true)
+              spatialAudio.speakDirectional(speakText, dir, { urgent: isUrgent });
 
               // 分级震动反馈 + 障碍物接近急促警报
               if (navigator.vibrate) {
@@ -1710,6 +1719,9 @@ function AppMobileUser() {
 
   const handleVoiceInput = useCallback((text) => {
     if (!text) return;
+    // TTS正在播报时忽略命令(防止TTS音频被命令ASR拾取→误识别为命令→stopSpeak中断当前播报)
+    // 此场景下命令来自TTS回声而非用户真实语音,应直接丢弃
+    if (ttsSpeakingRef.current || (window.speechSynthesis && window.speechSynthesis.speaking)) return;
     const clean = text.trim();
     if (!clean) return;
     stopSpeak();
@@ -1768,7 +1780,13 @@ function AppMobileUser() {
         }
         else if (mode === 'travel') {
           if (activeMode === 'travel') { setActiveMode(null); speak('出行检测已关闭'); }
-          else { setShowTravelInput(true); setTravelDest(''); speak('请告诉我您要去哪里'); }
+          else {
+            if (activeMode) speak(`${modeNames[activeMode]}已关闭`);
+            setActiveMode(null);
+            speak('出行模式已开启，正在检测前方障碍物');
+            addMessage('user', '开启出行模式');
+            setActiveMode('travel');
+          }
         }
         else if (mode === 'analyze') {
           handleOneShotRecognize();
