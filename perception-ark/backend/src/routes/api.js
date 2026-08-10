@@ -53,7 +53,9 @@ router.post('/scene', upload.single('image'), async (req, res) => {
     const image = imgToBase64(req.file);
     // Mock模式下可不传图片,使用占位图
     const query = req.body.query || '';
-    const result = await runSceneAgent(image, query);
+    // silent: true — 结果通过HTTP响应返回,前端自行处理显示和播报
+    // 不推送WebSocket事件(避免前端同时收到HTTP响应和WebSocket事件,导致重复显示/播报)
+    const result = await runSceneAgent(image, query, { silent: true });
     res.json({ success: true, result });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -159,7 +161,8 @@ router.post('/social', upload.single('image'), async (req, res) => {
     const image = imgToBase64(req.file);
     // Mock模式下可不传图片
     const mode = req.body.mode || 'ocr';
-    const result = await runSocialAgent(image, mode);
+    // silent: true — 结果通过HTTP响应返回,前端自行处理显示和播报
+    const result = await runSocialAgent(image, mode, { silent: true });
     res.json({ success: true, result });
   } catch (err) {
     res.status(500).json({ error: err.message });
