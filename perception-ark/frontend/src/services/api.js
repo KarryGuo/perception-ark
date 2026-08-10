@@ -303,4 +303,6 @@ export const api = {
     }),
   adminLogs: (limit) => request(`/admin/logs${limit ? `?limit=${limit}` : ''}`),
   adminDevices: () => request('/admin/devices'),
+  // 数据分析图表聚合(最近7天趋势/SOS分布/账号增长/Agent状态)
+  adminAnalytics: () => request('/admin/analytics'),
 };

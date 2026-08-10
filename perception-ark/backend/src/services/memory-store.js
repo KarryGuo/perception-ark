@@ -1144,3 +1144,107 @@ export async function getMemoryStats() {
     sos_events: sosRs.rows[0].c,
   };
 }
+
+// ===== 数据分析聚合查询(管理后台 /admin/analytics) =====
+
+/**
+ * 最近7天每天活跃用户数与SOS事件数
+ * - 活跃用户: 简化为按 accounts.created_at 当天注册量统计
+ * - SOS事件: sos_events.created_at 按天分组计数
+ * - 返回: [{ date:'YYYY-MM-DD', active:number, sos:number }]
+ */
+export async function getLast7DaysStats() {
+  if (!db) return [];
+  // 生成最近7天日期列表(含今天)
+  const days = [];
+  const today = new Date();
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - i);
+    days.push(d.toISOString().slice(0, 10));
+  }
+
+  // 按天统计新增账号数 (substr(1,10) 截取 ISO 字符串前10位日期)
+  const accRs = await db.execute({
+    sql: `SELECT substr(created_at, 1, 10) AS d, COUNT(*) AS c
+          FROM accounts
+          WHERE created_at IS NOT NULL
+            AND substr(created_at, 1, 10) >= ?
+          GROUP BY d`,
+    args: [days[0]],
+  });
+  const accMap = new Map();
+  for (const r of accRs.rows) accMap.set(r.d, r.c);
+
+  // 按天统计 SOS 事件数
+  const sosRs = await db.execute({
+    sql: `SELECT substr(created_at, 1, 10) AS d, COUNT(*) AS c
+          FROM sos_events
+          WHERE created_at IS NOT NULL
+            AND substr(created_at, 1, 10) >= ?
+          GROUP BY d`,
+    args: [days[0]],
+  });
+  const sosMap = new Map();
+  for (const r of sosRs.rows) sosMap.set(r.d, r.c);
+
+  return days.map(date => ({
+    date,
+    active: accMap.get(date) || 0,
+    sos: sosMap.get(date) || 0,
+  }));
+}
+
+/**
+ * SOS事件按类型分布(event_type字段)
+ * - 返回: [{ type:string, count:number }]
+ */
+export async function getSosDistribution() {
+  if (!db) return [];
+  const rs = await db.execute(
+    `SELECT COALESCE(NULLIF(event_type, ''), 'unknown') AS type, COUNT(*) AS count
+     FROM sos_events
+     GROUP BY type
+     ORDER BY count DESC`
+  );
+  return rs.rows.map(r => ({ type: r.type, count: r.count }));
+}
+
+/**
+ * 账号累计增长趋势(按天累计, 最近7天)
+ * - 返回: [{ date:'YYYY-MM-DD', total:number }]
+ */
+export async function getAccountGrowth() {
+  if (!db) return [];
+  const days = [];
+  const today = new Date();
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(today);
+    d.setDate(d.getDate() - i);
+    days.push(d.toISOString().slice(0, 10));
+  }
+
+  // 先取截止到7天前的累计数作为基线
+  const baseRs = await db.execute({
+    sql: `SELECT COUNT(*) AS c FROM accounts
+          WHERE created_at IS NOT NULL AND substr(created_at, 1, 10) < ?`,
+    args: [days[0]],
+  });
+  let cumulative = Number(baseRs.rows[0].c) || 0;
+
+  // 再取7天内每天的新增账号数
+  const dailyRs = await db.execute({
+    sql: `SELECT substr(created_at, 1, 10) AS d, COUNT(*) AS c
+          FROM accounts
+          WHERE created_at IS NOT NULL AND substr(created_at, 1, 10) >= ?
+          GROUP BY d`,
+    args: [days[0]],
+  });
+  const dailyMap = new Map();
+  for (const r of dailyRs.rows) dailyMap.set(r.d, r.c);
+
+  return days.map(date => {
+    cumulative += (dailyMap.get(date) || 0);
+    return { date, total: cumulative };
+  });
+}

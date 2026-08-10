@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getAllAccounts, updateAccountStatus, addAdminLog, getAdminLogs, getMemoryStats, getSosEvents } from '../services/memory-store.js';
+import { getAllAccounts, updateAccountStatus, addAdminLog, getAdminLogs, getMemoryStats, getSosEvents, getLast7DaysStats, getSosDistribution, getAccountGrowth } from '../services/memory-store.js';
 import { getContext, getStats } from '../agents/orchestrator.js';
 import { authRequired } from '../services/auth.js';
 import { log } from '../utils/logger.js';
@@ -144,6 +144,79 @@ router.get('/devices', async (req, res) => {
     agents: context.agents,
     timestamp: new Date().toISOString()
   });
+});
+
+// 数据分析图表聚合接口
+// 返回最近7天趋势 / SOS类型分布 / 账号增长 / Agent状态 / Agent调用次数
+router.get('/analytics', async (req, res) => {
+  try {
+    const context = getContext();
+    const agents = context.agents || {};
+
+    // 并行获取所有聚合数据
+    const [last7days, sosDistribution, accountGrowth] = await Promise.all([
+      getLast7DaysStats(),
+      getSosDistribution(),
+      getAccountGrowth(),
+    ]);
+
+    // 从 context.history 按天聚合识别次数与安全检查次数
+    // - subtitle 事件计为识别
+    // - safety_result 事件计为安全检查
+    const history = context.history || [];
+    const today = new Date();
+    const dateBuckets = new Map();
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(today);
+      d.setDate(d.getDate() - i);
+      dateBuckets.set(d.toISOString().slice(0, 10), { recognitions: 0, safety: 0 });
+    }
+    // 同时按 agentId 统计调用次数(只计有 agentId 的事件)
+    const agentCallMap = new Map();
+    for (const evt of history) {
+      const ts = evt.timestamp;
+      if (ts) {
+        const date = String(ts).slice(0, 10);
+        const bucket = dateBuckets.get(date);
+        if (bucket) {
+          if (evt.type === 'subtitle') bucket.recognitions += 1;
+          else if (evt.type === 'safety_result') bucket.safety += 1;
+        }
+      }
+      const aid = evt.agentId;
+      if (aid) agentCallMap.set(aid, (agentCallMap.get(aid) || 0) + 1);
+    }
+
+    // 合并 last7days: 补充 recognitions/safety 字段
+    const last7daysFull = last7days.map(row => ({
+      date: row.date,
+      active: row.active,
+      sos: row.sos,
+      recognitions: dateBuckets.get(row.date)?.recognitions || 0,
+      safety: dateBuckets.get(row.date)?.safety || 0,
+    }));
+
+    // Agent状态(扁平化为数组,只暴露必要字段)
+    const agentStatus = Object.entries(agents).map(([key, info]) => ({
+      key,
+      name: info.name || key,
+      active: !!info.active,
+      color: info.color || null,
+      priority: info.priority,
+      calls: agentCallMap.get(key) || 0,
+    }));
+
+    res.json({
+      last7days: last7daysFull,
+      sosDistribution,
+      accountGrowth,
+      agentStatus,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    log('ADMIN', `数据分析接口失败: ${err.message}`, 'error');
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 export default router;

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../hooks/useAuth.jsx';
 import { api } from '../services/api.js';
+import { LineChart, DonutChart, BarChart } from '../components/Charts.jsx';
 
 const TABS = [
   { key: 'devices', label: '设备监测', icon: '📡' },
@@ -14,6 +15,7 @@ export default function Glasses() {
   const [devices, setDevices] = useState(null);
   const [accounts, setAccounts] = useState([]);
   const [logs, setLogs] = useState([]);
+  const [analytics, setAnalytics] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [banModal, setBanModal] = useState(null); // { account, action: 'ban'|'unban' }
@@ -21,14 +23,16 @@ export default function Glasses() {
 
   const loadData = useCallback(async () => {
     try {
-      const [dev, acc, logData] = await Promise.all([
+      const [dev, acc, logData, ana] = await Promise.all([
         api.adminDevices().catch(() => null),
         api.adminAccounts().catch(() => ({ accounts: [] })),
         api.adminLogs(50).catch(() => ({ logs: [] })),
+        api.adminAnalytics().catch(() => null),
       ]);
       if (dev) setDevices(dev);
       setAccounts(acc?.accounts || []);
       setLogs(logData?.logs || []);
+      if (ana) setAnalytics(ana);
       setError(null);
     } catch (err) {
       setError(err.message);
@@ -167,6 +171,9 @@ export default function Glasses() {
           </div>
         </div>
 
+        {/* 数据分析图表 */}
+        <AnalyticsSection analytics={analytics} />
+
         {/* Tab切换 */}
         <div style={{
           display: 'flex', gap: 4, marginBottom: 20, overflowX: 'auto',
@@ -294,6 +301,107 @@ function formatUptime(seconds) {
   if (d > 0) return `${d}天${h}时`;
   if (h > 0) return `${h}时${m}分`;
   return `${m}分`;
+}
+
+// SOS事件类型 → 中文名 + 颜色 映射
+const SOS_TYPE_META = {
+  fall: { name: '跌倒检测', color: '#FF2E7E' },
+  manual: { name: '主动SOS', color: '#FFB627' },
+  button: { name: '按钮SOS', color: '#FFB627' },
+  unknown: { name: '其他', color: '#7B61FF' },
+};
+
+// 数据分析图表区块
+function AnalyticsSection({ analytics }) {
+  // 折线图数据 + 系列定义
+  const lineData = (analytics?.last7days || []).map(row => ({
+    date: row.date,
+    active: row.active,
+    sos: row.sos,
+    recognitions: row.recognitions,
+  }));
+  const lineSeries = [
+    { key: 'active', name: '活跃用户', color: '#00FFA3' },
+    { key: 'sos', name: 'SOS事件', color: '#FF2E7E' },
+    { key: 'recognitions', name: '识别次数', color: '#00E5FF' },
+  ];
+
+  // 环形图数据: SOS事件类型分布
+  const donutData = (analytics?.sosDistribution || []).map(item => {
+    const meta = SOS_TYPE_META[item.type] || SOS_TYPE_META.unknown;
+    return { name: meta.name, value: item.count, color: meta.color };
+  });
+
+  // 柱状图数据: Agent调用次数分布
+  const barData = (analytics?.agentStatus || []).map(agent => ({
+    label: agent.name,
+    value: agent.calls,
+    color: agent.color || '#7B61FF',
+  }));
+
+  return (
+    <div style={{
+      background: 'var(--glass)', border: '1px solid var(--gb)', borderRadius: 16,
+      padding: 20, marginBottom: 20, backdropFilter: 'blur(20px)',
+    }}>
+      <h3 style={{
+        fontSize: '1rem', fontWeight: 600, margin: '0 0 16px',
+        color: 'var(--ink)', display: 'flex', alignItems: 'center', gap: 8
+      }}>
+        <span style={{
+          display: 'inline-block', width: 4, height: 16, borderRadius: 2,
+          background: 'linear-gradient(180deg, var(--bio-emerald), var(--bio-cyan))'
+        }}></span>
+        📈 数据分析
+        <span style={{ marginLeft: 'auto', fontSize: '.72rem', fontWeight: 400, color: 'var(--ink-muted)' }}>
+          {analytics ? `更新于 ${new Date(analytics.timestamp || Date.now()).toLocaleTimeString('zh-CN', { hour12: false })}` : '加载中...'}
+        </span>
+      </h3>
+
+      {/* 折线图: 最近7天趋势 (占满宽度) */}
+      <div style={{
+        background: 'var(--void-3)', border: '1px solid var(--gb)',
+        borderRadius: 12, padding: '14px 16px 8px', marginBottom: 12,
+      }}>
+        <div style={{ fontSize: '.78rem', color: 'var(--ink-soft)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ width: 3, height: 12, background: 'var(--bio-emerald)', borderRadius: 2, display: 'inline-block' }}></span>
+          最近7天活跃 / SOS / 识别趋势
+        </div>
+        {lineData.length > 0 ? (
+          <LineChart data={lineData} series={lineSeries} height={200} />
+        ) : (
+          <div style={{ height: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--ink-muted)', fontSize: '.78rem' }}>
+            暂无趋势数据
+          </div>
+        )}
+      </div>
+
+      {/* 双列: 环形图(左) + 柱状图(右) */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
+        <div style={{
+          background: 'var(--void-3)', border: '1px solid var(--gb)',
+          borderRadius: 12, padding: '14px 16px',
+        }}>
+          <div style={{ fontSize: '.78rem', color: 'var(--ink-soft)', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ width: 3, height: 12, background: 'var(--bio-magenta)', borderRadius: 2, display: 'inline-block' }}></span>
+            SOS事件类型分布
+          </div>
+          <DonutChart data={donutData} size={160} />
+        </div>
+
+        <div style={{
+          background: 'var(--void-3)', border: '1px solid var(--gb)',
+          borderRadius: 12, padding: '14px 16px',
+        }}>
+          <div style={{ fontSize: '.78rem', color: 'var(--ink-soft)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ width: 3, height: 12, background: 'var(--bio-violet)', borderRadius: 2, display: 'inline-block' }}></span>
+            Agent调用次数分布
+          </div>
+          <BarChart data={barData} height={180} />
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function Panel({ title, color, children }) {

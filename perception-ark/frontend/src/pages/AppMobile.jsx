@@ -1917,7 +1917,7 @@ function AppMobileUser() {
   }, [handleVoiceInput]);
 
   return (
-    <div className="am-app">
+    <div className="am-app ark-dark">
       {/* ===== 全屏背景层 ===== */}
       <div className="am-bg-layer">
         <video ref={camera.videoRef} playsInline muted autoPlay
