@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getSosEvents, getMemoryStats, getAllRoutes, searchFaces, getAllUsers, addUser, deleteUser, updateUser, getAllHabits, findUserAccountByPhone, syncFamilyBindingFromFamilySide, getAccountById, getFamilyBoundVisuallyImpairedUsers, confirmFamilyBinding, rejectFamilyBinding, getPendingConfirmFamilyBindings } from '../services/memory-store.js';
+import { getSosEvents, getMemoryStats, getAllRoutes, searchFaces, getAllUsers, addUser, deleteUser, updateUser, getAllHabits, findUserAccountByPhone, syncFamilyBindingFromFamilySide, getAccountById, getFamilyBoundVisuallyImpairedUsers, confirmFamilyBinding, rejectFamilyBinding, getPendingConfirmFamilyBindings, updateFamilyBinding, removeFamilyBindingByFamily } from '../services/memory-store.js';
 import { getContext, getStats } from '../agents/orchestrator.js';
 import { authRequired } from '../services/auth.js';
 import { log } from '../utils/logger.js';
@@ -90,9 +90,29 @@ router.post('/users', authRequired, async (req, res) => {
 });
 
 // 删除使用者
-router.delete('/users/:id', async (req, res) => {
-  const changes = await deleteUser(parseInt(req.params.id));
-  res.json({ success: true, changes });
+router.delete('/users/:id', authRequired, async (req, res) => {
+  try {
+    const idParam = req.params.id;
+    // 处理通过邀请绑定的用户(id格式为 bind_xxx)
+    if (idParam.startsWith('bind_')) {
+      const bindingId = parseInt(idParam.slice(6));
+      if (!bindingId) {
+        return res.status(400).json({ success: false, error: '无效的绑定ID' });
+      }
+      const ok = await removeFamilyBindingByFamily(bindingId, req.user.id);
+      if (!ok) {
+        return res.status(404).json({ success: false, error: '绑定记录不存在或无权删除' });
+      }
+      log('FAMILY', `家属删除邀请绑定: binding_id=${bindingId}`);
+      return res.json({ success: true, changes: 1 });
+    }
+    // 普通用户(手动添加的,存在users表中)
+    const changes = await deleteUser(parseInt(idParam));
+    res.json({ success: true, changes });
+  } catch (err) {
+    log('FAMILY', `删除使用者失败: ${err.message}`, 'error');
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 /**
@@ -154,48 +174,74 @@ router.post('/reject/:bindingId', authRequired, async (req, res) => {
 
 // 编辑使用者信息
 router.put('/users/:id', authRequired, async (req, res) => {
-  const { name, age, relation, phone, emergency_contact, emergency_phone, health_notes, bind_phone } = req.body;
-  if (!name) return res.status(400).json({ error: '请填写称呼' });
+  try {
+    const { name, age, relation, phone, emergency_contact, emergency_phone, health_notes, bind_phone } = req.body;
+    if (!name) return res.status(400).json({ error: '请填写称呼' });
 
-  let bound_account_id = undefined;
-  // 如果填写了视障账号手机号,查找并绑定(空字符串表示解绑)
-  if (bind_phone !== undefined) {
-    if (bind_phone && bind_phone.trim()) {
-      const account = await findUserAccountByPhone(bind_phone.trim());
-      if (!account) {
-        return res.status(404).json({ error: `该账号未注册（手机号${bind_phone}），请确认手机号正确且该账号身份为使用者` });
+    const idParam = req.params.id;
+
+    // 处理通过邀请绑定的用户(id格式为 bind_xxx)
+    // 这类用户的信息存储在family_bindings表中,仅能更新称呼(family_name)和关系(relation)
+    if (idParam.startsWith('bind_')) {
+      const bindingId = parseInt(idParam.slice(6));
+      if (!bindingId) {
+        return res.status(400).json({ success: false, error: '无效的绑定ID' });
       }
-      bound_account_id = account.id;
-      log('FAMILY', `家属编辑绑定视障账号: ${bind_phone} (account_id=${account.id})`);
+      const ok = await updateFamilyBinding(bindingId, {
+        family_name: name,
+        relation: relation || undefined
+      });
+      if (!ok) {
+        return res.status(500).json({ success: false, error: '更新失败,绑定记录可能不存在' });
+      }
+      log('FAMILY', `家属编辑邀请绑定: binding_id=${bindingId} name="${name}"`);
+      return res.json({ success: true, changes: 1 });
+    }
 
-      // 反向同步: 在视障端的family_bindings表插入active记录
-      if (req.user?.id) {
-        const familyAccount = await getAccountById(req.user.id);
-        if (familyAccount?.phone) {
-          const syncResult = await syncFamilyBindingFromFamilySide(
-            account.id,
-            req.user.id,
-            familyAccount.phone,
-            familyAccount.nickname || familyAccount.username,
-            relation
-          );
-          if (syncResult.success) {
-            log('FAMILY', `编辑反向同步家属绑定成功: 视障账号${account.id} ← 家属${req.user.id}`);
-          } else {
-            log('FAMILY', `编辑反向同步家属绑定失败: ${syncResult.error}`, 'warn');
+    // 普通用户(手动添加的,存在users表中)
+    let bound_account_id = undefined;
+    // 如果填写了视障账号手机号,查找并绑定(空字符串表示解绑)
+    if (bind_phone !== undefined) {
+      if (bind_phone && bind_phone.trim()) {
+        const account = await findUserAccountByPhone(bind_phone.trim());
+        if (!account) {
+          return res.status(404).json({ error: `该账号未注册（手机号${bind_phone}），请确认手机号正确且该账号身份为使用者` });
+        }
+        bound_account_id = account.id;
+        log('FAMILY', `家属编辑绑定视障账号: ${bind_phone} (account_id=${account.id})`);
+
+        // 反向同步: 在视障端的family_bindings表插入active记录
+        if (req.user?.id) {
+          const familyAccount = await getAccountById(req.user.id);
+          if (familyAccount?.phone) {
+            const syncResult = await syncFamilyBindingFromFamilySide(
+              account.id,
+              req.user.id,
+              familyAccount.phone,
+              familyAccount.nickname || familyAccount.username,
+              relation
+            );
+            if (syncResult.success) {
+              log('FAMILY', `编辑反向同步家属绑定成功: 视障账号${account.id} ← 家属${req.user.id}`);
+            } else {
+              log('FAMILY', `编辑反向同步家属绑定失败: ${syncResult.error}`, 'warn');
+            }
           }
         }
+      } else {
+        bound_account_id = null; // 解绑
       }
-    } else {
-      bound_account_id = null; // 解绑
     }
-  }
 
-  const changes = await updateUser(parseInt(req.params.id), {
-    name, age: age !== undefined ? (age ? parseInt(age) : null) : undefined,
-    relation, phone, emergency_contact, emergency_phone, health_notes, bound_account_id
-  });
-  res.json({ success: true, changes, bound_account_id });
+    const changes = await updateUser(parseInt(idParam), {
+      name, age: age !== undefined ? (age ? parseInt(age) : null) : undefined,
+      relation, phone, emergency_contact, emergency_phone, health_notes, bound_account_id
+    });
+    res.json({ success: true, changes, bound_account_id });
+  } catch (err) {
+    log('FAMILY', `编辑使用者失败: ${err.message}`, 'error');
+    res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 // 家属端首页数据 - 实时状态总览

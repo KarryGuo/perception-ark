@@ -29,6 +29,7 @@ export default function Family() {
   const [activeTab, setActiveTab] = useState('overview');
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingUserId, setEditingUserId] = useState(null); // null=添加模式, 数字=编辑模式
+  const [editingBindingSource, setEditingBindingSource] = useState(null); // 编辑时用户来源(invitation/手动)
   const [formData, setFormData] = useState({
     name: '', age: '', relation: '', phone: '',
     emergency_contact: '', emergency_phone: '', health_notes: '',
@@ -237,6 +238,7 @@ export default function Family() {
           setFormData({ name: '', age: '', relation: '', phone: '', emergency_contact: '', emergency_phone: '', health_notes: '', bind_phone: '' });
           setShowAddForm(false);
           setEditingUserId(null);
+          setEditingBindingSource(null);
           setFormInfo(null);
         }, 1000);
         return;
@@ -279,6 +281,7 @@ export default function Family() {
   // 点击编辑使用者: 预填表单数据并进入编辑模式
   const handleEditUser = useCallback((u) => {
     setEditingUserId(u.id);
+    setEditingBindingSource(u.binding_source || null); // 记录用户来源(邀请绑定/手动添加)
     setFormData({
       name: u.name || '',
       age: u.age != null ? String(u.age) : '',
@@ -296,6 +299,7 @@ export default function Family() {
   const handleCancelForm = useCallback(() => {
     setShowAddForm(false);
     setEditingUserId(null);
+    setEditingBindingSource(null);
     setFormError(null);
     setFormData({ name: '', age: '', relation: '', phone: '', emergency_contact: '', emergency_phone: '', health_notes: '', bind_phone: '' });
   }, []);
@@ -598,17 +602,22 @@ export default function Family() {
             {showAddForm && (
               <form className="am-fam-add-form" onSubmit={handleAddUser}>
                 <div className="am-fam-form-title">{editingUserId ? '编辑使用者' : '添加使用者'}</div>
+                {editingUserId && editingBindingSource === 'invitation' && (
+                  <div className="am-fam-form-info" role="status" style={{ marginBottom: '8px' }}>
+                    该使用者通过邀请绑定,仅可修改称呼和关系,其他信息由视障用户本人维护
+                  </div>
+                )}
                 <FamFormInput placeholder="称呼 * (如:爸爸)" value={formData.name} onChange={v => setFormData({ ...formData, name: v })} required />
                 <div className="am-fam-form-row">
-                  <FamFormInput placeholder="年龄" type="number" value={formData.age} onChange={v => setFormData({ ...formData, age: v })} />
+                  <FamFormInput placeholder="年龄" type="number" value={formData.age} onChange={v => setFormData({ ...formData, age: v })} disabled={editingBindingSource === 'invitation'} />
                   <FamFormInput placeholder="关系(如:父亲)" value={formData.relation} onChange={v => setFormData({ ...formData, relation: v })} />
                 </div>
-                <FamFormInput placeholder="使用者手机号" value={formData.phone} onChange={v => setFormData({ ...formData, phone: v })} />
+                <FamFormInput placeholder="使用者手机号" value={formData.phone} onChange={v => setFormData({ ...formData, phone: v })} disabled={editingBindingSource === 'invitation'} />
                 <div className="am-fam-form-row">
-                  <FamFormInput placeholder="紧急联系人" value={formData.emergency_contact} onChange={v => setFormData({ ...formData, emergency_contact: v })} />
-                  <FamFormInput placeholder="紧急电话" value={formData.emergency_phone} onChange={v => setFormData({ ...formData, emergency_phone: v })} />
+                  <FamFormInput placeholder="紧急联系人" value={formData.emergency_contact} onChange={v => setFormData({ ...formData, emergency_contact: v })} disabled={editingBindingSource === 'invitation'} />
+                  <FamFormInput placeholder="紧急电话" value={formData.emergency_phone} onChange={v => setFormData({ ...formData, emergency_phone: v })} disabled={editingBindingSource === 'invitation'} />
                 </div>
-                <FamFormInput placeholder="健康备注(如:高血压)" value={formData.health_notes} onChange={v => setFormData({ ...formData, health_notes: v })} />
+                <FamFormInput placeholder="健康备注(如:高血压)" value={formData.health_notes} onChange={v => setFormData({ ...formData, health_notes: v })} disabled={editingBindingSource === 'invitation'} />
                 {!editingUserId && (
                   <FamFormInput placeholder="绑定视障人员手机号(未注册将提示)" value={formData.bind_phone || ''} onChange={v => setFormData({ ...formData, bind_phone: v })} />
                 )}
@@ -872,7 +881,7 @@ function FamCard({ title, icon, color, badge, children }) {
 }
 
 // ===== 表单输入框 =====
-function FamFormInput({ placeholder, value, onChange, type = 'text', required }) {
+function FamFormInput({ placeholder, value, onChange, type = 'text', required, disabled }) {
   return (
     <input
       className="am-fam-form-input"
@@ -881,6 +890,7 @@ function FamFormInput({ placeholder, value, onChange, type = 'text', required })
       value={value}
       onChange={e => onChange(e.target.value)}
       required={required}
+      disabled={disabled}
       autoComplete="nope"
       name={`fam-${placeholder}`}
     />

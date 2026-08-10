@@ -620,6 +620,53 @@ export async function removeFamilyBinding(bindingId, userAccountId) {
 }
 
 /**
+ * 家属端更新通过邀请绑定的视障用户信息(更新family_bindings表)
+ * 仅允许更新family_name和relation字段(其他字段属于视障账号本身,不应由家属修改)
+ * @param {number} bindingId family_bindings.id
+ * @param {{family_name?: string, relation?: string}} data
+ * @returns {boolean} 是否更新成功
+ */
+export async function updateFamilyBinding(bindingId, { family_name, relation }) {
+  if (!db) return false;
+  try {
+    const sets = [];
+    const args = [];
+    if (family_name !== undefined) { sets.push('family_name = ?'); args.push(family_name); }
+    if (relation !== undefined) { sets.push('relation = ?'); args.push(relation); }
+    if (sets.length === 0) return false;
+    args.push(bindingId);
+    const result = await db.execute({
+      sql: `UPDATE family_bindings SET ${sets.join(', ')} WHERE id = ?`,
+      args,
+    });
+    return toChanges(result.rowsAffected) > 0;
+  } catch (err) {
+    log('A05', `更新家属绑定信息失败: ${err.message}`, 'error');
+    return false;
+  }
+}
+
+/**
+ * 家属端删除通过邀请绑定的视障用户(删除family_bindings记录)
+ * @param {number} bindingId family_bindings.id
+ * @param {number} familyAccountId 家属账号ID(权限校验)
+ * @returns {boolean} 是否删除成功
+ */
+export async function removeFamilyBindingByFamily(bindingId, familyAccountId) {
+  if (!db) return false;
+  try {
+    const result = await db.execute({
+      sql: 'DELETE FROM family_bindings WHERE id = ? AND family_account_id = ?',
+      args: [bindingId, familyAccountId],
+    });
+    return toChanges(result.rowsAffected) > 0;
+  } catch (err) {
+    log('A05', `家属删除绑定失败: ${err.message}`, 'error');
+    return false;
+  }
+}
+
+/**
  * 家属账号注册时,回填 family_account_id 到所有指向该手机号的 pending 邀请
  * 新机制: 不再自动激活(active),仅回填账号ID,等待家属端主动确认后才升级为 active
  * @param {number} familyAccountId 新注册的家属账号ID
