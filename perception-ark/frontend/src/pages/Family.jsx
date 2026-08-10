@@ -211,7 +211,18 @@ export default function Family() {
       if (editingUserId) {
         // 编辑模式
         await api.familyUpdateUser(editingUserId, payload);
+        // 编辑保存后同时刷新dashboard(守护页)和users列表(我的页)
+        loadData();
+        loadUsers();
         setFormInfo('已保存修改');
+        // 延迟关闭表单,让用户看到成功提示
+        setTimeout(() => {
+          setFormData({ name: '', age: '', relation: '', phone: '', emergency_contact: '', emergency_phone: '', health_notes: '', bind_phone: '' });
+          setShowAddForm(false);
+          setEditingUserId(null);
+          setFormInfo(null);
+        }, 1000);
+        return;
       } else {
         // 添加模式: 处理后端返回的绑定状态(needsConfirm/autoActivated)
         const res = await api.familyAddUser(payload);
@@ -246,7 +257,7 @@ export default function Family() {
         setFormError(`${editingUserId ? '编辑' : '添加'}失败: ${errMsg}`);
       }
     }
-  }, [formData, editingUserId, loadUsers, speak]);
+  }, [formData, editingUserId, loadUsers, loadData, speak]);
 
   // 点击编辑使用者: 预填表单数据并进入编辑模式
   const handleEditUser = useCallback((u) => {
