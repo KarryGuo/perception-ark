@@ -84,25 +84,61 @@ router.get('/devices', async (req, res) => {
   const adminCount = accounts.filter(a => a.role === 'admin').length;
   const bannedCount = accounts.filter(a => a.status === 'banned').length;
 
+  // 今日活跃统计: 今日有登录记录的账号数
+  const today = new Date().toISOString().slice(0, 10);
+  const activeTodayCount = accounts.filter(a => (a.last_login || '').startsWith(today)).length;
+
+  // 今日SOS事件数
+  const todaySosCount = sosEvents.filter(e => (e.created_at || '').startsWith(today)).length;
+
+  // 历史事件总数(从context.history获取)
+  const history = context.history || [];
+  const totalRecognitions = history.filter(e => e.type === 'subtitle').length;
+  const totalSafetyChecks = history.filter(e => e.type === 'safety_result').length;
+  const totalDangerCount = history.filter(e => e.type === 'safety_result' && !e.safe).length;
+
+  // Agent在线数
+  const agentList = Object.entries(context.agents || {});
+  const activeAgentCount = agentList.filter(([, info]) => info.active).length;
+
+  // 在线设备数: 当前有WebSocket连接的设备(简化为context有位置信息则视为在线)
+  const onlineDevices = context.currentLocation ? 1 : 0;
+
   res.json({
     accounts: {
       total: accounts.length,
       users: userCount,
       families: familyCount,
       admins: adminCount,
-      banned: bannedCount
+      banned: bannedCount,
+      activeToday: activeTodayCount
     },
     devices: {
       online: true,
       battery: parseInt(process.env.DEVICE_BATTERY || '87', 10),
       location: context.currentLocation,
-      activity: context.userActivity
+      activity: context.userActivity,
+      onlineDevices
     },
     system: {
       ...memStats,
       agentStatus: stats.agentStatus,
       traeConfigured: stats.traeConfigured,
       mockMode: process.env.MOCK_MODE === 'true'
+    },
+    // 运营数据看板
+    dashboard: {
+      activeToday: activeTodayCount,
+      onlineDevices,
+      todaySos: todaySosCount,
+      totalSos: sosEvents.length,
+      totalRecognitions,
+      totalSafetyChecks,
+      totalDangerCount,
+      activeAgents: activeAgentCount,
+      totalAgents: agentList.length,
+      uptime: process.uptime(),
+      memoryUsage: process.memoryUsage()
     },
     recentSos: sosEvents,
     agents: context.agents,

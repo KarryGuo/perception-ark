@@ -3,6 +3,7 @@ import { api } from '../services/api.js';
 import { useAuth } from '../hooks/useAuth.jsx';
 import { useWebSocket } from '../hooks/useWebSocket.js';
 import { useSpeechSynthesis, useSpeechRecognition } from '../hooks/useSpeech.js';
+import FamilyMap from '../components/FamilyMap.jsx';
 
 // 顶部药丸Tab(与视障端统一框架)
 const TABS = [
@@ -36,6 +37,7 @@ export default function Family() {
   const [refreshing, setRefreshing] = useState(false);
   const [formError, setFormError] = useState(null); // 表单错误提示(如:该账号未注册)
   const [formInfo, setFormInfo] = useState(null); // 表单成功提示(如:邀请已发送待确认)
+  const [preciseLocation, setPreciseLocation] = useState(null); // 视障人员精确位置(家属可见)
 
   // ===== 待确认邀请(视障端发起,等待家属确认) =====
   const [pendingConfirmList, setPendingConfirmList] = useState([]);
@@ -74,6 +76,18 @@ export default function Family() {
       setUsers(data.users || []);
     } catch (err) {
       console.error(err);
+    }
+  }, []);
+
+  // 加载视障人员精确位置(家属监护人可见,用于实时地图显示)
+  const loadPreciseLocation = useCallback(async () => {
+    try {
+      const data = await api.familyPreciseLocation();
+      if (data?.location) {
+        setPreciseLocation(data);
+      }
+    } catch (err) {
+      // 静默失败,不打扰用户
     }
   }, []);
 
@@ -159,13 +173,15 @@ export default function Family() {
     loadData();
     loadUsers();
     loadPendingConfirm();
+    loadPreciseLocation();
     const interval = setInterval(() => {
       loadData(true);
       loadUsers();
       loadPendingConfirm();
+      loadPreciseLocation();
     }, 5000);
     return () => clearInterval(interval);
-  }, [loadData, loadUsers, loadPendingConfirm]);
+  }, [loadData, loadUsers, loadPendingConfirm, loadPreciseLocation]);
 
   // ASR 语音指令监听: 当确认对话框打开时,识别"确认绑定"/"拒绝"指令
   useEffect(() => {
@@ -389,6 +405,20 @@ export default function Family() {
         {activeTab === 'overview' && (
           <>
             <GuardianCard user={user} />
+
+            {/* 实时位置小地图 */}
+            <FamCard title="实时位置" icon="📍" color="cyan">
+              <FamilyMap
+                location={preciseLocation?.location}
+                activity={preciseLocation?.activity || user?.activity}
+                online={user?.online}
+              />
+              {preciseLocation?.lastUpdate && (
+                <div className="am-fam-loc-update">
+                  最后更新: {new Date(preciseLocation.lastUpdate).toLocaleString('zh-CN')}
+                </div>
+              )}
+            </FamCard>
 
             <div className="am-fam-stat-grid">
               <FamStat icon="👁️" label="识别" value={stats.totalRecognitions || 0} color="emerald" />

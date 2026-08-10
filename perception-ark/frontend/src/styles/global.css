@@ -366,6 +366,77 @@ input { font-family: inherit; }
   font-family: 'Space Grotesk', monospace;
 }
 
+/* ===== 家属端实时位置小地图 ===== */
+.fam-map-container {
+  position: relative; width: 100%; height: 220px;
+  border-radius: 12px; overflow: hidden;
+  background: var(--void-3); border: 1px solid var(--gb);
+}
+.fam-map-canvas { width: 100%; height: 100%; }
+.fam-map-loading {
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  height: 100%; color: var(--ink-muted); font-size: .85rem;
+}
+.fam-map-spinner {
+  width: 16px; height: 16px; border-radius: 50%;
+  border: 2px solid var(--gb); border-top-color: var(--bio-cyan);
+  animation: famSpin 0.8s linear infinite;
+}
+@keyframes famSpin { to { transform: rotate(360deg); } }
+.fam-map-fallback {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 8px; padding: 20px; text-align: center;
+}
+.fam-map-fallback-icon { font-size: 2.5rem; }
+.fam-map-fallback-addr { font-size: .92rem; color: var(--ink); }
+.fam-map-fallback-coord {
+  font-size: .78rem; color: var(--ink-muted);
+  font-family: 'Space Grotesk', monospace;
+}
+.fam-map-fallback-link {
+  display: inline-block; margin-top: 6px;
+  padding: 6px 14px; border-radius: 8px;
+  background: rgba(0,229,255,0.1); color: var(--bio-cyan);
+  border: 1px solid rgba(0,229,255,0.3);
+  font-size: .82rem; text-decoration: none;
+}
+.fam-map-status {
+  position: absolute; top: 10px; right: 10px; z-index: 10;
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 10px; border-radius: 20px;
+  background: rgba(8,11,20,0.85); backdrop-filter: blur(8px);
+  border: 1px solid var(--gb);
+  font-size: .75rem; font-weight: 600;
+}
+.fam-map-status.online { color: var(--bio-emerald); }
+.fam-map-status.offline { color: var(--ink-muted); }
+.fam-map-status.emergency {
+  color: var(--bio-magenta); border-color: var(--bio-magenta);
+  animation: famBlink 0.8s ease-in-out infinite;
+}
+@keyframes famBlink { 50% { opacity: 0.5; } }
+.fam-map-status-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: currentColor; box-shadow: 0 0 6px currentColor;
+}
+.fam-map-status.online .fam-map-status-dot { animation: famPulseDot 1.5s ease-in-out infinite; }
+@keyframes famPulseDot { 50% { opacity: 0.3; } }
+.fam-map-addr-bar {
+  position: absolute; bottom: 0; left: 0; right: 0; z-index: 10;
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 12px;
+  background: linear-gradient(to top, rgba(8,11,20,0.9), transparent);
+  color: var(--ink-soft); font-size: .78rem;
+}
+.fam-map-addr-icon { flex-shrink: 0; }
+.fam-map-addr-text {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.am-fam-loc-update {
+  margin-top: 8px; font-size: .72rem; color: var(--ink-muted);
+  font-family: 'Space Grotesk', monospace;
+}
+
 /* 智能体列表 */
 .am-fam-agent-list { display: flex; flex-direction: column; gap: 8px; }
 .am-fam-agent-item {

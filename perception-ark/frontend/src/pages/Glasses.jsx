@@ -92,6 +92,7 @@ export default function Glasses() {
   const accStats = devices?.accounts || {};
   const devInfo = devices?.devices || {};
   const sysInfo = devices?.system || {};
+  const dashStats = devices?.dashboard || {};  // 运营数据看板
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--void)', color: 'var(--ink)', paddingBottom: 40 }}>
@@ -134,6 +135,36 @@ export default function Glasses() {
           <StatCard icon="🚫" label="已封禁" value={accStats.banned || 0} color="var(--bio-magenta)" />
           <StatCard icon="🔋" label="设备电量" value={`${devInfo.battery || 0}%`} color="var(--bio-amber)" />
           <StatCard icon="📡" label="设备状态" value={devInfo.online ? '在线' : '离线'} color={devInfo.online ? 'var(--bio-emerald)' : 'var(--bio-magenta)'} />
+        </div>
+
+        {/* 运营数据看板 */}
+        <div style={{
+          background: 'var(--glass)', border: '1px solid var(--gb)', borderRadius: 16,
+          padding: 20, marginBottom: 20, backdropFilter: 'blur(20px)',
+        }}>
+          <h3 style={{
+            fontSize: '1rem', fontWeight: 600, margin: '0 0 16px',
+            color: 'var(--ink)', display: 'flex', alignItems: 'center', gap: 8
+          }}>
+            <span style={{
+              display: 'inline-block', width: 4, height: 16, borderRadius: 2,
+              background: 'linear-gradient(180deg, var(--bio-magenta), var(--bio-violet))'
+            }}></span>
+            📊 运营数据看板
+            <span style={{ marginLeft: 'auto', fontSize: '.72rem', fontWeight: 400, color: 'var(--ink-muted)' }}>
+              更新于 {new Date(devices?.timestamp || Date.now()).toLocaleTimeString('zh-CN', { hour12: false })}
+            </span>
+          </h3>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 12 }}>
+            <DashCard icon="🟢" label="今日活跃" value={dashStats.activeToday || 0} sub="用户" color="var(--bio-emerald)" />
+            <DashCard icon="📱" label="在线设备" value={dashStats.onlineDevices || 0} sub="台" color="var(--bio-cyan)" />
+            <DashCard icon="🚨" label="今日SOS" value={dashStats.todaySos || 0} sub="次" color="var(--bio-magenta)" />
+            <DashCard icon="🤖" label="智能体" value={`${dashStats.activeAgents || 0}/${dashStats.totalAgents || 0}`} sub="运行" color="var(--bio-violet)" />
+            <DashCard icon="👁️" label="累计识别" value={dashStats.totalRecognitions || 0} sub="次" color="var(--bio-emerald)" />
+            <DashCard icon="🛡️" label="安全检查" value={dashStats.totalSafetyChecks || 0} sub="次" color="var(--bio-cyan)" />
+            <DashCard icon="⚠️" label="危险预警" value={dashStats.totalDangerCount || 0} sub="次" color="var(--bio-amber)" />
+            <DashCard icon="⏱️" label="运行时长" value={formatUptime(dashStats.uptime)} sub="" color="var(--bio-violet)" />
+          </div>
         </div>
 
         {/* Tab切换 */}
@@ -231,6 +262,38 @@ function StatCard({ icon, label, value, color }) {
       <div style={{ fontSize: '.7rem', color: 'var(--ink-muted)', marginTop: 2 }}>{label}</div>
     </div>
   );
+}
+
+// 运营看板数据卡片(带副标题+彩色左边框)
+function DashCard({ icon, label, value, sub, color }) {
+  return (
+    <div style={{
+      background: 'var(--void-3)', border: '1px solid var(--gb)',
+      borderLeft: `3px solid ${color}`,
+      borderRadius: 10, padding: '12px 14px',
+      display: 'flex', flexDirection: 'column', gap: 4,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <span style={{ fontSize: '1rem' }}>{icon}</span>
+        <span style={{ fontSize: '.72rem', color: 'var(--ink-muted)' }}>{label}</span>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+        <span style={{ fontSize: '1.2rem', fontWeight: 700, color, fontFamily: 'Space Grotesk, monospace' }}>{value}</span>
+        {sub && <span style={{ fontSize: '.68rem', color: 'var(--ink-faint)' }}>{sub}</span>}
+      </div>
+    </div>
+  );
+}
+
+// 运行时长格式化(秒→天/时/分)
+function formatUptime(seconds) {
+  if (!seconds || seconds < 0) return '0分';
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (d > 0) return `${d}天${h}时`;
+  if (h > 0) return `${h}时${m}分`;
+  return `${m}分`;
 }
 
 function Panel({ title, color, children }) {

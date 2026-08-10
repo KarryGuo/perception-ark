@@ -249,6 +249,29 @@ router.get('/location', (req, res) => {
   });
 });
 
+// 实时精确位置(仅家属监护人可见,用于内嵌地图显示)
+// 家属作为监护人,需要查看视障人员的精确位置以提供及时救助
+router.get('/precise-location', authRequired, (req, res) => {
+  const context = getContext();
+  if (!context.currentLocation) {
+    return res.json({ location: null, activity: context.userActivity, timestamp: new Date().toISOString() });
+  }
+  res.json({
+    location: {
+      lat: context.currentLocation.lat,
+      lng: context.currentLocation.lng,
+      address: context.currentLocation.address || '未知位置',
+      province: context.currentLocation.province || '',
+      city: context.currentLocation.city || '',
+      district: context.currentLocation.district || ''
+    },
+    activity: context.userActivity,
+    lastDangerEvent: context.lastDangerEvent,
+    lastUpdate: context.currentLocation.timestamp || null,
+    timestamp: new Date().toISOString()
+  });
+});
+
 // SOS历史
 router.get('/sos', async (req, res) => {
   res.json({ events: await getSosEvents(50) });

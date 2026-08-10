@@ -255,6 +255,7 @@ export const api = {
   // 家属端
   familyOverview: () => request('/family/overview'),
   familyLocation: () => request('/family/location'),
+  familyPreciseLocation: () => request('/family/precise-location'),
   familySos: () => request('/family/sos'),
   familyContacts: () => request('/family/contacts'),
   familyUsers: () => request('/family/users'),
