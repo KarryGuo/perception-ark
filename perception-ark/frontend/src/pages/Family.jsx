@@ -4,6 +4,7 @@ import { useAuth } from '../hooks/useAuth.jsx';
 import { useWebSocket } from '../hooks/useWebSocket.js';
 import { useSpeechSynthesis, useSpeechRecognition } from '../hooks/useSpeech.js';
 import FamilyMap from '../components/FamilyMap.jsx';
+import ThemeToggle from '../components/ThemeToggle.jsx';
 
 // 顶部药丸Tab(与视障端统一框架)
 const TABS = [
@@ -381,6 +382,7 @@ export default function Family() {
           <span className={`am-dot ${connected ? 'on' : 'off'}`} />
           <span className="am-status-text">{connected ? '在线' : '离线'}</span>
         </div>
+        <ThemeToggle size="sm" />
       </div>
 
       {/* ===== SOS实时告警浮层 ===== */}

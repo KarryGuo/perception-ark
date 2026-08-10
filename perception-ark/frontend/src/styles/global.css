@@ -4359,3 +4359,144 @@ body.ark-large-font .am-tutorial-btn { font-size: 1.1rem; }
 .ark-dark .chart-container line {
   stroke: rgba(255, 255, 255, 0.06) !important;
 }
+
+/* ============================================
+   手动主题覆盖 · 通过 <html data-theme="..."> 切换
+   优先级高于 @media (prefers-color-scheme) 系统检测
+   ============================================ */
+
+/* 手动浅色: 强制浅色主题(覆盖系统暗色偏好) */
+:root[data-theme="light"] {
+  --void: #F5F7FA; --void-2: #FFFFFF; --void-3: #F0F2F5; --void-4: #E5E8EB;
+  --ink: #1D2129; --ink-soft: #4E5969; --ink-muted: #86909C; --ink-faint: #C9CDD4;
+  --bio-emerald: #00B873; --bio-emerald-dim: #009E62;
+  --bio-magenta: #E0357E; --bio-magenta-dim: #B82A66;
+  --bio-amber: #E8950E; --bio-amber-dim: #C77E0A;
+  --bio-violet: #6B4FE0; --bio-violet-dim: #5840BD;
+  --bio-cyan: #08A8D9;
+  --glass: rgba(255, 255, 255, 0.72);
+  --gb: rgba(0, 0, 0, 0.08);
+  --gbh: rgba(0, 0, 0, 0.16);
+  --glass-border: rgba(0, 0, 0, 0.06);
+  --glass-border-hover: rgba(0, 0, 0, 0.14);
+}
+:root[data-theme="light"] body {
+  background: var(--void);
+  color: var(--ink);
+}
+:root[data-theme="light"] .ambient {
+  background:
+    radial-gradient(ellipse 600px 400px at 10% 15%, rgba(0,184,115,0.05) 0%, transparent 60%),
+    radial-gradient(ellipse 500px 400px at 90% 70%, rgba(107,79,224,0.05) 0%, transparent 60%),
+    radial-gradient(ellipse 400px 300px at 50% 100%, rgba(224,53,126,0.04) 0%, transparent 60%);
+}
+:root[data-theme="light"] .topbar {
+  background: rgba(255, 255, 255, 0.82);
+  border-bottom: 1px solid var(--gb);
+}
+:root[data-theme="light"] .topbar-tag {
+  background: rgba(107, 79, 224, 0.1);
+  color: var(--bio-violet);
+}
+:root[data-theme="light"] .tb-link {
+  background: var(--void-3);
+  border: 1px solid var(--gb);
+}
+:root[data-theme="light"] input,
+:root[data-theme="light"] textarea,
+:root[data-theme="light"] select {
+  background: var(--void-2);
+  color: var(--ink);
+  border-color: var(--gb);
+}
+:root[data-theme="light"] input::placeholder,
+:root[data-theme="light"] textarea::placeholder { color: var(--ink-faint); }
+:root[data-theme="light"] .am-fam-card,
+:root[data-theme="light"] .am-fam-stat {
+  background: rgba(255, 255, 255, 0.8);
+  border-color: var(--gb);
+}
+:root[data-theme="light"] .am-fam-guardian-card {
+  background: rgba(255, 255, 255, 0.85);
+  border-color: var(--gb);
+}
+:root[data-theme="light"] .am-fam-add-btn.cancel {
+  background: var(--void-3);
+  color: var(--ink-muted);
+}
+:root[data-theme="light"] .am-fam-form-input {
+  background: var(--void-2);
+  border-color: var(--gb);
+  color: var(--ink);
+}
+:root[data-theme="light"] .am-fam-confirm-overlay {
+  background: rgba(0, 0, 0, 0.4);
+}
+:root[data-theme="light"] .am-fam-tab-bar {
+  background: rgba(255, 255, 255, 0.8);
+  border-color: var(--gb);
+}
+:root[data-theme="light"] .chart-container line {
+  stroke: rgba(0, 0, 0, 0.06) !important;
+}
+:root[data-theme="light"] .am-tutorial-overlay {
+  background: rgba(255, 255, 255, 0.82);
+}
+:root[data-theme="light"] .am-error-banner {
+  background: rgba(224, 53, 126, 0.1);
+  border-color: rgba(224, 53, 126, 0.3);
+  color: var(--bio-magenta);
+}
+:root[data-theme="light"] ::-webkit-scrollbar-track { background: var(--void-3); }
+:root[data-theme="light"] ::-webkit-scrollbar-thumb { background: var(--gbh); }
+
+/* 手动暗色: 强制暗色主题(覆盖系统浅色偏好) */
+:root[data-theme="dark"] {
+  --void: #04060C; --void-2: #080B14; --void-3: #0D111C; --void-4: #121621;
+  --ink: #EAF0FF; --ink-soft: #D0D8E8; --ink-muted: #8893A8; --ink-faint: #5A6478;
+  --bio-emerald: #00FFA3; --bio-emerald-dim: #00CC82;
+  --bio-magenta: #FF2E7E; --bio-magenta-dim: #CC1E5E;
+  --bio-amber: #FFB627; --bio-amber-dim: #CC8F1D;
+  --bio-violet: #7B61FF; --bio-violet-dim: #5A3FCC;
+  --bio-cyan: #00E5FF;
+  --glass: rgba(13, 17, 28, 0.6);
+  --gb: rgba(255, 255, 255, 0.06);
+  --gbh: rgba(255, 255, 255, 0.14);
+  --glass-border: rgba(255, 255, 255, 0.06);
+  --glass-border-hover: rgba(255, 255, 255, 0.12);
+}
+:root[data-theme="dark"] body {
+  background: var(--void);
+  color: var(--ink);
+}
+:root[data-theme="dark"] .ambient {
+  background:
+    radial-gradient(ellipse 600px 400px at 10% 15%, rgba(0,255,163,0.04) 0%, transparent 60%),
+    radial-gradient(ellipse 500px 400px at 90% 70%, rgba(123,97,255,0.04) 0%, transparent 60%),
+    radial-gradient(ellipse 400px 300px at 50% 100%, rgba(255,46,126,0.03) 0%, transparent 60%);
+}
+:root[data-theme="dark"] .topbar {
+  background: rgba(8, 11, 20, 0.72);
+  border-bottom: 1px solid var(--gb);
+}
+:root[data-theme="dark"] .am-tutorial-overlay {
+  background: rgba(0, 0, 0, 0.85);
+}
+:root[data-theme="dark"] .chart-container line {
+  stroke: rgba(255, 255, 255, 0.06) !important;
+}
+
+/* 主题切换按钮交互反馈 */
+.ark-theme-toggle:hover {
+  border-color: var(--gbh);
+  color: var(--ink);
+}
+.ark-theme-toggle:active {
+  transform: scale(.94);
+}
+
+/* 窄屏: 主题按钮只显示图标,避免顶栏溢出 */
+@media (max-width: 760px) {
+  .ark-theme-toggle > span:last-child { display: none; }
+  .ark-theme-toggle { padding: 6px 10px !important; min-width: 40px; }
+}

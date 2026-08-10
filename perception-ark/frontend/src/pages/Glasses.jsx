@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../hooks/useAuth.jsx';
 import { api } from '../services/api.js';
 import { LineChart, DonutChart, BarChart } from '../components/Charts.jsx';
+import ThemeToggle from '../components/ThemeToggle.jsx';
 
 const TABS = [
   { key: 'devices', label: '设备监测', icon: '📡' },
@@ -112,6 +113,7 @@ export default function Glasses() {
             {new Date(devices?.timestamp || Date.now()).toLocaleTimeString('zh-CN', { hour12: false })}
           </span>
           {user && <span style={{ fontSize: '.72rem', color: 'var(--bio-emerald)' }}>管理员 · {user.username}</span>}
+          <ThemeToggle size="sm" />
           <a href="#/app" className="tb-link">App端</a>
           <button onClick={logout} style={{ background: 'none', border: '1px solid var(--gb)', color: 'var(--ink-muted)', padding: '4px 10px', borderRadius: 6, cursor: 'pointer', fontSize: '.72rem', fontFamily: 'inherit' }}>退出</button>
         </div>
