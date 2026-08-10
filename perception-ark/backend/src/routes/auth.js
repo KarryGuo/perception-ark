@@ -475,7 +475,10 @@ router.post('/family/bind', authRequired, async (req, res) => {
     }
     // 不能绑定自己
     const myAccount = getAccountById(req.user.id);
-    if (myAccount?.phone === phoneTrim) {
+    if (!myAccount) {
+      return res.status(401).json({ success: false, error: '账号不存在,请重新登录' });
+    }
+    if (myAccount.phone === phoneTrim) {
       return res.status(400).json({ success: false, error: '不能绑定自己的手机号' });
     }
     const result = addFamilyBinding(req.user.id, phoneTrim, name, relation);
