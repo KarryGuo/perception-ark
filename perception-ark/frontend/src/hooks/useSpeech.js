@@ -150,6 +150,12 @@ export function useSpeechSynthesis() {
     if (!supported || !text) return;
     const { urgent = false, onEnd, rate } = options;
 
+    // 数字小数点转中文"点"(如"1.5米"→"1点5米"),否则TTS会读成"1 5米"导致视障者误解
+    // 仅转换距离/尺寸相关的数字小数点,不影响其他文本
+    const normalizedText = typeof text === 'string'
+      ? text.replace(/(\d+)\.(\d+)/g, '$1点$2')
+      : text;
+
     // 新的 speak 调用: 递增 generation,使之前所有 utterance 的 onend 失效
     const myGeneration = ++generationRef.current;
     // 重置停止标志(允许本次播报的 playNext 推进)
@@ -167,7 +173,7 @@ export function useSpeechSynthesis() {
     }
 
     // 分句(避免长文本被截断)
-    const sentences = text.match(/[^。！？!?.]+[。！？!?.]?/g) || [text];
+    const sentences = normalizedText.match(/[^。！？!?.]+[。！？!?.]?/g) || [normalizedText];
 
     // 语速优先级: 调用方传入 > localStorage设置 > 紧急/默认
     const finalRate = rate || getSavedRate();
@@ -196,12 +202,15 @@ export function useSpeechSynthesis() {
         // 关键: 只有当前 generation 的 utterance 才驱动 playNext
         // stop() 或新的 speak() 都会递增 generation,使旧 onend 失效
         if (myGeneration !== generationRef.current) return;
+        // onend 触发后清除所有兜底定时器(当前 utterance 已正常结束)
+        playNextTimersRef.current.forEach(t => clearTimeout(t));
+        playNextTimersRef.current = [];
         if (idx === sentences.length - 1) {
           setSpeaking(false);
           currentUtterRef.current = null;
           if (onEnd) onEnd();
         }
-        // onend驱动下一句(比100ms轮询更快,减少播报延迟)
+        // onend驱动下一句(比轮询更快,减少播报延迟)
         playNext();
       };
 
@@ -214,7 +223,9 @@ export function useSpeechSynthesis() {
       utterQueueRef.current.push(utter);
     });
 
-    // 依次播放(onend驱动 + 轮询兜底,双保险)
+    // 依次播放(onend驱动为主 + 兜底轮询为辅)
+    // 关键修复: 兜底轮询仅在浏览器未在播放时才推进队列
+    // 避免提前将utterance排入浏览器队列导致Chrome speechSynthesis队列混乱
     const playNext = () => {
       // 关键: generation 不匹配时直接返回,阻止旧 speak 的 playNext 继续推进
       if (myGeneration !== generationRef.current) return;
@@ -222,8 +233,15 @@ export function useSpeechSynthesis() {
       const next = utterQueueRef.current.shift();
       if (next) {
         window.speechSynthesis.speak(next);
-        // 轮询兜底: 部分Chrome版本onend不触发,250ms轮询确保队列推进
-        const timer = setTimeout(playNext, 250);
+        // 兜底轮询: 部分Chrome版本onend不触发,3秒后检查是否需要推进
+        // 仅在浏览器未在播放时才推进(避免打断正在播放的utterance)
+        const timer = setTimeout(() => {
+          if (myGeneration !== generationRef.current) return;
+          if (stoppedRef.current) return;
+          if (!window.speechSynthesis.speaking) {
+            playNext();
+          }
+        }, 3000);
         playNextTimersRef.current.push(timer);
       }
     };
