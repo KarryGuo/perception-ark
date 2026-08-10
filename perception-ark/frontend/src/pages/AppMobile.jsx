@@ -5,6 +5,7 @@ import { useSpeechSynthesis, useSpeechRecognition } from '../hooks/useSpeech.js'
 import { useGeolocation } from '../hooks/useGeolocation.js';
 import { useAuth } from '../hooks/useAuth.jsx';
 import { useSpatialAudio } from '../hooks/useSpatialAudio.js';
+import { useNavigation } from '../hooks/useNavigation.js';
 import { api } from '../services/api.js';
 import MapView from '../components/MapView.jsx';
 import Family from './Family.jsx';
@@ -94,6 +95,21 @@ function AppMobileUser() {
   // 防止TTS音频被麦克风拾取→误触发唤醒词→speak('我在请说')→generation递增→中断当前播报
   const ttsSpeakingRef = useRef(false);
   useEffect(() => { ttsSpeakingRef.current = ttsSpeaking; }, [ttsSpeaking]);
+
+  // 导航引导Hook: 实时方向纠正+朝向检测+导航视角数据
+  const { navState, heading: navHeading, startNavigation, stopNavigation, requestCompassPermission } = useNavigation({
+    location,
+    speak,
+    stopSpeak,
+    ttsSpeaking,
+    onArrive: useCallback(() => {
+      setMapRoute(null);
+      showToast('已到达目的地');
+    }, [showToast]),
+  });
+  // navState同步引用(供switchTab等闭包使用)
+  const navStateRef = useRef(navState);
+  useEffect(() => { navStateRef.current = navState; }, [navState]);
 
   const messagesEndRef = useRef(null);
   const isPressingRef = useRef(null);
@@ -571,9 +587,21 @@ function AppMobileUser() {
     spatialAudio.stop();
     spatialAudio.stopAlarm();
     setSubtitle('');
+    // 离开导航页时停止导航监控(但不清除路线,用户回来仍可看到)
+    if (tab !== 'navigate' && navStateRef.current?.active) {
+      stopNavigation();
+      setMapRoute(null);
+    }
+    // 进入导航页时自动定位 + 请求罗盘权限
+    if (tab === 'navigate') {
+      forceLocate().then(pos => {
+        if (!pos) showToast('定位中,请稍候');
+      });
+      requestCompassPermission();
+    }
     const names = { recognize: '识别', navigate: '导航', sos: '紧急呼救' };
     showToast(`已切换到${names[tab]}`);
-  }, [showToast, stopSpeak, spatialAudio]);
+  }, [showToast, stopSpeak, spatialAudio, stopNavigation, forceLocate, requestCompassPermission]);
 
   // ===== 点击说话(切换模式: 点击开始录入,再点击结束) =====
   const handleToggleSpeak = useCallback(() => {
@@ -1453,6 +1481,10 @@ function AppMobileUser() {
         addMessage('assistant', resultText);
         speak(resultText);
         setSubtitle(`🧭 ${resultText}`);
+        // 启动实时导航监控(方向纠正+转弯预告+到达检测)
+        if (res.result.polyline && res.result.steps) {
+          startNavigation(res.result, destination);
+        }
       }
     }
     catch (err) {
@@ -1461,7 +1493,7 @@ function AppMobileUser() {
       addMessage('assistant', errText); setSubtitle(errText);
     }
     finally { setBusy(false); }
-  }, [navInput, location, forceLocate, addMessage, showToast, speak, drawRouteFromResult, formatNavResult]);
+  }, [navInput, location, forceLocate, addMessage, showToast, speak, drawRouteFromResult, formatNavResult, startNavigation]);
 
   // ===== 出行导航启动(从识别页出行按钮触发,必须在handleNavigate之后定义) =====
   const startTravelNavigate = useCallback((dest) => {
@@ -1473,6 +1505,16 @@ function AppMobileUser() {
     speak(`好的，正在为您导航到${d}`);
     setTimeout(() => handleNavigate(d), 600);
   }, [travelDest, switchTab, speak, handleNavigate, showToast]);
+
+  // ===== 停止导航 =====
+  const handleStopNavigation = useCallback(() => {
+    stopNavigation();
+    setMapRoute(null);
+    stopSpeak();
+    speak('已停止导航');
+    showToast('导航已结束');
+    addMessage('assistant', '导航已结束');
+  }, [stopNavigation, stopSpeak, speak, showToast, addMessage]);
 
   // ===== 智能导航流程: 搜索附近POI → 播报列表 → 等待用户选择 =====
   const startSmartNavigation = useCallback(async (keyword) => {
@@ -1883,7 +1925,24 @@ function AppMobileUser() {
           style={{ display: activeTab === 'recognize' ? 'block' : 'none' }}
         />
         {activeTab === 'navigate' && (
-          <MapView location={location} route={mapRoute} pois={mapPois} className="am-bg-map" />
+          <MapView
+            location={location}
+            route={mapRoute}
+            pois={mapPois}
+            className="am-bg-map"
+            navMode={navState.active}
+            heading={navHeading}
+            navInfo={navState.active ? {
+              destination: navState.destination,
+              distanceToNextManeuver: navState.distanceToNextManeuver,
+              nextManeuverInstruction: navState.nextManeuverInstruction,
+              currentInstruction: navState.steps[navState.currentStepIndex]?.instruction,
+              heading: navState.heading,
+              headingDeviation: navState.headingDeviation,
+              offRoute: navState.offRoute,
+              remainingDistance: navState.remainingDistance,
+            } : null}
+          />
         )}
         {activeTab === 'sos' && (
           <div className="am-bg-sos" />
@@ -2094,6 +2153,31 @@ function AppMobileUser() {
         {/* 导航页 - 统一输入框(与识别页同设计): 左侧按住说话/文本输入 + 右侧切换icon */}
         {activeTab === 'navigate' && (
           <div className="am-navigate-bottom">
+            {/* 导航进行中: 停止按钮 + 状态条 */}
+            {navState.active && (
+              <>
+                <button className="am-nav-stop" onClick={handleStopNavigation} aria-label="停止导航">
+                  🛑 停止导航
+                </button>
+                <div className="am-nav-status" role="status" aria-live="polite">
+                  <span className="ans-icon">
+                    {navState.offRoute ? '⚠️' : navState.headingDeviation > 60 ? '🧭' : '🚶'}
+                  </span>
+                  <span className="ans-text">
+                    {navState.offRoute
+                      ? '已偏离路线，请回到规划路线'
+                      : navState.headingDeviation > 60
+                        ? `方向偏差${navState.headingDeviation}°，请调整`
+                        : navState.distanceToNextManeuver != null
+                          ? `前方${navState.distanceToNextManeuver}米${navState.nextManeuverInstruction ? '：' + navState.nextManeuverInstruction : ''}`
+                          : '沿路线前行'}
+                  </span>
+                  {navState.remainingDistance != null && (
+                    <span className="ans-chip">剩余{navState.remainingDistance < 1000 ? `${navState.remainingDistance}m` : `${(navState.remainingDistance/1000).toFixed(1)}km`}</span>
+                  )}
+                </div>
+              </>
+            )}
             {/* POI搜索建议浮层(输入时显示,优先于历史搜索) */}
             {navInputMode && poiSuggestions.length > 0 && (
               <div className="am-poi-panel">
