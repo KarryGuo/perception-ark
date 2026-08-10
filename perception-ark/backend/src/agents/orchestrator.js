@@ -178,9 +178,9 @@ function describeLocation() {
   return loc.address || `${loc.lat.toFixed(4)},${loc.lng.toFixed(4)}`;
 }
 
-export function getStats() {
+export async function getStats() {
   return {
-    ...getMemoryStats(),
+    ...(await getMemoryStats()),
     preemptionCount: preemptionLog.length,
     agentStatus: Object.fromEntries(Object.entries(AGENTS).map(([k, v]) => [k, v.active])),
     traeConfigured: isConfigured()
@@ -206,7 +206,7 @@ export async function runSceneAgent(imageBase64, userQuery = '', options = {}) {
 
     // 注入记忆上下文
     const nearbyRoutes = sharedContext.currentLocation
-      ? searchRoutes(sharedContext.currentLocation.lat, sharedContext.currentLocation.lng, 3)
+      ? await searchRoutes(sharedContext.currentLocation.lat, sharedContext.currentLocation.lng, 3)
       : [];
     let memoryHint = '';
     if (nearbyRoutes.length > 0) {
@@ -331,7 +331,7 @@ export async function runNavigationAgent(destination, startLat, startLng) {
     emitLog('A02', `路径规划完成: 距离${route.distance}米, 预计${route.duration}分钟`);
 
     // 3. 注入记忆
-    const nearbyRoutes = searchRoutes(startLatVal, startLngVal, 3);
+    const nearbyRoutes = await searchRoutes(startLatVal, startLngVal, 3);
     let memoryHint = '';
     if (nearbyRoutes.length > 0 && nearbyRoutes[0].route_name.includes(destination)) {
       memoryHint = `这条路您过去30天走过${nearbyRoutes[0].visit_count}次。`;
@@ -364,7 +364,7 @@ export async function runNavigationAgent(destination, startLat, startLng) {
     // 记录路线到记忆库(A05环境记忆的数据来源)
     if (startLatVal && startLngVal) {
       try {
-        addRoute({
+        await addRoute({
           start_lat: startLatVal,
           start_lng: startLngVal,
           end_lat: target.lat,
@@ -483,7 +483,7 @@ export async function selectPoiAndNavigate(selection, startLat, startLng) {
 
     // 记忆写入
     try {
-      addRoute({
+      await addRoute({
         start_lat: startLatVal,
         start_lng: startLngVal,
         end_lat: target.lat,
@@ -671,9 +671,9 @@ function emitSafetyResult(parsed, mode = 'scan') {
 }
 
 // 紧急联系人配置: 优先从users表读取(家属端绑定),环境变量作为兜底
-function getEmergencyContact() {
+async function getEmergencyContact() {
   try {
-    const users = getAllUsers();
+    const users = await getAllUsers();
     const userWithContact = users.find(u => u.emergency_contact && u.emergency_phone);
     if (userWithContact) {
       return { name: userWithContact.emergency_contact, phone: userWithContact.emergency_phone };
@@ -695,7 +695,7 @@ export async function triggerFallDetection(lat, lng) {
   emitLog('A03', '⚠ 跌倒检测触发！IMU检测到突然冲击', 'warn');
   sharedContext.userActivity = 'fallen';
 
-  const contact = getEmergencyContact();
+  const contact = await getEmergencyContact();
 
   // 防重入: 如果已有倒计时进行中,不清除也不重启,只提示
   if (fallSosTimer) {
@@ -716,7 +716,7 @@ export async function triggerFallDetection(lat, lng) {
   emitSubtitle('⚠️ 检测到跌倒，10秒倒计时中... 说"我没事"取消', true);
 
   // 10秒后触发SOS
-  fallSosTimer = setTimeout(() => {
+  fallSosTimer = setTimeout(async () => {
     fallSosTimer = null;
     emitSos('SOS SENT', `紧急联系人 ${contact.name} 已通知 · 位置已同步`);
     emitSpeak('A03', `已自动联系紧急联系人${contact.name}。您的位置是${fallLocation}，已同步给救援方。请保持不动，救援正在路上。`, { urgent: true });
@@ -726,7 +726,7 @@ export async function triggerFallDetection(lat, lng) {
       const sosLat = lat || sharedContext.currentLocation?.lat || null;
       const sosLng = lng || sharedContext.currentLocation?.lng || null;
       const sosAddr = sharedContext.currentLocation?.address || '';
-      const sosId = addSosEvent({
+      const sosId = await addSosEvent({
         event_type: 'fall',
         lat: sosLat,
         lng: sosLng,
@@ -736,7 +736,7 @@ export async function triggerFallDetection(lat, lng) {
       });
       // SOS已实际发送,立即更新状态为sent(旧代码updateSosStatus(null,'sent')因WHERE id=null不生效)
       if (sosId) {
-        updateSosStatus(sosId, 'sent');
+        await updateSosStatus(sosId, 'sent');
       }
       emitLog('A03', `SOS已发送至紧急联系人: ${contact.name} (${contact.phone})`, 'warn');
     } catch (e) {
@@ -787,7 +787,7 @@ export async function triggerSosButton(lat, lng) {
   if (sosButtonTimer2) { clearTimeout(sosButtonTimer2); sosButtonTimer2 = null; }
   sosButtonActive = true;
 
-  const contact = getEmergencyContact();
+  const contact = await getEmergencyContact();
   const sosLocation = describeLocation();
   const sosLat = lat || sharedContext.currentLocation?.lat || null;
   const sosLng = lng || sharedContext.currentLocation?.lng || null;
@@ -799,7 +799,7 @@ export async function triggerSosButton(lat, lng) {
 
   // 记录SOS事件到记忆库(立即发送)
   try {
-    const sosId = addSosEvent({
+    const sosId = await addSosEvent({
       event_type: 'manual',
       lat: sosLat,
       lng: sosLng,
@@ -807,7 +807,7 @@ export async function triggerSosButton(lat, lng) {
       contact_name: contact.name || '',
       contact_phone: contact.phone || ''
     });
-    if (sosId) updateSosStatus(sosId, 'sent');
+    if (sosId) await updateSosStatus(sosId, 'sent');
     emitLog('A03', `主动SOS已记录: 位置=${sosLocation}, 联系人=${contact.name || '未设置'}`, 'warn');
   } catch (e) {
     emitLog('A03', `SOS事件记录失败: ${e.message}`, 'error');
@@ -966,14 +966,14 @@ export async function runSocialAgent(imageBase64, mode = 'ocr', options = {}) {
 
     if (mode === 'ocr') {
       result = await ocrRecognize(imageBase64, MODEL_OCR);
-      const lastOrder = getHabit('food', 'last_order');
+      const lastOrder = await getHabit('food', 'last_order');
       if (lastOrder && result.includes(lastOrder.habit_value)) {
         memoryHint = ` 上次您点过${lastOrder.habit_value}，要再来一份吗？`;
       }
       // 记录OCR识别内容到习惯库(菜单类识别)
       if (result.length > 5 && result.length < 200) {
         try {
-          upsertHabit('food', 'last_order', result.slice(0, 100));
+          await upsertHabit('food', 'last_order', result.slice(0, 100));
           emitLog('A05', `已记录OCR内容到习惯库`, 'info');
         } catch (e) { /* 忽略写入失败 */ }
       }
@@ -992,14 +992,14 @@ export async function runSocialAgent(imageBase64, mode = 'ocr', options = {}) {
     } else if (mode === 'face') {
       result = await faceDescribe(imageBase64, MODEL_OMNI);
       // 匹配本地熟人库
-      const faces = searchFaces();
+      const faces = await searchFaces();
       if (faces.length > 0) {
         const matched = faces[0]; // 简化: 取最常访问的
         memoryHint = ` 这是您的${matched.relation}${matched.name}，上次见面是${new Date(matched.last_seen).toLocaleDateString('zh-CN')}。`;
       } else {
         // 记录新面孔到记忆库
         try {
-          addFace({ name: '陌生人', relation: '未识别', description: result.slice(0, 100) });
+          await addFace({ name: '陌生人', relation: '未识别', description: result.slice(0, 100) });
           emitLog('A05', `已记录新面孔到记忆库`, 'info');
         } catch (e) { /* 忽略写入失败 */ }
       }
@@ -1032,11 +1032,11 @@ export async function runMemoryAgent(query) {
 
   try {
     const routes = sharedContext.currentLocation
-      ? searchRoutes(sharedContext.currentLocation.lat, sharedContext.currentLocation.lng, 5)
+      ? await searchRoutes(sharedContext.currentLocation.lat, sharedContext.currentLocation.lng, 5)
       : [];
-    const faces = searchFaces();
-    const foodHabit = getHabit('food', 'last_order');
-    const commuteHabit = getHabit('route', 'commute');
+    const faces = await searchFaces();
+    const foodHabit = await getHabit('food', 'last_order');
+    const commuteHabit = await getHabit('route', 'commute');
 
     let result = '';
     if (routes.length > 0) {

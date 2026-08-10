@@ -125,27 +125,35 @@ wss.on('connection', (ws) => {
   }));
 });
 
-// 启动
-initMemoryStore();
+// 启动 - 先异步初始化数据库(libsql/Turso),完成后再启动HTTP服务器
+// 使用 async IIFE 以便 await initMemoryStore(),确保表结构/管理员账号就绪后再接请求
+(async () => {
+  try {
+    await initMemoryStore();
+    server.listen(PORT, () => {
+      log('SYS', `═══════════════════════════════════════════`);
+      log('SYS', `PerceptionArk Backend 启动成功`);
+      log('SYS', `HTTP: http://localhost:${PORT}`);
+      log('SYS', `WebSocket: ws://localhost:${PORT}/ws`);
+      log('SYS', `API文档: http://localhost:${PORT}/api/health`);
+      log('SYS', `═══════════════════════════════════════════`);
 
-server.listen(PORT, () => {
-  log('SYS', `═══════════════════════════════════════════`);
-  log('SYS', `PerceptionArk Backend 启动成功`);
-  log('SYS', `HTTP: http://localhost:${PORT}`);
-  log('SYS', `WebSocket: ws://localhost:${PORT}/ws`);
-  log('SYS', `API文档: http://localhost:${PORT}/api/health`);
-  log('SYS', `═══════════════════════════════════════════`);
+      if (!process.env.QWEN_API_KEY || !process.env.QWEN_API_KEY.startsWith('sk-')) {
+        log('SYS', '⚠ 未配置 QWEN_API_KEY，将使用MOCK模式运行', 'warn');
+        log('SYS', '  配置方法: 编辑 backend/.env 并填写真实千问API Key', 'warn');
+      } else {
+        log('SYS', '✓ 已检测到 QWEN_API_KEY，将使用真实千问大模型');
+      }
 
-  if (!process.env.QWEN_API_KEY || !process.env.QWEN_API_KEY.startsWith('sk-')) {
-    log('SYS', '⚠ 未配置 QWEN_API_KEY，将使用MOCK模式运行', 'warn');
-    log('SYS', '  配置方法: 编辑 backend/.env 并填写真实千问API Key', 'warn');
-  } else {
-    log('SYS', '✓ 已检测到 QWEN_API_KEY，将使用真实千问大模型');
+      const wakeWord = process.env.ASSISTANT_WAKE_WORD || '小舟小舟';
+      log('SYS', `✓ 小舟智能助手已就绪 · 唤醒词: "${wakeWord}"`);
+    });
+  } catch (err) {
+    // 数据库初始化失败属于致命错误: 表未创建会导致所有API崩溃
+    log('SYS', `数据库初始化失败,服务无法启动: ${err.message}`, 'error');
+    process.exit(1);
   }
-
-  const wakeWord = process.env.ASSISTANT_WAKE_WORD || '小舟小舟';
-  log('SYS', `✓ 小舟智能助手已就绪 · 唤醒词: "${wakeWord}"`);
-});
+})();
 
 // 优雅关闭: 收到终止信号时关闭HTTP服务器和WebSocket
 function gracefulShutdown(signal) {

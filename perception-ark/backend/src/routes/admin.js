@@ -18,23 +18,23 @@ function adminRequired(req, res, next) {
 router.use(authRequired, adminRequired);
 
 // 账号管理列表
-router.get('/accounts', (req, res) => {
-  const accounts = getAllAccounts();
+router.get('/accounts', async (req, res) => {
+  const accounts = await getAllAccounts();
   res.json({ accounts });
 });
 
 // 封禁账号
-router.post('/accounts/:id/ban', (req, res) => {
+router.post('/accounts/:id/ban', async (req, res) => {
   const targetId = parseInt(req.params.id);
   const { reason } = req.body;
   if (targetId === req.user.id) {
     return res.status(400).json({ error: '不能封禁自己' });
   }
-  const ok = updateAccountStatus(targetId, 'banned');
+  const ok = await updateAccountStatus(targetId, 'banned');
   if (!ok) {
     return res.status(404).json({ error: '账号不存在' });
   }
-  addAdminLog({
+  await addAdminLog({
     admin_id: req.user.id,
     target_account_id: targetId,
     action: 'ban',
@@ -46,14 +46,14 @@ router.post('/accounts/:id/ban', (req, res) => {
 });
 
 // 解封账号
-router.post('/accounts/:id/unban', (req, res) => {
+router.post('/accounts/:id/unban', async (req, res) => {
   const targetId = parseInt(req.params.id);
   const { reason } = req.body;
-  const ok = updateAccountStatus(targetId, 'active');
+  const ok = await updateAccountStatus(targetId, 'active');
   if (!ok) {
     return res.status(404).json({ error: '账号不存在' });
   }
-  addAdminLog({
+  await addAdminLog({
     admin_id: req.user.id,
     target_account_id: targetId,
     action: 'unban',
@@ -65,18 +65,18 @@ router.post('/accounts/:id/unban', (req, res) => {
 });
 
 // 管理员操作日志
-router.get('/logs', (req, res) => {
+router.get('/logs', async (req, res) => {
   const limit = parseInt(req.query.limit) || 50;
-  res.json({ logs: getAdminLogs(limit) });
+  res.json({ logs: await getAdminLogs(limit) });
 });
 
 // 设备监测总览
-router.get('/devices', (req, res) => {
+router.get('/devices', async (req, res) => {
   const context = getContext();
-  const stats = getStats();
-  const memStats = getMemoryStats();
-  const accounts = getAllAccounts();
-  const sosEvents = getSosEvents(20);
+  const stats = await getStats();
+  const memStats = await getMemoryStats();
+  const accounts = await getAllAccounts();
+  const sosEvents = await getSosEvents(20);
 
   // 统计各角色账号数
   const userCount = accounts.filter(a => a.role === 'user').length;

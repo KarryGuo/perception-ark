@@ -49,7 +49,7 @@ router.post('/register', async (req, res) => {
     }
 
     // 检查用户名是否已存在
-    const existing = getAccountByUsername(username);
+    const existing = await getAccountByUsername(username);
     if (existing) {
       return res.status(409).json({ success: false, error: '用户名已存在' });
     }
@@ -59,12 +59,12 @@ router.post('/register', async (req, res) => {
     const answerHash = bcrypt.hashSync(securityAnswer.trim(), 10);
 
     // 创建账号
-    const accountId = createAccount(username, passwordHash, accountRole, null, phone, securityQuestion.trim(), answerHash);
+    const accountId = await createAccount(username, passwordHash, accountRole, null, phone, securityQuestion.trim(), answerHash);
     if (!accountId) {
       return res.status(500).json({ success: false, error: '注册失败' });
     }
 
-    const account = getAccountById(accountId);
+    const account = await getAccountById(accountId);
     const token = generateToken(account);
 
     log('AUTH', `新用户注册: ${username} (${accountRole})${phone ? ' phone=' + phone : ''}`);
@@ -93,7 +93,7 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ success: false, error: '用户名和密码不能为空' });
     }
 
-    const account = getAccountByUsername(username);
+    const account = await getAccountByUsername(username);
     if (!account) {
       return res.status(401).json({ success: false, error: '用户名或密码错误' });
     }
@@ -129,7 +129,7 @@ router.post('/login', async (req, res) => {
  * 说明: 未配置短信服务商,开发模式下验证码通过响应 devCode 字段返回(前端弹窗显示),
  *       同时在后端日志输出。生产环境接入真实短信服务后移除 devCode 字段。
  */
-router.post('/send-sms', (req, res) => {
+router.post('/send-sms', async (req, res) => {
   try {
     const { phone } = req.body;
     if (!phone || !/^1[3-9]\d{9}$/.test(phone.trim())) {
@@ -138,7 +138,7 @@ router.post('/send-sms', (req, res) => {
     const phoneTrim = phone.trim();
 
     // 检查封禁状态(仅对已注册账号检查,未注册可直接获取验证码)
-    const existingAccount = getAccountByPhone(phoneTrim);
+    const existingAccount = await getAccountByPhone(phoneTrim);
     if (existingAccount && existingAccount.status === 'banned') {
       return res.status(403).json({ success: false, error: '该账号已被封禁,如有疑问请联系管理员' });
     }
@@ -211,7 +211,7 @@ router.post('/login-sms', async (req, res) => {
     smsCodes.delete(phoneTrim);
 
     // 查找账号
-    let account = getAccountByPhone(phoneTrim);
+    let account = await getAccountByPhone(phoneTrim);
 
     // 账号不存在时自动注册(用户名=用户+手机后4位,按所选身份创建,登录后可在设置中完善信息)
     if (!account) {
@@ -219,17 +219,17 @@ router.post('/login-sms', async (req, res) => {
       const randomName = `用户${phoneSuffix}`;
       // 检查用户名是否冲突,冲突则加随机数
       let finalName = randomName;
-      while (getAccountByUsername(finalName)) {
+      while (await getAccountByUsername(finalName)) {
         finalName = `用户${phoneSuffix}${Math.floor(Math.random() * 10)}`;
       }
       const randomPwd = await bcrypt.hash(Math.random().toString(36).slice(-8), 10);
       const defaultQuestion = '您的出生城市是?';
       const defaultAnswer = bcrypt.hashSync('未知', 10);
-      const accountId = createAccount(finalName, randomPwd, accountRole, null, phoneTrim, defaultQuestion, defaultAnswer);
+      const accountId = await createAccount(finalName, randomPwd, accountRole, null, phoneTrim, defaultQuestion, defaultAnswer);
       if (!accountId) {
         return res.status(500).json({ success: false, error: '自动注册失败,请稍后重试' });
       }
-      account = getAccountById(accountId);
+      account = await getAccountById(accountId);
       log('AUTH', `手机验证码登录自动注册新${accountRole === 'family' ? '家属' : '用户'}: ${finalName} (${phoneTrim})`);
     }
 
@@ -256,13 +256,13 @@ router.post('/login-sms', async (req, res) => {
  * POST /api/auth/security-question
  * body: { username }
  */
-router.post('/security-question', (req, res) => {
+router.post('/security-question', async (req, res) => {
   try {
     const { username } = req.body;
     if (!username || !username.trim()) {
       return res.status(400).json({ success: false, error: '请输入用户名' });
     }
-    const question = getSecurityQuestion(username.trim());
+    const question = await getSecurityQuestion(username.trim());
     if (!question) {
       return res.status(404).json({ success: false, error: '用户名不存在或未设置密保问题' });
     }
@@ -293,14 +293,14 @@ router.post('/reset-password', async (req, res) => {
 
     const uname = username.trim();
     // 校验密保答案
-    const matched = verifySecurityAnswer(uname, securityAnswer.trim());
+    const matched = await verifySecurityAnswer(uname, securityAnswer.trim());
     if (!matched) {
       return res.status(401).json({ success: false, error: '密保答案不正确' });
     }
 
     // 加密新密码并重置
     const newHash = await bcrypt.hash(newPassword, 10);
-    const ok = resetPassword(uname, newHash);
+    const ok = await resetPassword(uname, newHash);
     if (!ok) {
       return res.status(500).json({ success: false, error: '重置密码失败' });
     }
@@ -317,8 +317,8 @@ router.post('/reset-password', async (req, res) => {
  * 获取当前登录用户信息
  * GET /api/auth/me
  */
-router.get('/me', authRequired, (req, res) => {
-  const account = getAccountById(req.user.id);
+router.get('/me', authRequired, async (req, res) => {
+  const account = await getAccountById(req.user.id);
   if (!account) {
     return res.status(404).json({ success: false, error: '账号不存在' });
   }
@@ -333,7 +333,7 @@ router.get('/me', authRequired, (req, res) => {
  * PUT /api/auth/profile
  * body: { nickname?: string }
  */
-router.put('/profile', authRequired, (req, res) => {
+router.put('/profile', authRequired, async (req, res) => {
   try {
     const { nickname } = req.body;
     if (nickname === undefined) {
@@ -344,11 +344,11 @@ router.put('/profile', authRequired, (req, res) => {
     if (trimmed.length > 20) {
       return res.status(400).json({ success: false, error: '昵称长度不能超过20个字符' });
     }
-    const ok = updateAccountProfile(req.user.id, { nickname: trimmed });
+    const ok = await updateAccountProfile(req.user.id, { nickname: trimmed });
     if (!ok) {
       return res.status(500).json({ success: false, error: '昵称更新失败' });
     }
-    const account = getAccountById(req.user.id);
+    const account = await getAccountById(req.user.id);
     log('AUTH', `用户修改昵称: ${account.username} -> "${trimmed}"`);
     res.json({ success: true, user: buildUserPayload(account) });
   } catch (err) {
@@ -371,7 +371,7 @@ router.put('/password', authRequired, async (req, res) => {
     if (newPassword.length < 6) {
       return res.status(400).json({ success: false, error: '新密码长度至少6位' });
     }
-    const account = getAccountById(req.user.id);
+    const account = await getAccountById(req.user.id);
     if (!account) {
       return res.status(404).json({ success: false, error: '账号不存在' });
     }
@@ -384,7 +384,7 @@ router.put('/password', authRequired, async (req, res) => {
       }
     }
     const newHash = await bcrypt.hash(newPassword, 10);
-    const ok = resetPassword(account.username, newHash);
+    const ok = await resetPassword(account.username, newHash);
     if (!ok) {
       return res.status(500).json({ success: false, error: '密码修改失败' });
     }
@@ -411,7 +411,7 @@ router.put('/security', authRequired, async (req, res) => {
       return res.status(400).json({ success: false, error: '请填写密保答案' });
     }
     const answerHash = bcrypt.hashSync(answer.trim(), 10);
-    const ok = updateSecurity(req.user.id, question.trim(), answerHash);
+    const ok = await updateSecurity(req.user.id, question.trim(), answerHash);
     if (!ok) {
       return res.status(500).json({ success: false, error: '密保更新失败' });
     }
@@ -429,7 +429,7 @@ router.put('/security', authRequired, async (req, res) => {
  * body: { avatar: <dataURL> }  dataURL 格式: data:image/jpeg;base64,xxxx
  * 限制: 头像图片大小不超过 500KB(base64长度约 680000 字符)
  */
-router.put('/avatar', authRequired, (req, res) => {
+router.put('/avatar', authRequired, async (req, res) => {
   try {
     const { avatar } = req.body;
     if (!avatar || typeof avatar !== 'string') {
@@ -443,11 +443,11 @@ router.put('/avatar', authRequired, (req, res) => {
     if (avatar.length > 680000) {
       return res.status(413).json({ success: false, error: '头像过大(限制500KB),请压缩后上传' });
     }
-    const ok = updateAccountProfile(req.user.id, { avatar });
+    const ok = await updateAccountProfile(req.user.id, { avatar });
     if (!ok) {
       return res.status(500).json({ success: false, error: '头像更新失败' });
     }
-    const account = getAccountById(req.user.id);
+    const account = await getAccountById(req.user.id);
     log('AUTH', `用户修改头像: ${account.username}`);
     res.json({ success: true, user: buildUserPayload(account) });
   } catch (err) {
@@ -474,14 +474,14 @@ router.post('/family/bind', authRequired, async (req, res) => {
       return res.status(400).json({ success: false, error: '手机号格式不正确' });
     }
     // 不能绑定自己
-    const myAccount = getAccountById(req.user.id);
+    const myAccount = await getAccountById(req.user.id);
     if (!myAccount) {
       return res.status(401).json({ success: false, error: '账号不存在,请重新登录' });
     }
     if (myAccount.phone === phoneTrim) {
       return res.status(400).json({ success: false, error: '不能绑定自己的手机号' });
     }
-    const result = addFamilyBinding(req.user.id, phoneTrim, name, relation);
+    const result = await addFamilyBinding(req.user.id, phoneTrim, name, relation);
     if (!result.success) {
       if (result.existing) {
         return res.status(409).json({ success: false, error: '该手机号已绑定' });
@@ -530,9 +530,9 @@ router.post('/family/bind', authRequired, async (req, res) => {
  * 获取家属绑定列表
  * GET /api/auth/family/list
  */
-router.get('/family/list', authRequired, (req, res) => {
+router.get('/family/list', authRequired, async (req, res) => {
   try {
-    const list = getFamilyBindings(req.user.id);
+    const list = await getFamilyBindings(req.user.id);
     res.json({ success: true, list });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -544,9 +544,9 @@ router.get('/family/list', authRequired, (req, res) => {
  * GET /api/auth/family/pending-confirm
  * 返回需要当前视障用户确认的家属邀请列表
  */
-router.get('/family/pending-confirm', authRequired, (req, res) => {
+router.get('/family/pending-confirm', authRequired, async (req, res) => {
   try {
-    const list = getPendingConfirmViBindings(req.user.id);
+    const list = await getPendingConfirmViBindings(req.user.id);
     res.json({ success: true, list });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -557,13 +557,13 @@ router.get('/family/pending-confirm', authRequired, (req, res) => {
  * 视障用户确认家属邀请(家属端发起的邀请)
  * POST /api/auth/family/confirm/:bindingId
  */
-router.post('/family/confirm/:bindingId', authRequired, (req, res) => {
+router.post('/family/confirm/:bindingId', authRequired, async (req, res) => {
   try {
     const bindingId = parseInt(req.params.bindingId);
     if (!bindingId) {
       return res.status(400).json({ success: false, error: '无效的绑定ID' });
     }
-    const result = confirmFamilyBinding(bindingId, req.user.id, 'user');
+    const result = await confirmFamilyBinding(bindingId, req.user.id, 'user');
     if (!result.success) {
       return res.status(400).json(result);
     }
@@ -579,13 +579,13 @@ router.post('/family/confirm/:bindingId', authRequired, (req, res) => {
  * 视障用户拒绝家属邀请
  * POST /api/auth/family/reject/:bindingId
  */
-router.post('/family/reject/:bindingId', authRequired, (req, res) => {
+router.post('/family/reject/:bindingId', authRequired, async (req, res) => {
   try {
     const bindingId = parseInt(req.params.bindingId);
     if (!bindingId) {
       return res.status(400).json({ success: false, error: '无效的绑定ID' });
     }
-    const result = rejectFamilyBinding(bindingId, req.user.id, 'user');
+    const result = await rejectFamilyBinding(bindingId, req.user.id, 'user');
     if (!result.success) {
       return res.status(400).json(result);
     }
@@ -602,9 +602,9 @@ router.post('/family/reject/:bindingId', authRequired, (req, res) => {
  * GET /api/auth/family/contacts
  * 供视障端SOS页面使用,确保显示用户在设置中绑定的家属
  */
-router.get('/family/contacts', authRequired, (req, res) => {
+router.get('/family/contacts', authRequired, async (req, res) => {
   try {
-    const contacts = getActiveFamilyBindingsAsContacts(req.user.id);
+    const contacts = await getActiveFamilyBindingsAsContacts(req.user.id);
     res.json({ success: true, contacts });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -615,13 +615,13 @@ router.get('/family/contacts', authRequired, (req, res) => {
  * 解绑家属
  * DELETE /api/auth/family/unbind/:bindingId
  */
-router.delete('/family/unbind/:bindingId', authRequired, (req, res) => {
+router.delete('/family/unbind/:bindingId', authRequired, async (req, res) => {
   try {
     const bindingId = parseInt(req.params.bindingId);
     if (!bindingId) {
       return res.status(400).json({ success: false, error: '无效的绑定ID' });
     }
-    const ok = removeFamilyBinding(bindingId, req.user.id);
+    const ok = await removeFamilyBinding(bindingId, req.user.id);
     if (!ok) {
       return res.status(404).json({ success: false, error: '未找到绑定记录或无权操作' });
     }
@@ -637,17 +637,17 @@ router.delete('/family/unbind/:bindingId', authRequired, (req, res) => {
  * DELETE /api/auth/account
  * body: { confirm?: 'DELETE' }  二次确认,值为 DELETE 才执行
  */
-router.delete('/account', authRequired, (req, res) => {
+router.delete('/account', authRequired, async (req, res) => {
   try {
     const confirm = req.body?.confirm || req.query.confirm;
     if (confirm !== 'DELETE') {
       return res.status(400).json({ success: false, error: '请二次确认注销操作(confirm=DELETE)' });
     }
-    const account = getAccountById(req.user.id);
+    const account = await getAccountById(req.user.id);
     if (!account) {
       return res.status(404).json({ success: false, error: '账号不存在' });
     }
-    const ok = deleteAccount(req.user.id);
+    const ok = await deleteAccount(req.user.id);
     if (!ok) {
       return res.status(500).json({ success: false, error: '注销失败' });
     }

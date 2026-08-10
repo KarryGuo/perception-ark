@@ -1,8 +1,9 @@
 /**
  * 环境记忆 Agent 存储 (A05)
- * 使用SQLite存储路线、熟人、习惯
+ * 使用 libsql/Turso 云数据库存储路线、熟人、习惯
+ * 优先连接 Turso 云数据库(生产环境持久化),未配置时降级到本地文件 SQLite(开发环境)
  */
-import Database from 'better-sqlite3';
+import { createClient } from '@libsql/client';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -27,11 +28,32 @@ const DB_PATH = path.join(DATA_DIR, 'memory.db');
 
 let db = null;
 
-export function initMemoryStore() {
-  db = new Database(DB_PATH);
-  db.pragma('journal_mode = WAL');
+// 辅助: 把 lastInsertRowid (bigint|undefined) 转为 number|null
+function toNumberId(lastInsertRowid) {
+  if (lastInsertRowid === undefined || lastInsertRowid === null) return null;
+  return Number(lastInsertRowid);
+}
 
-  db.exec(`
+// 辅助: 把 rowsAffected (number) 返回,兼容旧 better-sqlite3 的 changes 字段名
+function toChanges(rowsAffected) {
+  return Number(rowsAffected || 0);
+}
+
+export async function initMemoryStore() {
+  // 连接逻辑: 优先使用 Turso 云数据库; 未配置则降级到本地文件 SQLite
+  const tursoUrl = process.env.TURSO_URL;
+  const tursoToken = process.env.TURSO_AUTH_TOKEN;
+  if (tursoUrl && tursoToken) {
+    db = createClient({ url: tursoUrl, authToken: tursoToken });
+    log('A05', `已连接 Turso 云数据库: ${tursoUrl}`);
+  } else {
+    // 本地文件模式 (libsql 本地 SQLite, 兼容 better-sqlite3 的 .db 文件)
+    db = createClient({ url: `file:${DB_PATH}` });
+    log('A05', `未配置 TURSO_URL, 降级使用本地文件 SQLite: ${DB_PATH}`);
+  }
+
+  // 创建所有表 (DDL 用 executeMultiple 一次性执行)
+  await db.executeMultiple(`
     CREATE TABLE IF NOT EXISTS routes (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       start_lat REAL, start_lng REAL,
@@ -126,17 +148,25 @@ export function initMemoryStore() {
     );
   `);
 
+  // 辅助: 查询表的所有列名 (libsql 兼容 pragma_table_info 函数)
+  async function getTableColumns(tableName) {
+    const rs = await db.execute({
+      sql: `SELECT name FROM pragma_table_info('${tableName}')`,
+    });
+    return rs.rows.map(r => r.name);
+  }
+
   // 兼容旧库: 若 family_bindings 表缺少列,自动补列
   try {
-    const fbCols = db.prepare("PRAGMA table_info(family_bindings)").all().map(c => c.name);
+    const fbCols = await getTableColumns('family_bindings');
     if (!fbCols.includes('family_name')) {
-      db.exec("ALTER TABLE family_bindings ADD COLUMN family_name TEXT");
+      await db.execute("ALTER TABLE family_bindings ADD COLUMN family_name TEXT");
     }
     if (!fbCols.includes('relation')) {
-      db.exec("ALTER TABLE family_bindings ADD COLUMN relation TEXT");
+      await db.execute("ALTER TABLE family_bindings ADD COLUMN relation TEXT");
     }
     if (!fbCols.includes('initiator')) {
-      db.exec("ALTER TABLE family_bindings ADD COLUMN initiator TEXT DEFAULT 'user'");
+      await db.execute("ALTER TABLE family_bindings ADD COLUMN initiator TEXT DEFAULT 'user'");
       log('A05', 'family_bindings 表已补列 initiator');
     }
   } catch (e) {
@@ -145,29 +175,29 @@ export function initMemoryStore() {
 
   // 兼容旧库: 若 accounts 表缺少列,自动补列
   try {
-    const cols = db.prepare("PRAGMA table_info(accounts)").all().map(c => c.name);
+    const cols = await getTableColumns('accounts');
     if (!cols.includes('nickname')) {
-      db.exec("ALTER TABLE accounts ADD COLUMN nickname TEXT");
+      await db.execute("ALTER TABLE accounts ADD COLUMN nickname TEXT");
       log('A05', 'accounts 表已补列 nickname');
     }
     if (!cols.includes('avatar')) {
-      db.exec("ALTER TABLE accounts ADD COLUMN avatar TEXT");
+      await db.execute("ALTER TABLE accounts ADD COLUMN avatar TEXT");
       log('A05', 'accounts 表已补列 avatar');
     }
     if (!cols.includes('phone')) {
-      db.exec("ALTER TABLE accounts ADD COLUMN phone TEXT");
+      await db.execute("ALTER TABLE accounts ADD COLUMN phone TEXT");
       log('A05', 'accounts 表已补列 phone');
     }
     if (!cols.includes('status')) {
-      db.exec("ALTER TABLE accounts ADD COLUMN status TEXT DEFAULT 'active'");
+      await db.execute("ALTER TABLE accounts ADD COLUMN status TEXT DEFAULT 'active'");
       log('A05', 'accounts 表已补列 status');
     }
     if (!cols.includes('security_question')) {
-      db.exec("ALTER TABLE accounts ADD COLUMN security_question TEXT");
+      await db.execute("ALTER TABLE accounts ADD COLUMN security_question TEXT");
       log('A05', 'accounts 表已补列 security_question');
     }
     if (!cols.includes('security_answer_hash')) {
-      db.exec("ALTER TABLE accounts ADD COLUMN security_answer_hash TEXT");
+      await db.execute("ALTER TABLE accounts ADD COLUMN security_answer_hash TEXT");
       log('A05', 'accounts 表已补列 security_answer_hash');
     }
   } catch (e) {
@@ -176,14 +206,14 @@ export function initMemoryStore() {
 
   // 兼容旧库: 若 users 表缺少 bound_account_id 列,自动补列(用于家属绑定视障账号)
   try {
-    const userCols = db.prepare("PRAGMA table_info(users)").all().map(c => c.name);
+    const userCols = await getTableColumns('users');
     if (!userCols.includes('bound_account_id')) {
-      db.exec("ALTER TABLE users ADD COLUMN bound_account_id INTEGER");
+      await db.execute("ALTER TABLE users ADD COLUMN bound_account_id INTEGER");
       log('A05', 'users 表已补列 bound_account_id');
     }
     // 补列 family_account_id: 记录是哪个家属账号添加的,用于数据隔离
     if (!userCols.includes('family_account_id')) {
-      db.exec("ALTER TABLE users ADD COLUMN family_account_id INTEGER");
+      await db.execute("ALTER TABLE users ADD COLUMN family_account_id INTEGER");
       log('A05', 'users 表已补列 family_account_id');
     }
   } catch (e) {
@@ -195,13 +225,16 @@ export function initMemoryStore() {
 
   // 初始化默认超级管理员账号(注册页不提供管理员注册,需保证系统始终可登录管理后台)
   try {
-    const existingAdmin = db.prepare("SELECT id FROM accounts WHERE username = 'admin' AND role = 'admin'").get();
-    if (!existingAdmin) {
+    const rs = await db.execute({
+      sql: "SELECT id FROM accounts WHERE username = 'admin' AND role = 'admin'",
+    });
+    if (rs.rows.length === 0) {
       const adminHash = bcrypt.hashSync('admin123', 10);
-      db.prepare(`
-        INSERT INTO accounts (username, password_hash, role, user_id, created_at, phone, status)
-        VALUES (?, ?, 'admin', NULL, ?, NULL, 'active')
-      `).run('admin', adminHash, new Date().toISOString());
+      await db.execute({
+        sql: `INSERT INTO accounts (username, password_hash, role, user_id, created_at, phone, status)
+              VALUES (?, ?, 'admin', NULL, ?, NULL, 'active')`,
+        args: ['admin', adminHash, new Date().toISOString()],
+      });
       log('A05', '默认超级管理员账号已创建 (用户名: admin / 密码: admin123)');
     }
   } catch (e) {
@@ -210,20 +243,21 @@ export function initMemoryStore() {
 }
 
 // ===== 账号管理(登录系统) =====
-export function createAccount(username, passwordHash, role = 'user', userId = null, phone = null, securityQuestion = null, securityAnswerHash = null) {
+export async function createAccount(username, passwordHash, role = 'user', userId = null, phone = null, securityQuestion = null, securityAnswerHash = null) {
   if (!db) return null;
   try {
-    const result = db.prepare(`
-      INSERT INTO accounts (username, password_hash, role, user_id, created_at, phone, security_question, security_answer_hash)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(username, passwordHash, role, userId, new Date().toISOString(), phone || null, securityQuestion || null, securityAnswerHash || null);
-    const accountId = result.lastInsertRowid;
+    const result = await db.execute({
+      sql: `INSERT INTO accounts (username, password_hash, role, user_id, created_at, phone, security_question, security_answer_hash)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [username, passwordHash, role, userId, new Date().toISOString(), phone || null, securityQuestion || null, securityAnswerHash || null],
+    });
+    const accountId = toNumberId(result.lastInsertRowid);
 
     // 家属账号创建时,自动激活所有指向该手机号的pending邀请
     // 这样视障用户之前发出的绑定邀请,在家属注册瞬间自动完成绑定
     if (role === 'family' && phone) {
       try {
-        const activated = activatePendingFamilyBindings(Number(accountId), phone.trim());
+        const activated = await activatePendingFamilyBindings(Number(accountId), phone.trim());
         if (activated > 0) {
           log('AUTH', `家属注册自动激活 ${activated} 条pending邀请: ${username} (${phone})`);
         }
@@ -239,22 +273,34 @@ export function createAccount(username, passwordHash, role = 'user', userId = nu
   }
 }
 
-export function getAccountByUsername(username) {
+export async function getAccountByUsername(username) {
   if (!db) return null;
-  return db.prepare('SELECT * FROM accounts WHERE username = ?').get(username);
+  const rs = await db.execute({
+    sql: 'SELECT * FROM accounts WHERE username = ?',
+    args: [username],
+  });
+  return rs.rows[0] || null;
 }
 
-export function getAccountById(id) {
+export async function getAccountById(id) {
   if (!db) return null;
-  return db.prepare('SELECT id, username, role, user_id, created_at, nickname, avatar, phone, status, security_question FROM accounts WHERE id = ?').get(id);
+  const rs = await db.execute({
+    sql: 'SELECT id, username, role, user_id, created_at, nickname, avatar, phone, status, security_question FROM accounts WHERE id = ?',
+    args: [id],
+  });
+  return rs.rows[0] || null;
 }
 
 /**
  * 获取账号的密保问题(仅返回问题文本,不含答案)
  */
-export function getSecurityQuestion(username) {
+export async function getSecurityQuestion(username) {
   if (!db) return null;
-  const row = db.prepare('SELECT security_question FROM accounts WHERE username = ?').get(username);
+  const rs = await db.execute({
+    sql: 'SELECT security_question FROM accounts WHERE username = ?',
+    args: [username],
+  });
+  const row = rs.rows[0];
   if (!row || !row.security_question) return null;
   return row.security_question;
 }
@@ -262,9 +308,13 @@ export function getSecurityQuestion(username) {
 /**
  * 校验密保答案是否正确
  */
-export function verifySecurityAnswer(username, answer) {
+export async function verifySecurityAnswer(username, answer) {
   if (!db || !answer) return false;
-  const row = db.prepare('SELECT security_answer_hash FROM accounts WHERE username = ?').get(username);
+  const rs = await db.execute({
+    sql: 'SELECT security_answer_hash FROM accounts WHERE username = ?',
+    args: [username],
+  });
+  const row = rs.rows[0];
   if (!row || !row.security_answer_hash) return false;
   return bcrypt.compareSync(answer, row.security_answer_hash);
 }
@@ -272,11 +322,14 @@ export function verifySecurityAnswer(username, answer) {
 /**
  * 重置账号密码
  */
-export function resetPassword(username, newPasswordHash) {
+export async function resetPassword(username, newPasswordHash) {
   if (!db) return false;
   try {
-    const result = db.prepare('UPDATE accounts SET password_hash = ? WHERE username = ?').run(newPasswordHash, username);
-    return result.changes > 0;
+    const result = await db.execute({
+      sql: 'UPDATE accounts SET password_hash = ? WHERE username = ?',
+      args: [newPasswordHash, username],
+    });
+    return toChanges(result.rowsAffected) > 0;
   } catch (err) {
     log('A05', `重置密码失败: ${err.message}`, 'error');
     return false;
@@ -290,11 +343,14 @@ export function resetPassword(username, newPasswordHash) {
  * @param {string} answerHash bcrypt哈希后的答案
  * @returns {boolean} 是否更新成功
  */
-export function updateSecurity(id, question, answerHash) {
+export async function updateSecurity(id, question, answerHash) {
   if (!db) return false;
   try {
-    const result = db.prepare('UPDATE accounts SET security_question = ?, security_answer_hash = ? WHERE id = ?').run(question, answerHash, id);
-    return result.changes > 0;
+    const result = await db.execute({
+      sql: 'UPDATE accounts SET security_question = ?, security_answer_hash = ? WHERE id = ?',
+      args: [question, answerHash, id],
+    });
+    return toChanges(result.rowsAffected) > 0;
   } catch (err) {
     log('A05', `更新密保失败: ${err.message}`, 'error');
     return false;
@@ -307,7 +363,7 @@ export function updateSecurity(id, question, answerHash) {
  * @param {{nickname?: string, avatar?: string|null}} fields
  * @returns {boolean} 是否更新成功
  */
-export function updateAccountProfile(id, { nickname, avatar }) {
+export async function updateAccountProfile(id, { nickname, avatar }) {
   if (!db) return false;
   try {
     const sets = [];
@@ -316,8 +372,11 @@ export function updateAccountProfile(id, { nickname, avatar }) {
     if (avatar !== undefined) { sets.push('avatar = ?'); args.push(avatar); }
     if (sets.length === 0) return false;
     args.push(id);
-    const result = db.prepare(`UPDATE accounts SET ${sets.join(', ')} WHERE id = ?`).run(...args);
-    return result.changes > 0;
+    const result = await db.execute({
+      sql: `UPDATE accounts SET ${sets.join(', ')} WHERE id = ?`,
+      args,
+    });
+    return toChanges(result.rowsAffected) > 0;
   } catch (err) {
     log('A05', `更新账户资料失败: ${err.message}`, 'error');
     return false;
@@ -329,11 +388,14 @@ export function updateAccountProfile(id, { nickname, avatar }) {
  * @param {number} id 账户ID
  * @returns {boolean} 是否删除成功
  */
-export function deleteAccount(id) {
+export async function deleteAccount(id) {
   if (!db) return false;
   try {
-    const result = db.prepare('DELETE FROM accounts WHERE id = ?').run(id);
-    return result.changes > 0;
+    const result = await db.execute({
+      sql: 'DELETE FROM accounts WHERE id = ?',
+      args: [id],
+    });
+    return toChanges(result.rowsAffected) > 0;
   } catch (err) {
     log('A05', `注销账户失败: ${err.message}`, 'error');
     return false;
@@ -341,40 +403,49 @@ export function deleteAccount(id) {
 }
 
 // ===== 使用者管理(家属端绑定) =====
-export function addUser(user) {
+export async function addUser(user) {
   if (!db) return null;
   const { name, age, relation, phone, emergency_contact, emergency_phone, health_notes, bound_account_id, family_account_id } = user;
-  const result = db.prepare(`
-    INSERT INTO users (name, age, relation, phone, emergency_contact, emergency_phone, health_notes, bound_at, bound_account_id, family_account_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(name, age || null, relation || '', phone || '', emergency_contact || '', emergency_phone || '', health_notes || '', new Date().toISOString(), bound_account_id || null, family_account_id || null);
-  return result.lastInsertRowid;
+  const result = await db.execute({
+    sql: `INSERT INTO users (name, age, relation, phone, emergency_contact, emergency_phone, health_notes, bound_at, bound_account_id, family_account_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    args: [name, age || null, relation || '', phone || '', emergency_contact || '', emergency_phone || '', health_notes || '', new Date().toISOString(), bound_account_id || null, family_account_id || null],
+  });
+  return toNumberId(result.lastInsertRowid);
 }
 
 // 按家属账号过滤获取使用者列表(数据隔离: 每个家属只能看到自己添加的使用者)
-export function getAllUsers(familyAccountId) {
+export async function getAllUsers(familyAccountId) {
   if (!db) return [];
   if (familyAccountId) {
-    return db.prepare('SELECT * FROM users WHERE family_account_id = ? ORDER BY bound_at DESC').all(familyAccountId);
+    const rs = await db.execute({
+      sql: 'SELECT * FROM users WHERE family_account_id = ? ORDER BY bound_at DESC',
+      args: [familyAccountId],
+    });
+    return rs.rows;
   }
   // 未传familyAccountId时返回全部(向后兼容,仅用于管理后台等场景)
-  return db.prepare('SELECT * FROM users ORDER BY bound_at DESC').all();
+  const rs = await db.execute('SELECT * FROM users ORDER BY bound_at DESC');
+  return rs.rows;
 }
 
-export function deleteUser(id) {
+export async function deleteUser(id) {
   if (!db) return 0;
-  const result = db.prepare('DELETE FROM users WHERE id = ?').run(id);
-  return result.changes;
+  const result = await db.execute({
+    sql: 'DELETE FROM users WHERE id = ?',
+    args: [id],
+  });
+  return toChanges(result.rowsAffected);
 }
 
 /**
  * 更新使用者信息
  */
-export function updateUser(id, data) {
+export async function updateUser(id, data) {
   if (!db) return 0;
   const { name, age, relation, phone, emergency_contact, emergency_phone, health_notes, bound_account_id } = data;
-  const result = db.prepare(`
-    UPDATE users SET
+  const result = await db.execute({
+    sql: `UPDATE users SET
       name = COALESCE(?, name),
       age = COALESCE(?, age),
       relation = COALESCE(?, relation),
@@ -383,37 +454,52 @@ export function updateUser(id, data) {
       emergency_phone = COALESCE(?, emergency_phone),
       health_notes = COALESCE(?, health_notes),
       bound_account_id = COALESCE(?, bound_account_id)
-    WHERE id = ?
-  `).run(name || null, age !== undefined ? age : null, relation || null, phone || null,
-        emergency_contact || null, emergency_phone || null, health_notes || null,
-        bound_account_id !== undefined ? bound_account_id : null, id);
-  return result.changes;
+    WHERE id = ?`,
+    args: [
+      name || null, age !== undefined ? age : null, relation || null, phone || null,
+      emergency_contact || null, emergency_phone || null, health_notes || null,
+      bound_account_id !== undefined ? bound_account_id : null, id,
+    ],
+  });
+  return toChanges(result.rowsAffected);
 }
 
 /**
  * 按手机号查找视障账号(家属绑定用)
  * 仅返回 role='user' 且状态正常的账号,避免家属绑定家属或被封禁账号
  */
-export function findUserAccountByPhone(phone) {
+export async function findUserAccountByPhone(phone) {
   if (!db || !phone) return null;
-  return db.prepare("SELECT id, username, role, nickname, phone FROM accounts WHERE phone = ? AND role = 'user' AND (status IS NULL OR status = 'active')").get(phone.trim());
+  const rs = await db.execute({
+    sql: "SELECT id, username, role, nickname, phone FROM accounts WHERE phone = ? AND role = 'user' AND (status IS NULL OR status = 'active')",
+    args: [phone.trim()],
+  });
+  return rs.rows[0] || null;
 }
 
 /**
  * 按用户名查找视障账号(兼容旧接口)
  */
-export function findUserAccountByUsername(username) {
+export async function findUserAccountByUsername(username) {
   if (!db) return null;
-  return db.prepare("SELECT id, username, role, nickname FROM accounts WHERE username = ? AND role = 'user'").get(username);
+  const rs = await db.execute({
+    sql: "SELECT id, username, role, nickname FROM accounts WHERE username = ? AND role = 'user'",
+    args: [username],
+  });
+  return rs.rows[0] || null;
 }
 
 /**
  * 按手机号查找任意账号(手机验证码登录用,不限角色)
  * 返回完整账号记录(含password_hash等字段)
  */
-export function getAccountByPhone(phone) {
+export async function getAccountByPhone(phone) {
   if (!db || !phone) return null;
-  return db.prepare('SELECT * FROM accounts WHERE phone = ?').get(phone.trim());
+  const rs = await db.execute({
+    sql: 'SELECT * FROM accounts WHERE phone = ?',
+    args: [phone.trim()],
+  });
+  return rs.rows[0] || null;
 }
 
 // ===== 家属绑定(双向确认机制) =====
@@ -427,36 +513,48 @@ export function getAccountByPhone(phone) {
  * @param {string} relation 关系(可选)
  * @returns {object} { success, bindingId, familyAccount, status, autoActivated }
  */
-export function addFamilyBinding(userAccountId, familyPhone, familyName, relation) {
+export async function addFamilyBinding(userAccountId, familyPhone, familyName, relation) {
   if (!db) return { success: false, error: '数据库未初始化' };
   const phone = familyPhone.trim();
   // 检查是否已绑定同一手机号
-  const existing = db.prepare('SELECT * FROM family_bindings WHERE user_account_id = ? AND family_phone = ?').get(userAccountId, phone);
-  if (existing) {
+  const existingRs = await db.execute({
+    sql: 'SELECT * FROM family_bindings WHERE user_account_id = ? AND family_phone = ?',
+    args: [userAccountId, phone],
+  });
+  if (existingRs.rows[0]) {
     return { success: false, error: '该手机号已绑定', existing: true };
   }
   // 查找家属账号是否已注册
-  const familyAccount = db.prepare("SELECT id, username, role, nickname, phone FROM accounts WHERE phone = ? AND role = 'family'").get(phone);
+  const familyRs = await db.execute({
+    sql: "SELECT id, username, role, nickname, phone FROM accounts WHERE phone = ? AND role = 'family'",
+    args: [phone],
+  });
+  const familyAccount = familyRs.rows[0] || null;
   const now = new Date().toISOString();
 
   // 双向互邀请优化: 检查家属端是否已发起对该视障用户的邀请
   // 若存在 initiator='family' 且 status='pending' 的反向邀请,说明双方都想绑定,直接互相确认
   if (familyAccount) {
-    const reverseInvitation = db.prepare(`
-      SELECT id FROM family_bindings
-      WHERE user_account_id = ? AND family_account_id = ? AND family_phone = ?
-        AND initiator = 'family' AND status = 'pending'
-    `).get(userAccountId, familyAccount.id, phone);
+    const reverseRs = await db.execute({
+      sql: `SELECT id FROM family_bindings
+            WHERE user_account_id = ? AND family_account_id = ? AND family_phone = ?
+              AND initiator = 'family' AND status = 'pending'`,
+      args: [userAccountId, familyAccount.id, phone],
+    });
+    const reverseInvitation = reverseRs.rows[0];
     if (reverseInvitation) {
       // 将反向邀请升级为 active,同时插入正向 active 记录
-      db.prepare(`UPDATE family_bindings SET status = 'active', bound_at = COALESCE(bound_at, ?) WHERE id = ?`)
-        .run(now, reverseInvitation.id);
+      await db.execute({
+        sql: `UPDATE family_bindings SET status = 'active', bound_at = COALESCE(bound_at, ?) WHERE id = ?`,
+        args: [now, reverseInvitation.id],
+      });
       try {
-        const result = db.prepare(`
-          INSERT INTO family_bindings (user_account_id, family_account_id, family_phone, family_name, relation, status, initiator, invited_at, bound_at)
-          VALUES (?, ?, ?, ?, ?, 'active', 'user', ?, ?)
-        `).run(userAccountId, familyAccount.id, phone, familyName || null, relation || null, now, now);
-        return { success: true, bindingId: result.lastInsertRowid, familyAccount, status: 'active', autoActivated: true };
+        const result = await db.execute({
+          sql: `INSERT INTO family_bindings (user_account_id, family_account_id, family_phone, family_name, relation, status, initiator, invited_at, bound_at)
+                VALUES (?, ?, ?, ?, ?, 'active', 'user', ?, ?)`,
+          args: [userAccountId, familyAccount.id, phone, familyName || null, relation || null, now, now],
+        });
+        return { success: true, bindingId: toNumberId(result.lastInsertRowid), familyAccount, status: 'active', autoActivated: true };
       } catch (err) {
         log('A05', `双向互邀请插入正向记录失败: ${err.message}`, 'error');
         return { success: false, error: err.message };
@@ -466,19 +564,20 @@ export function addFamilyBinding(userAccountId, familyPhone, familyName, relatio
 
   // 常规流程: status='pending',等待家属端确认
   try {
-    const result = db.prepare(`
-      INSERT INTO family_bindings (user_account_id, family_account_id, family_phone, family_name, relation, status, initiator, invited_at, bound_at)
-      VALUES (?, ?, ?, ?, ?, 'pending', 'user', ?, ?)
-    `).run(
-      userAccountId,
-      familyAccount?.id || null,
-      phone,
-      familyName || null,
-      relation || null,
-      now,
-      null  // bound_at 留空,确认后填入
-    );
-    return { success: true, bindingId: result.lastInsertRowid, familyAccount, status: 'pending', autoActivated: false };
+    const result = await db.execute({
+      sql: `INSERT INTO family_bindings (user_account_id, family_account_id, family_phone, family_name, relation, status, initiator, invited_at, bound_at)
+            VALUES (?, ?, ?, ?, ?, 'pending', 'user', ?, ?)`,
+      args: [
+        userAccountId,
+        familyAccount?.id || null,
+        phone,
+        familyName || null,
+        relation || null,
+        now,
+        null,  // bound_at 留空,确认后填入
+      ],
+    });
+    return { success: true, bindingId: toNumberId(result.lastInsertRowid), familyAccount, status: 'pending', autoActivated: false };
   } catch (err) {
     log('A05', `添加家属绑定失败: ${err.message}`, 'error');
     return { success: false, error: err.message };
@@ -490,9 +589,13 @@ export function addFamilyBinding(userAccountId, familyPhone, familyName, relatio
  * @param {number} userAccountId
  * @returns {array}
  */
-export function getFamilyBindings(userAccountId) {
+export async function getFamilyBindings(userAccountId) {
   if (!db) return [];
-  return db.prepare('SELECT * FROM family_bindings WHERE user_account_id = ? ORDER BY invited_at DESC').all(userAccountId);
+  const rs = await db.execute({
+    sql: 'SELECT * FROM family_bindings WHERE user_account_id = ? ORDER BY invited_at DESC',
+    args: [userAccountId],
+  });
+  return rs.rows;
 }
 
 /**
@@ -501,11 +604,14 @@ export function getFamilyBindings(userAccountId) {
  * @param {number} userAccountId 验证归属权
  * @returns {boolean}
  */
-export function removeFamilyBinding(bindingId, userAccountId) {
+export async function removeFamilyBinding(bindingId, userAccountId) {
   if (!db) return false;
   try {
-    const result = db.prepare('DELETE FROM family_bindings WHERE id = ? AND user_account_id = ?').run(bindingId, userAccountId);
-    return result.changes > 0;
+    const result = await db.execute({
+      sql: 'DELETE FROM family_bindings WHERE id = ? AND user_account_id = ?',
+      args: [bindingId, userAccountId],
+    });
+    return toChanges(result.rowsAffected) > 0;
   } catch (err) {
     log('A05', `删除家属绑定失败: ${err.message}`, 'error');
     return false;
@@ -519,17 +625,18 @@ export function removeFamilyBinding(bindingId, userAccountId) {
  * @param {string} familyPhone 家属手机号
  * @returns {number} 回填账号ID的邀请数量
  */
-export function activatePendingFamilyBindings(familyAccountId, familyPhone) {
+export async function activatePendingFamilyBindings(familyAccountId, familyPhone) {
   if (!db || !familyAccountId || !familyPhone) return 0;
   const phone = familyPhone.trim();
   try {
     // 仅回填 family_account_id,不修改 status(保持 pending 等待家属确认)
-    const result = db.prepare(`
-      UPDATE family_bindings
-      SET family_account_id = ?
-      WHERE family_phone = ? AND status = 'pending' AND (family_account_id IS NULL OR family_account_id != ?)
-    `).run(familyAccountId, phone, familyAccountId);
-    return result.changes || 0;
+    const result = await db.execute({
+      sql: `UPDATE family_bindings
+            SET family_account_id = ?
+            WHERE family_phone = ? AND status = 'pending' AND (family_account_id IS NULL OR family_account_id != ?)`,
+      args: [familyAccountId, phone, familyAccountId],
+    });
+    return toChanges(result.rowsAffected) || 0;
   } catch (err) {
     log('A05', `回填家属账号ID失败: ${err.message}`, 'error');
     return 0;
@@ -542,19 +649,20 @@ export function activatePendingFamilyBindings(familyAccountId, familyPhone) {
  * @param {number} familyAccountId 家属账号ID
  * @returns {array} 视障人员列表(格式与users表兼容)
  */
-export function getFamilyBoundVisuallyImpairedUsers(familyAccountId) {
+export async function getFamilyBoundVisuallyImpairedUsers(familyAccountId) {
   if (!db || !familyAccountId) return [];
   try {
-    const rows = db.prepare(`
-      SELECT fb.id AS binding_id, fb.user_account_id, fb.family_name, fb.relation,
-             fb.invited_at, fb.bound_at,
-             a.username, a.nickname, a.phone, a.role
-      FROM family_bindings fb
-      JOIN accounts a ON fb.user_account_id = a.id
-      WHERE fb.family_account_id = ? AND fb.status = 'active'
-      ORDER BY fb.bound_at DESC, fb.invited_at DESC
-    `).all(familyAccountId);
-    return rows.map(r => ({
+    const rs = await db.execute({
+      sql: `SELECT fb.id AS binding_id, fb.user_account_id, fb.family_name, fb.relation,
+                   fb.invited_at, fb.bound_at,
+                   a.username, a.nickname, a.phone, a.role
+            FROM family_bindings fb
+            JOIN accounts a ON fb.user_account_id = a.id
+            WHERE fb.family_account_id = ? AND fb.status = 'active'
+            ORDER BY fb.bound_at DESC, fb.invited_at DESC`,
+      args: [familyAccountId],
+    });
+    return rs.rows.map(r => ({
       id: `bind_${r.binding_id}`,
       name: r.nickname || r.username || '视障用户',
       age: null,
@@ -579,18 +687,19 @@ export function getFamilyBoundVisuallyImpairedUsers(familyAccountId) {
  * @param {number} userAccountId
  * @returns {array} [{ id, name, phone, relation, bindingId, status }]
  */
-export function getActiveFamilyBindingsAsContacts(userAccountId) {
+export async function getActiveFamilyBindingsAsContacts(userAccountId) {
   if (!db) return [];
   try {
-    const rows = db.prepare(`
-      SELECT fb.id AS bindingId, fb.family_phone, fb.family_name, fb.relation, fb.status,
-             a.id AS account_id, a.nickname, a.username, a.role
-      FROM family_bindings fb
-      LEFT JOIN accounts a ON fb.family_account_id = a.id
-      WHERE fb.user_account_id = ? AND fb.status = 'active'
-      ORDER BY fb.bound_at DESC, fb.invited_at DESC
-    `).all(userAccountId);
-    return rows.map(r => ({
+    const rs = await db.execute({
+      sql: `SELECT fb.id AS bindingId, fb.family_phone, fb.family_name, fb.relation, fb.status,
+                   a.id AS account_id, a.nickname, a.username, a.role
+            FROM family_bindings fb
+            LEFT JOIN accounts a ON fb.family_account_id = a.id
+            WHERE fb.user_account_id = ? AND fb.status = 'active'
+            ORDER BY fb.bound_at DESC, fb.invited_at DESC`,
+      args: [userAccountId],
+    });
+    return rs.rows.map(r => ({
       id: r.bindingId,
       name: r.family_name || r.nickname || r.username || r.family_phone,
       phone: r.family_phone,
@@ -615,7 +724,7 @@ export function getActiveFamilyBindingsAsContacts(userAccountId) {
  * @param {string} relation 关系(可选)
  * @returns {object} { success, bindingId, status, autoActivated }
  */
-export function syncFamilyBindingFromFamilySide(userAccountId, familyAccountId, familyPhone, familyName, relation) {
+export async function syncFamilyBindingFromFamilySide(userAccountId, familyAccountId, familyPhone, familyName, relation) {
   if (!db) return { success: false, error: '数据库未初始化' };
   if (!userAccountId || !familyAccountId || !familyPhone) {
     return { success: false, error: '参数不完整' };
@@ -623,33 +732,40 @@ export function syncFamilyBindingFromFamilySide(userAccountId, familyAccountId, 
   const phone = familyPhone.trim();
   try {
     // 检查是否已存在绑定记录(同一视障用户+同一家属手机号)
-    const existing = db.prepare('SELECT * FROM family_bindings WHERE user_account_id = ? AND family_phone = ?').get(userAccountId, phone);
+    const existingRs = await db.execute({
+      sql: 'SELECT * FROM family_bindings WHERE user_account_id = ? AND family_phone = ?',
+      args: [userAccountId, phone],
+    });
+    const existing = existingRs.rows[0];
     const now = new Date().toISOString();
     if (existing) {
       // 双向互邀请优化: 若已存在的是视障端发起的邀请(initiator='user' 且 pending),说明双方互邀请,直接 active
       if (existing.initiator === 'user' && existing.status === 'pending') {
-        db.prepare(`
-          UPDATE family_bindings
-          SET family_account_id = ?, family_name = COALESCE(?, family_name), relation = COALESCE(?, relation),
-              status = 'active', bound_at = COALESCE(bound_at, ?)
-          WHERE id = ?
-        `).run(familyAccountId, familyName || null, relation || null, now, existing.id);
+        await db.execute({
+          sql: `UPDATE family_bindings
+                SET family_account_id = ?, family_name = COALESCE(?, family_name), relation = COALESCE(?, relation),
+                    status = 'active', bound_at = COALESCE(bound_at, ?)
+                WHERE id = ?`,
+          args: [familyAccountId, familyName || null, relation || null, now, existing.id],
+        });
         return { success: true, bindingId: existing.id, status: 'active', autoActivated: true, updated: true };
       }
       // 已存在且非互邀请场景: 更新 family_account_id,保持原 status
-      db.prepare(`
-        UPDATE family_bindings
-        SET family_account_id = ?, family_name = COALESCE(?, family_name), relation = COALESCE(?, relation)
-        WHERE id = ?
-      `).run(familyAccountId, familyName || null, relation || null, existing.id);
+      await db.execute({
+        sql: `UPDATE family_bindings
+              SET family_account_id = ?, family_name = COALESCE(?, family_name), relation = COALESCE(?, relation)
+              WHERE id = ?`,
+        args: [familyAccountId, familyName || null, relation || null, existing.id],
+      });
       return { success: true, bindingId: existing.id, status: existing.status, autoActivated: false, updated: true };
     }
     // 不存在: 新增 pending 绑定(initiator='family'),等待视障端确认
-    const result = db.prepare(`
-      INSERT INTO family_bindings (user_account_id, family_account_id, family_phone, family_name, relation, status, initiator, invited_at, bound_at)
-      VALUES (?, ?, ?, ?, ?, 'pending', 'family', ?, ?)
-    `).run(userAccountId, familyAccountId, phone, familyName || null, relation || null, now, null);
-    return { success: true, bindingId: result.lastInsertRowid, status: 'pending', autoActivated: false };
+    const result = await db.execute({
+      sql: `INSERT INTO family_bindings (user_account_id, family_account_id, family_phone, family_name, relation, status, initiator, invited_at, bound_at)
+            VALUES (?, ?, ?, ?, ?, 'pending', 'family', ?, ?)`,
+      args: [userAccountId, familyAccountId, phone, familyName || null, relation || null, now, null],
+    });
+    return { success: true, bindingId: toNumberId(result.lastInsertRowid), status: 'pending', autoActivated: false };
   } catch (err) {
     log('A05', `反向同步家属绑定失败: ${err.message}`, 'error');
     return { success: false, error: err.message };
@@ -666,10 +782,14 @@ export function syncFamilyBindingFromFamilySide(userAccountId, familyAccountId, 
  * @param {'user'|'family'} confirmerRole 确认者角色
  * @returns {object} { success, status, binding }
  */
-export function confirmFamilyBinding(bindingId, confirmerAccountId, confirmerRole) {
+export async function confirmFamilyBinding(bindingId, confirmerAccountId, confirmerRole) {
   if (!db || !bindingId || !confirmerAccountId) return { success: false, error: '参数不完整' };
   try {
-    const binding = db.prepare('SELECT * FROM family_bindings WHERE id = ?').get(bindingId);
+    const rs = await db.execute({
+      sql: 'SELECT * FROM family_bindings WHERE id = ?',
+      args: [bindingId],
+    });
+    const binding = rs.rows[0];
     if (!binding) return { success: false, error: '绑定记录不存在' };
     if (binding.status !== 'pending') return { success: false, error: `当前状态为 ${binding.status},无法确认` };
 
@@ -691,9 +811,10 @@ export function confirmFamilyBinding(bindingId, confirmerAccountId, confirmerRol
     }
 
     const now = new Date().toISOString();
-    db.prepare(`
-      UPDATE family_bindings SET status = 'active', bound_at = COALESCE(bound_at, ?) WHERE id = ?
-    `).run(now, bindingId);
+    await db.execute({
+      sql: `UPDATE family_bindings SET status = 'active', bound_at = COALESCE(bound_at, ?) WHERE id = ?`,
+      args: [now, bindingId],
+    });
     log('A05', `家属绑定确认成功: bindingId=${bindingId} confirmer=${confirmerAccountId}(${confirmerRole})`);
     return { success: true, status: 'active', binding: { ...binding, status: 'active', bound_at: now } };
   } catch (err) {
@@ -710,10 +831,14 @@ export function confirmFamilyBinding(bindingId, confirmerAccountId, confirmerRol
  * @param {'user'|'family'} confirmerRole 拒绝者角色
  * @returns {object} { success, deleted }
  */
-export function rejectFamilyBinding(bindingId, confirmerAccountId, confirmerRole) {
+export async function rejectFamilyBinding(bindingId, confirmerAccountId, confirmerRole) {
   if (!db || !bindingId || !confirmerAccountId) return { success: false, error: '参数不完整' };
   try {
-    const binding = db.prepare('SELECT * FROM family_bindings WHERE id = ?').get(bindingId);
+    const rs = await db.execute({
+      sql: 'SELECT * FROM family_bindings WHERE id = ?',
+      args: [bindingId],
+    });
+    const binding = rs.rows[0];
     if (!binding) return { success: false, error: '绑定记录不存在' };
     if (binding.status !== 'pending') return { success: false, error: `当前状态为 ${binding.status},无法拒绝` };
 
@@ -729,7 +854,10 @@ export function rejectFamilyBinding(bindingId, confirmerAccountId, confirmerRole
       return { success: false, error: `未知的发起方: ${binding.initiator}` };
     }
 
-    db.prepare('DELETE FROM family_bindings WHERE id = ?').run(bindingId);
+    await db.execute({
+      sql: 'DELETE FROM family_bindings WHERE id = ?',
+      args: [bindingId],
+    });
     log('A05', `家属绑定被拒绝: bindingId=${bindingId} rejector=${confirmerAccountId}(${confirmerRole})`);
     return { success: true, deleted: true };
   } catch (err) {
@@ -744,19 +872,20 @@ export function rejectFamilyBinding(bindingId, confirmerAccountId, confirmerRole
  * @param {number} familyAccountId 家属账号ID
  * @returns {array} [{ id, user_account_id, family_phone, family_name, relation, invited_at, vi_account_id, vi_username, vi_nickname, vi_phone }]
  */
-export function getPendingConfirmFamilyBindings(familyAccountId) {
+export async function getPendingConfirmFamilyBindings(familyAccountId) {
   if (!db || !familyAccountId) return [];
   try {
-    const rows = db.prepare(`
-      SELECT fb.id, fb.invited_at,
-             fb.family_phone, fb.family_name, fb.relation,
-             a.id AS user_account_id, a.username AS user_username, a.nickname AS user_nickname, a.phone AS user_phone
-      FROM family_bindings fb
-      JOIN accounts a ON fb.user_account_id = a.id
-      WHERE fb.family_account_id = ? AND fb.initiator = 'user' AND fb.status = 'pending'
-      ORDER BY fb.invited_at DESC
-    `).all(familyAccountId);
-    return rows;
+    const rs = await db.execute({
+      sql: `SELECT fb.id, fb.invited_at,
+                   fb.family_phone, fb.family_name, fb.relation,
+                   a.id AS user_account_id, a.username AS user_username, a.nickname AS user_nickname, a.phone AS user_phone
+            FROM family_bindings fb
+            JOIN accounts a ON fb.user_account_id = a.id
+            WHERE fb.family_account_id = ? AND fb.initiator = 'user' AND fb.status = 'pending'
+            ORDER BY fb.invited_at DESC`,
+      args: [familyAccountId],
+    });
+    return rs.rows;
   } catch (err) {
     log('A05', `查询家属端待确认列表失败: ${err.message}`, 'error');
     return [];
@@ -769,18 +898,19 @@ export function getPendingConfirmFamilyBindings(familyAccountId) {
  * @param {number} userAccountId 视障用户账号ID
  * @returns {array} [{ id, family_account_id, family_phone, family_name, relation, invited_at, family_username, family_nickname }]
  */
-export function getPendingConfirmViBindings(userAccountId) {
+export async function getPendingConfirmViBindings(userAccountId) {
   if (!db || !userAccountId) return [];
   try {
-    const rows = db.prepare(`
-      SELECT fb.id, fb.family_account_id, fb.family_phone, fb.family_name, fb.relation, fb.invited_at,
-             a.username AS family_username, a.nickname AS family_nickname
-      FROM family_bindings fb
-      JOIN accounts a ON fb.family_account_id = a.id
-      WHERE fb.user_account_id = ? AND fb.initiator = 'family' AND fb.status = 'pending'
-      ORDER BY fb.invited_at DESC
-    `).all(userAccountId);
-    return rows;
+    const rs = await db.execute({
+      sql: `SELECT fb.id, fb.family_account_id, fb.family_phone, fb.family_name, fb.relation, fb.invited_at,
+                   a.username AS family_username, a.nickname AS family_nickname
+            FROM family_bindings fb
+            JOIN accounts a ON fb.family_account_id = a.id
+            WHERE fb.user_account_id = ? AND fb.initiator = 'family' AND fb.status = 'pending'
+            ORDER BY fb.invited_at DESC`,
+      args: [userAccountId],
+    });
+    return rs.rows;
   } catch (err) {
     log('A05', `查询视障端待确认列表失败: ${err.message}`, 'error');
     return [];
@@ -791,19 +921,23 @@ export function getPendingConfirmViBindings(userAccountId) {
 /**
  * 获取所有账号列表(管理员用,过滤password_hash)
  */
-export function getAllAccounts() {
+export async function getAllAccounts() {
   if (!db) return [];
-  return db.prepare("SELECT id, username, role, user_id, created_at, nickname, avatar, phone, status FROM accounts ORDER BY created_at DESC").all();
+  const rs = await db.execute("SELECT id, username, role, user_id, created_at, nickname, avatar, phone, status FROM accounts ORDER BY created_at DESC");
+  return rs.rows;
 }
 
 /**
  * 更新账号状态(管理员封禁/解封)
  */
-export function updateAccountStatus(id, status) {
+export async function updateAccountStatus(id, status) {
   if (!db) return false;
   try {
-    const result = db.prepare('UPDATE accounts SET status = ? WHERE id = ?').run(status, id);
-    return result.changes > 0;
+    const result = await db.execute({
+      sql: 'UPDATE accounts SET status = ? WHERE id = ?',
+      args: [status, id],
+    });
+    return toChanges(result.rowsAffected) > 0;
   } catch (err) {
     log('A05', `更新账号状态失败: ${err.message}`, 'error');
     return false;
@@ -813,154 +947,200 @@ export function updateAccountStatus(id, status) {
 /**
  * 记录管理员操作日志
  */
-export function addAdminLog(logEntry) {
+export async function addAdminLog(logEntry) {
   if (!db) return null;
   const { admin_id, target_account_id, action, reason, detail } = logEntry;
-  const result = db.prepare(`
-    INSERT INTO admin_logs (admin_id, target_account_id, action, reason, detail, created_at)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(admin_id || null, target_account_id || null, action, reason || '', detail || '', new Date().toISOString());
-  return result.lastInsertRowid;
+  const result = await db.execute({
+    sql: `INSERT INTO admin_logs (admin_id, target_account_id, action, reason, detail, created_at)
+          VALUES (?, ?, ?, ?, ?, ?)`,
+    args: [admin_id || null, target_account_id || null, action, reason || '', detail || '', new Date().toISOString()],
+  });
+  return toNumberId(result.lastInsertRowid);
 }
 
 /**
  * 获取管理员操作日志
  */
-export function getAdminLogs(limit = 50) {
+export async function getAdminLogs(limit = 50) {
   if (!db) return [];
-  return db.prepare('SELECT * FROM admin_logs ORDER BY created_at DESC LIMIT ?').all(limit);
+  const rs = await db.execute({
+    sql: 'SELECT * FROM admin_logs ORDER BY created_at DESC LIMIT ?',
+    args: [limit],
+  });
+  return rs.rows;
 }
 
 // ===== 路线记忆 =====
-export function searchRoutes(lat, lng, limit = 5) {
+export async function searchRoutes(lat, lng, limit = 5) {
   if (!db) return [];
   // 简化版: 查找起点附近1000米内的常用路线
-  return db.prepare(`
-    SELECT *, (
-      (start_lat - ?) * (start_lat - ?) + (start_lng - ?) * (start_lng - ?)
-    ) as dist
-    FROM routes
-    ORDER BY dist ASC, visit_count DESC
-    LIMIT ?
-  `).all(lat, lat, lng, lng, limit);
+  const rs = await db.execute({
+    sql: `SELECT *, (
+            (start_lat - ?) * (start_lat - ?) + (start_lng - ?) * (start_lng - ?)
+          ) as dist
+          FROM routes
+          ORDER BY dist ASC, visit_count DESC
+          LIMIT ?`,
+    args: [lat, lat, lng, lng, limit],
+  });
+  return rs.rows;
 }
 
-export function addRoute(route) {
+export async function addRoute(route) {
   if (!db) return null;
   const { start_lat, start_lng, end_lat, end_lng, route_name } = route;
   const now = new Date().toISOString();
   // upsert: 相同起终点路线已存在则递增visit_count,否则插入新记录
-  const existing = db.prepare(`
-    SELECT id, visit_count FROM routes
-    WHERE start_lat=? AND start_lng=? AND end_lat=? AND end_lng=?
-  `).get(start_lat, start_lng, end_lat, end_lng);
+  const existingRs = await db.execute({
+    sql: `SELECT id, visit_count FROM routes
+          WHERE start_lat=? AND start_lng=? AND end_lat=? AND end_lng=?`,
+    args: [start_lat, start_lng, end_lat, end_lng],
+  });
+  const existing = existingRs.rows[0];
   if (existing) {
-    db.prepare(`
-      UPDATE routes SET visit_count=visit_count+1, last_visited=?, route_name=?
-      WHERE id=?
-    `).run(now, route_name, existing.id);
+    await db.execute({
+      sql: `UPDATE routes SET visit_count=visit_count+1, last_visited=?, route_name=?
+            WHERE id=?`,
+      args: [now, route_name, existing.id],
+    });
     return existing.id;
   }
-  const result = db.prepare(`
-    INSERT INTO routes (start_lat, start_lng, end_lat, end_lng, route_name, visit_count, last_visited, created_at)
-    VALUES (?, ?, ?, ?, ?, 1, ?, ?)
-  `).run(start_lat, start_lng, end_lat, end_lng, route_name, now, now);
-  return result.lastInsertRowid;
+  const result = await db.execute({
+    sql: `INSERT INTO routes (start_lat, start_lng, end_lat, end_lng, route_name, visit_count, last_visited, created_at)
+          VALUES (?, ?, ?, ?, ?, 1, ?, ?)`,
+    args: [start_lat, start_lng, end_lat, end_lng, route_name, now, now],
+  });
+  return toNumberId(result.lastInsertRowid);
 }
 
-export function getAllRoutes() {
+export async function getAllRoutes() {
   if (!db) return [];
-  return db.prepare('SELECT * FROM routes ORDER BY visit_count DESC, last_visited DESC').all();
+  const rs = await db.execute('SELECT * FROM routes ORDER BY visit_count DESC, last_visited DESC');
+  return rs.rows;
 }
 
 // ===== 熟人面孔 =====
-export function searchFaces() {
+export async function searchFaces() {
   if (!db) return [];
-  return db.prepare('SELECT * FROM faces ORDER BY visit_count DESC, last_seen DESC').all();
+  const rs = await db.execute('SELECT * FROM faces ORDER BY visit_count DESC, last_seen DESC');
+  return rs.rows;
 }
 
-export function addFace(face) {
+export async function addFace(face) {
   if (!db) return null;
   const { name, relation, description } = face;
-  const existing = db.prepare('SELECT id FROM faces WHERE name = ?').get(name);
+  const existingRs = await db.execute({
+    sql: 'SELECT id FROM faces WHERE name = ?',
+    args: [name],
+  });
+  const existing = existingRs.rows[0];
   if (existing) {
-    db.prepare('UPDATE faces SET visit_count = visit_count + 1, last_seen = ? WHERE id = ?')
-      .run(new Date().toISOString(), existing.id);
+    await db.execute({
+      sql: 'UPDATE faces SET visit_count = visit_count + 1, last_seen = ? WHERE id = ?',
+      args: [new Date().toISOString(), existing.id],
+    });
     return existing.id;
   }
-  const result = db.prepare(`
-    INSERT INTO faces (name, relation, description, visit_count, last_seen, created_at)
-    VALUES (?, ?, ?, 1, ?, ?)
-  `).run(name, relation, description, new Date().toISOString(), new Date().toISOString());
-  return result.lastInsertRowid;
+  const result = await db.execute({
+    sql: `INSERT INTO faces (name, relation, description, visit_count, last_seen, created_at)
+          VALUES (?, ?, ?, 1, ?, ?)`,
+    args: [name, relation, description, new Date().toISOString(), new Date().toISOString()],
+  });
+  return toNumberId(result.lastInsertRowid);
 }
 
-export function forgetAllFaces() {
+export async function forgetAllFaces() {
   if (!db) return 0;
-  const result = db.prepare('DELETE FROM faces').run();
-  return result.changes;
+  const result = await db.execute('DELETE FROM faces');
+  return toChanges(result.rowsAffected);
 }
 
 // ===== 习惯 =====
-export function getHabit(type, key) {
+export async function getHabit(type, key) {
   if (!db) return null;
-  return db.prepare('SELECT * FROM habits WHERE habit_type = ? AND habit_key = ?').get(type, key);
+  const rs = await db.execute({
+    sql: 'SELECT * FROM habits WHERE habit_type = ? AND habit_key = ?',
+    args: [type, key],
+  });
+  return rs.rows[0] || null;
 }
 
-export function upsertHabit(type, key, value) {
+export async function upsertHabit(type, key, value) {
   if (!db) return null;
-  const existing = db.prepare('SELECT id FROM habits WHERE habit_type = ? AND habit_key = ?').get(type, key);
+  const existingRs = await db.execute({
+    sql: 'SELECT id FROM habits WHERE habit_type = ? AND habit_key = ?',
+    args: [type, key],
+  });
+  const existing = existingRs.rows[0];
   if (existing) {
-    db.prepare('UPDATE habits SET habit_value = ?, trigger_count = trigger_count + 1, last_triggered = ? WHERE id = ?')
-      .run(value, new Date().toISOString(), existing.id);
+    await db.execute({
+      sql: 'UPDATE habits SET habit_value = ?, trigger_count = trigger_count + 1, last_triggered = ? WHERE id = ?',
+      args: [value, new Date().toISOString(), existing.id],
+    });
     return existing.id;
   }
-  const result = db.prepare(`
-    INSERT INTO habits (habit_type, habit_key, habit_value, trigger_count, last_triggered, created_at)
-    VALUES (?, ?, ?, 1, ?, ?)
-  `).run(type, key, value, new Date().toISOString(), new Date().toISOString());
-  return result.lastInsertRowid;
+  const result = await db.execute({
+    sql: `INSERT INTO habits (habit_type, habit_key, habit_value, trigger_count, last_triggered, created_at)
+          VALUES (?, ?, ?, 1, ?, ?)`,
+    args: [type, key, value, new Date().toISOString(), new Date().toISOString()],
+  });
+  return toNumberId(result.lastInsertRowid);
 }
 
-export function getAllHabits() {
+export async function getAllHabits() {
   if (!db) return [];
-  return db.prepare('SELECT * FROM habits ORDER BY last_triggered DESC').all();
+  const rs = await db.execute('SELECT * FROM habits ORDER BY last_triggered DESC');
+  return rs.rows;
 }
 
 // ===== SOS事件 =====
-export function addSosEvent(event) {
+export async function addSosEvent(event) {
   if (!db) return null;
   const { event_type, lat, lng, address, contact_name, contact_phone } = event;
-  const result = db.prepare(`
-    INSERT INTO sos_events (event_type, lat, lng, address, contact_name, contact_phone, status, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
-  `).run(event_type, lat, lng, address, contact_name, contact_phone, new Date().toISOString());
-  return result.lastInsertRowid;
+  const result = await db.execute({
+    sql: `INSERT INTO sos_events (event_type, lat, lng, address, contact_name, contact_phone, status, created_at)
+          VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`,
+    args: [event_type, lat, lng, address, contact_name, contact_phone, new Date().toISOString()],
+  });
+  return toNumberId(result.lastInsertRowid);
 }
 
-export function updateSosStatus(id, status) {
+export async function updateSosStatus(id, status) {
   if (!db) return;
-  db.prepare('UPDATE sos_events SET status = ? WHERE id = ?').run(status, id);
+  await db.execute({
+    sql: 'UPDATE sos_events SET status = ? WHERE id = ?',
+    args: [status, id],
+  });
 }
 
-export function getSosEvents(limit = 20) {
+export async function getSosEvents(limit = 20) {
   if (!db) return [];
-  return db.prepare('SELECT * FROM sos_events ORDER BY created_at DESC LIMIT ?').all(limit);
+  const rs = await db.execute({
+    sql: 'SELECT * FROM sos_events ORDER BY created_at DESC LIMIT ?',
+    args: [limit],
+  });
+  return rs.rows;
 }
 
-export function clearSosEvents() {
+export async function clearSosEvents() {
   if (!db) return 0;
-  const result = db.prepare('DELETE FROM sos_events').run();
-  return result.changes;
+  const result = await db.execute('DELETE FROM sos_events');
+  return toChanges(result.rowsAffected);
 }
 
 // ===== 记忆总览 =====
-export function getMemoryStats() {
+export async function getMemoryStats() {
   if (!db) return { routes: 0, faces: 0, habits: 0, sos_events: 0 };
+  const [routesRs, facesRs, habitsRs, sosRs] = await Promise.all([
+    db.execute('SELECT COUNT(*) as c FROM routes'),
+    db.execute('SELECT COUNT(*) as c FROM faces'),
+    db.execute('SELECT COUNT(*) as c FROM habits'),
+    db.execute('SELECT COUNT(*) as c FROM sos_events'),
+  ]);
   return {
-    routes: db.prepare('SELECT COUNT(*) as c FROM routes').get().c,
-    faces: db.prepare('SELECT COUNT(*) as c FROM faces').get().c,
-    habits: db.prepare('SELECT COUNT(*) as c FROM habits').get().c,
-    sos_events: db.prepare('SELECT COUNT(*) as c FROM sos_events').get().c,
+    routes: routesRs.rows[0].c,
+    faces: facesRs.rows[0].c,
+    habits: habitsRs.rows[0].c,
+    sos_events: sosRs.rows[0].c,
   };
 }

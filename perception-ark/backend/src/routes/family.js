@@ -24,10 +24,10 @@ function privacyFilterLocation(location) {
 
 // 使用者列表(家属绑定的被守护人)
 // 合并两个来源: 1.家属主动添加的(users表) 2.视障端邀请自动建立的(family_bindings反向查询)
-router.get('/users', authRequired, (req, res) => {
-  const manualUsers = getAllUsers(req.user.id);
+router.get('/users', authRequired, async (req, res) => {
+  const manualUsers = await getAllUsers(req.user.id);
   // 反向查询: 通过family_bindings自动绑定的视障人员(视障端发起邀请,家属注册后自动激活)
-  const invitedUsers = getFamilyBoundVisuallyImpairedUsers(req.user.id);
+  const invitedUsers = await getFamilyBoundVisuallyImpairedUsers(req.user.id);
   // 合并去重(以bound_account_id为键)
   const seenAccountIds = new Set(manualUsers.filter(u => u.bound_account_id).map(u => u.bound_account_id));
   const merged = [...manualUsers, ...invitedUsers.filter(u => !seenAccountIds.has(u.bound_account_id))];
@@ -35,14 +35,14 @@ router.get('/users', authRequired, (req, res) => {
 });
 
 // 添加使用者(绑定信息) - 支持通过 bind_phone 手机号绑定视障账号
-router.post('/users', authRequired, (req, res) => {
+router.post('/users', authRequired, async (req, res) => {
   const { name, age, relation, phone, emergency_contact, emergency_phone, health_notes, bind_phone } = req.body;
   if (!name) return res.status(400).json({ error: '请填写姓名' });
 
   let bound_account_id = null;
   // 如果填写了视障账号手机号,查找并绑定
   if (bind_phone) {
-    const account = findUserAccountByPhone(bind_phone.trim());
+    const account = await findUserAccountByPhone(bind_phone.trim());
     if (!account) {
       return res.status(404).json({ error: `该账号未注册（手机号${bind_phone}），请确认手机号正确且该账号身份为使用者` });
     }
@@ -50,15 +50,15 @@ router.post('/users', authRequired, (req, res) => {
     log('FAMILY', `家属通过手机号绑定视障账号: ${bind_phone} (account_id=${account.id})`);
   }
 
-  const id = addUser({ name, age, relation, phone, emergency_contact, emergency_phone, health_notes, bound_account_id, family_account_id: req.user.id });
+  const id = await addUser({ name, age, relation, phone, emergency_contact, emergency_phone, health_notes, bound_account_id, family_account_id: req.user.id });
 
   // 反向同步到视障端family_bindings表(新机制: pending 等待视障确认 / autoActivated 双方互邀请直接 active)
   let bindStatus = 'none';
   let bindMessage = null;
   if (bound_account_id && req.user?.id) {
-    const familyAccount = getAccountById(req.user.id);
+    const familyAccount = await getAccountById(req.user.id);
     if (familyAccount?.phone) {
-      const syncResult = syncFamilyBindingFromFamilySide(
+      const syncResult = await syncFamilyBindingFromFamilySide(
         bound_account_id, req.user.id, familyAccount.phone,
         familyAccount.nickname || familyAccount.username, relation
       );
@@ -90,8 +90,8 @@ router.post('/users', authRequired, (req, res) => {
 });
 
 // 删除使用者
-router.delete('/users/:id', (req, res) => {
-  const changes = deleteUser(parseInt(req.params.id));
+router.delete('/users/:id', async (req, res) => {
+  const changes = await deleteUser(parseInt(req.params.id));
   res.json({ success: true, changes });
 });
 
@@ -99,9 +99,9 @@ router.delete('/users/:id', (req, res) => {
  * 家属端待确认列表(视障端发起的邀请,等待家属确认)
  * GET /api/family/pending-confirm
  */
-router.get('/pending-confirm', authRequired, (req, res) => {
+router.get('/pending-confirm', authRequired, async (req, res) => {
   try {
-    const list = getPendingConfirmFamilyBindings(req.user.id);
+    const list = await getPendingConfirmFamilyBindings(req.user.id);
     res.json({ success: true, list });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
@@ -112,13 +112,13 @@ router.get('/pending-confirm', authRequired, (req, res) => {
  * 家属确认视障端发起的邀请
  * POST /api/family/confirm/:bindingId
  */
-router.post('/confirm/:bindingId', authRequired, (req, res) => {
+router.post('/confirm/:bindingId', authRequired, async (req, res) => {
   try {
     const bindingId = parseInt(req.params.bindingId);
     if (!bindingId) {
       return res.status(400).json({ success: false, error: '无效的绑定ID' });
     }
-    const result = confirmFamilyBinding(bindingId, req.user.id, 'family');
+    const result = await confirmFamilyBinding(bindingId, req.user.id, 'family');
     if (!result.success) {
       return res.status(400).json(result);
     }
@@ -134,13 +134,13 @@ router.post('/confirm/:bindingId', authRequired, (req, res) => {
  * 家属拒绝视障端发起的邀请
  * POST /api/family/reject/:bindingId
  */
-router.post('/reject/:bindingId', authRequired, (req, res) => {
+router.post('/reject/:bindingId', authRequired, async (req, res) => {
   try {
     const bindingId = parseInt(req.params.bindingId);
     if (!bindingId) {
       return res.status(400).json({ success: false, error: '无效的绑定ID' });
     }
-    const result = rejectFamilyBinding(bindingId, req.user.id, 'family');
+    const result = await rejectFamilyBinding(bindingId, req.user.id, 'family');
     if (!result.success) {
       return res.status(400).json(result);
     }
@@ -153,7 +153,7 @@ router.post('/reject/:bindingId', authRequired, (req, res) => {
 });
 
 // 编辑使用者信息
-router.put('/users/:id', authRequired, (req, res) => {
+router.put('/users/:id', authRequired, async (req, res) => {
   const { name, age, relation, phone, emergency_contact, emergency_phone, health_notes, bind_phone } = req.body;
   if (!name) return res.status(400).json({ error: '请填写姓名' });
 
@@ -161,7 +161,7 @@ router.put('/users/:id', authRequired, (req, res) => {
   // 如果填写了视障账号手机号,查找并绑定(空字符串表示解绑)
   if (bind_phone !== undefined) {
     if (bind_phone && bind_phone.trim()) {
-      const account = findUserAccountByPhone(bind_phone.trim());
+      const account = await findUserAccountByPhone(bind_phone.trim());
       if (!account) {
         return res.status(404).json({ error: `该账号未注册（手机号${bind_phone}），请确认手机号正确且该账号身份为使用者` });
       }
@@ -170,9 +170,9 @@ router.put('/users/:id', authRequired, (req, res) => {
 
       // 反向同步: 在视障端的family_bindings表插入active记录
       if (req.user?.id) {
-        const familyAccount = getAccountById(req.user.id);
+        const familyAccount = await getAccountById(req.user.id);
         if (familyAccount?.phone) {
-          const syncResult = syncFamilyBindingFromFamilySide(
+          const syncResult = await syncFamilyBindingFromFamilySide(
             account.id,
             req.user.id,
             familyAccount.phone,
@@ -191,7 +191,7 @@ router.put('/users/:id', authRequired, (req, res) => {
     }
   }
 
-  const changes = updateUser(parseInt(req.params.id), {
+  const changes = await updateUser(parseInt(req.params.id), {
     name, age: age !== undefined ? (age ? parseInt(age) : null) : undefined,
     relation, phone, emergency_contact, emergency_phone, health_notes, bound_account_id
   });
@@ -200,12 +200,12 @@ router.put('/users/:id', authRequired, (req, res) => {
 
 // 家属端首页数据 - 实时状态总览
 // 合并users表和family_bindings反向查询,确保视障端邀请的绑定也能显示
-router.get('/overview', authRequired, (req, res) => {
+router.get('/overview', authRequired, async (req, res) => {
   const context = getContext();
-  const stats = getStats();
-  const sosEvents = getSosEvents(5);
-  const manualUsers = getAllUsers(req.user.id);
-  const invitedUsers = getFamilyBoundVisuallyImpairedUsers(req.user.id);
+  const stats = await getStats();
+  const sosEvents = await getSosEvents(5);
+  const manualUsers = await getAllUsers(req.user.id);
+  const invitedUsers = await getFamilyBoundVisuallyImpairedUsers(req.user.id);
   // 合并去重
   const seenAccountIds = new Set(manualUsers.filter(u => u.bound_account_id).map(u => u.bound_account_id));
   const users = [...manualUsers, ...invitedUsers.filter(u => !seenAccountIds.has(u.bound_account_id))];
@@ -250,13 +250,13 @@ router.get('/location', (req, res) => {
 });
 
 // SOS历史
-router.get('/sos', (req, res) => {
-  res.json({ events: getSosEvents(50) });
+router.get('/sos', async (req, res) => {
+  res.json({ events: await getSosEvents(50) });
 });
 
 // 紧急联系人 - 从已绑定的使用者信息中提取
-router.get('/contacts', authRequired, (req, res) => {
-  const users = getAllUsers(req.user.id);
+router.get('/contacts', authRequired, async (req, res) => {
+  const users = await getAllUsers(req.user.id);
   const contacts = users
     .filter(u => u.emergency_contact && u.emergency_phone)
     .map((u, i) => ({
@@ -283,31 +283,31 @@ router.get('/recognition-history', (req, res) => {
 });
 
 // 路线历史
-router.get('/routes', (req, res) => {
-  const routes = getAllRoutes();
+router.get('/routes', async (req, res) => {
+  const routes = await getAllRoutes();
   res.json({ routes });
 });
 
 // 习惯数据
-router.get('/habits', (req, res) => {
-  const habits = getAllHabits();
+router.get('/habits', async (req, res) => {
+  const habits = await getAllHabits();
   res.json({ habits });
 });
 
 // 综合仪表盘数据
-router.get('/dashboard', authRequired, (req, res) => {
+router.get('/dashboard', authRequired, async (req, res) => {
   const context = getContext();
-  const stats = getStats();
-  const memStats = getMemoryStats();
-  const manualUsers = getAllUsers(req.user.id);
+  const stats = await getStats();
+  const memStats = await getMemoryStats();
+  const manualUsers = await getAllUsers(req.user.id);
   // 反向查询: 通过family_bindings自动绑定的视障人员(视障端发起邀请,家属注册后自动激活)
-  const invitedUsers = getFamilyBoundVisuallyImpairedUsers(req.user.id);
+  const invitedUsers = await getFamilyBoundVisuallyImpairedUsers(req.user.id);
   // 合并去重(以bound_account_id为键),与/overview和/users接口保持一致
   const seenAccountIds = new Set(manualUsers.filter(u => u.bound_account_id).map(u => u.bound_account_id));
   const users = [...manualUsers, ...invitedUsers.filter(u => !seenAccountIds.has(u.bound_account_id))];
-  const routes = getAllRoutes();
-  const sosEvents = getSosEvents(50);
-  const habits = getAllHabits();
+  const routes = await getAllRoutes();
+  const sosEvents = await getSosEvents(50);
+  const habits = await getAllHabits();
 
   // 统计识别历史中的事件类型
   const history = context.history || [];

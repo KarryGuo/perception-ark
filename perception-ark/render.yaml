@@ -28,6 +28,13 @@ services:
         value: 3001
       - key: DATA_DIR
         value: /data  # 持久化磁盘目录,重启不丢失
+      # ===== Turso 云数据库 (推荐,解决Render重新部署数据丢失问题) =====
+      # 配置后数据存储在Turso云端,重新部署/休眠唤醒都不会丢数据
+      # 未配置时自动降级到本地文件SQLite(/data/memory.db,依赖持久化磁盘)
+      - key: TURSO_URL
+        sync: false  # 在Render界面填写,格式: libsql://xxx.turso.io
+      - key: TURSO_AUTH_TOKEN
+        sync: false  # 在Render界面填写,Turso平台生成的访问令牌
       # ===== 阿里千问 Qwen API (必填,否则使用MOCK模式) =====
       # 全模态模型 qwen3.5-omni-flash: 视觉+文本+音频+视频
       - key: QWEN_API_KEY

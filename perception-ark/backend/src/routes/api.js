@@ -39,8 +39,8 @@ router.get('/health', (req, res) => {
 });
 
 // ===== 系统状态 =====
-router.get('/stats', (req, res) => {
-  res.json(getStats());
+router.get('/stats', async (req, res) => {
+  res.json(await getStats());
 });
 
 router.get('/context', (req, res) => {
@@ -268,37 +268,37 @@ router.post('/reset', (req, res) => {
 });
 
 // ===== 记忆库管理 =====
-router.get('/memory/routes', (req, res) => {
-  res.json({ routes: getAllRoutes() });
+router.get('/memory/routes', async (req, res) => {
+  res.json({ routes: await getAllRoutes() });
 });
 
-router.get('/memory/faces', (req, res) => {
-  res.json({ faces: searchFaces() });
+router.get('/memory/faces', async (req, res) => {
+  res.json({ faces: await searchFaces() });
 });
 
-router.post('/memory/faces', (req, res) => {
+router.post('/memory/faces', async (req, res) => {
   const { name, relation, description } = req.body;
   if (!name) return res.status(400).json({ error: '缺少姓名' });
-  const id = addFace({ name, relation, description });
+  const id = await addFace({ name, relation, description });
   res.json({ success: true, id });
 });
 
-router.delete('/memory/faces', (req, res) => {
-  const count = forgetAllFaces();
+router.delete('/memory/faces', async (req, res) => {
+  const count = await forgetAllFaces();
   res.json({ success: true, deleted: count });
 });
 
-router.get('/memory/habits', (req, res) => {
-  res.json({ habits: getAllHabits() });
+router.get('/memory/habits', async (req, res) => {
+  res.json({ habits: await getAllHabits() });
 });
 
-router.get('/memory/stats', (req, res) => {
-  res.json(getMemoryStats());
+router.get('/memory/stats', async (req, res) => {
+  res.json(await getMemoryStats());
 });
 
 // ===== SOS事件历史 =====
-router.get('/sos/events', (req, res) => {
-  res.json({ events: getSosEvents(20) });
+router.get('/sos/events', async (req, res) => {
+  res.json({ events: await getSosEvents(20) });
 });
 
 export default router;
