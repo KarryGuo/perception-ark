@@ -96,6 +96,11 @@ function AppMobileUser() {
   const ttsSpeakingRef = useRef(false);
   useEffect(() => { ttsSpeakingRef.current = ttsSpeaking; }, [ttsSpeaking]);
 
+  const showToast = useCallback((text) => {
+    setToast(text);
+    setTimeout(() => setToast(''), 2500);
+  }, []);
+
   // 导航引导Hook: 实时方向纠正+朝向检测+导航视角数据
   const { navState, heading: navHeading, startNavigation, stopNavigation, requestCompassPermission } = useNavigation({
     location,
@@ -193,11 +198,6 @@ function AppMobileUser() {
   const completeTutorial = useCallback(() => {
     localStorage.setItem('ark_first_use_done', '1');
     setFirstUse(false);
-  }, []);
-
-  const showToast = useCallback((text) => {
-    setToast(text);
-    setTimeout(() => setToast(''), 2500);
   }, []);
 
   const startWakeListener = useCallback(() => {
