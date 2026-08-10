@@ -287,7 +287,7 @@ export default function Family() {
       emergency_contact: u.emergency_contact || '',
       emergency_phone: u.emergency_phone || '',
       health_notes: u.health_notes || '',
-      bind_phone: '' // bind_phone 不回填(安全考虑,编辑时重新输入绑定手机号)
+      bind_phone: undefined // 编辑时不传bind_phone,避免误触发解绑
     });
     setShowAddForm(true);
   }, []);
@@ -598,7 +598,7 @@ export default function Family() {
             {showAddForm && (
               <form className="am-fam-add-form" onSubmit={handleAddUser}>
                 <div className="am-fam-form-title">{editingUserId ? '编辑使用者' : '添加使用者'}</div>
-                <FamFormInput placeholder="姓名 *" value={formData.name} onChange={v => setFormData({ ...formData, name: v })} required />
+                <FamFormInput placeholder="称呼 * (如:爸爸)" value={formData.name} onChange={v => setFormData({ ...formData, name: v })} required />
                 <div className="am-fam-form-row">
                   <FamFormInput placeholder="年龄" type="number" value={formData.age} onChange={v => setFormData({ ...formData, age: v })} />
                   <FamFormInput placeholder="关系(如:父亲)" value={formData.relation} onChange={v => setFormData({ ...formData, relation: v })} />
@@ -609,7 +609,9 @@ export default function Family() {
                   <FamFormInput placeholder="紧急电话" value={formData.emergency_phone} onChange={v => setFormData({ ...formData, emergency_phone: v })} />
                 </div>
                 <FamFormInput placeholder="健康备注(如:高血压)" value={formData.health_notes} onChange={v => setFormData({ ...formData, health_notes: v })} />
-                <FamFormInput placeholder="绑定视障人员手机号(未注册将提示)" value={formData.bind_phone} onChange={v => setFormData({ ...formData, bind_phone: v })} />
+                {!editingUserId && (
+                  <FamFormInput placeholder="绑定视障人员手机号(未注册将提示)" value={formData.bind_phone || ''} onChange={v => setFormData({ ...formData, bind_phone: v })} />
+                )}
                 {formError && (
                   <div className="am-fam-form-error" role="alert">{formError}</div>
                 )}

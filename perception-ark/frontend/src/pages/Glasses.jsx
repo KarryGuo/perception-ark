@@ -114,7 +114,6 @@ export default function Glasses() {
           </span>
           {user && <span style={{ fontSize: '.72rem', color: 'var(--bio-emerald)' }}>管理员 · {user.username}</span>}
           <ThemeToggle size="sm" />
-          <a href="#/app" className="tb-link">App端</a>
           <button onClick={logout} style={{ background: 'none', border: '1px solid var(--gb)', color: 'var(--ink-muted)', padding: '4px 10px', borderRadius: 6, cursor: 'pointer', fontSize: '.72rem', fontFamily: 'inherit' }}>退出</button>
         </div>
       </nav>

@@ -8,7 +8,7 @@ import { api } from '../services/api.js';
  * 底部独立区: 切换账号 / 退出登录
  */
 export default function Settings() {
-  const { user, logout, updateUser } = useAuth();
+  const { user, logout, updateUser, updateUserAndToken } = useAuth();
 
   // ===== 音频设置 =====
   const [ttsRate, setTtsRate] = useState(() => parseFloat(localStorage.getItem('ark_tts_rate')) || 0.95);
@@ -50,6 +50,11 @@ export default function Settings() {
   const [deleting, setDeleting] = useState(false);
   const fileInputRef = useRef(null);
 
+  // ===== 用户名修改状态 =====
+  const [usernameInput, setUsernameInput] = useState(user?.username || '');
+  const [usernameEditing, setUsernameEditing] = useState(false);
+  const [usernameSaving, setUsernameSaving] = useState(false);
+
   const toggleSection = useCallback((key) => {
     setExpanded(prev => prev === key ? null : key);
   }, []);
@@ -58,6 +63,11 @@ export default function Settings() {
   useEffect(() => {
     setNicknameInput(user?.nickname || '');
   }, [user?.nickname]);
+
+  // 同步用户最新的用户名到输入框
+  useEffect(() => {
+    setUsernameInput(user?.username || '');
+  }, [user?.username]);
 
   // 加载可用语音列表
   useEffect(() => {
@@ -205,6 +215,52 @@ export default function Settings() {
     }
   }, [nicknameInput, user?.nickname, updateUser]);
 
+  // ===== 账户操作: 修改登录用户名(支持中文) =====
+  const handleUsernameEdit = useCallback(() => {
+    setUsernameInput(user?.username || '');
+    setUsernameEditing(true);
+    setAccountMsg(null);
+  }, [user?.username]);
+
+  const handleUsernameCancel = useCallback(() => {
+    setUsernameEditing(false);
+    setUsernameInput(user?.username || '');
+  }, [user?.username]);
+
+  const handleUsernameSave = useCallback(async () => {
+    const trimmed = usernameInput.trim();
+    if (!trimmed) {
+      setAccountMsg({ type: 'err', text: '用户名不能为空' });
+      return;
+    }
+    if (trimmed.length < 2 || trimmed.length > 20) {
+      setAccountMsg({ type: 'err', text: '用户名长度需2-20个字符' });
+      return;
+    }
+    if (trimmed === (user?.username || '')) {
+      setAccountMsg({ type: 'ok', text: '用户名未变化' });
+      setUsernameEditing(false);
+      return;
+    }
+    setUsernameSaving(true);
+    setAccountMsg(null);
+    try {
+      const res = await api.updateUsername(trimmed);
+      if (res?.success && res.user) {
+        // 用户名变更后需要更新token(后端会返回新token)
+        updateUserAndToken(res.user, res.token);
+        setUsernameEditing(false);
+        setAccountMsg({ type: 'ok', text: '登录用户名已更新' });
+      } else {
+        setAccountMsg({ type: 'err', text: res?.error || '用户名更新失败' });
+      }
+    } catch (err) {
+      setAccountMsg({ type: 'err', text: err.message || '用户名更新失败' });
+    } finally {
+      setUsernameSaving(false);
+    }
+  }, [usernameInput, user?.username, updateUserAndToken]);
+
   // ===== 账户操作: 注销账户 =====
   const handleDeleteAccount = useCallback(async () => {
     setDeleting(true);
@@ -319,10 +375,49 @@ export default function Settings() {
                 </div>
               </div>
 
-              {/* 用户名(只读) */}
+              {/* 用户名(可编辑,支持中文) */}
               <div className="sp-item">
                 <label className="sp-label"><span>登录用户名</span></label>
-                <div className="sp-user-info">{user?.username || '未登录'}</div>
+                {usernameEditing ? (
+                  <div className="sp-nickname-row">
+                    <input
+                      type="text"
+                      className="sp-input"
+                      value={usernameInput}
+                      onChange={e => setUsernameInput(e.target.value)}
+                      placeholder="请输入新用户名(2-20字,支持中文)"
+                      maxLength={20}
+                      name="ark-settings-username-off"
+                      autoComplete="nope"
+                      autoFocus
+                    />
+                    <button
+                      className="sp-save-btn"
+                      onClick={handleUsernameSave}
+                      disabled={usernameSaving}
+                    >
+                      {usernameSaving ? '保存中' : '保存'}
+                    </button>
+                    <button
+                      className="sp-cancel-btn"
+                      onClick={handleUsernameCancel}
+                      disabled={usernameSaving}
+                    >
+                      取消
+                    </button>
+                  </div>
+                ) : (
+                  <div className="sp-nickname-row">
+                    <div className="sp-user-info">{user?.username || '未登录'}</div>
+                    <button
+                      className="sp-save-btn"
+                      onClick={handleUsernameEdit}
+                    >
+                      修改
+                    </button>
+                  </div>
+                )}
+                <div className="sp-avatar-hint">登录用户名用于账号登录,支持中英文,2-20个字符</div>
               </div>
 
               {/* 用户角色(只读) */}

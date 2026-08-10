@@ -358,6 +358,41 @@ router.put('/profile', authRequired, async (req, res) => {
 });
 
 /**
+ * 修改登录用户名(支持中文)
+ * PUT /api/auth/username
+ * body: { newUsername }
+ */
+router.put('/username', authRequired, async (req, res) => {
+  try {
+    const { newUsername } = req.body;
+    if (!newUsername) {
+      return res.status(400).json({ success: false, error: '请输入新用户名' });
+    }
+    const trimmed = String(newUsername).trim();
+    if (trimmed.length < 2 || trimmed.length > 20) {
+      return res.status(400).json({ success: false, error: '用户名长度需2-20个字符' });
+    }
+    // 检查重名(排除当前用户自己)
+    const existing = await getAccountByUsername(trimmed);
+    if (existing && existing.id !== req.user.id) {
+      return res.status(409).json({ success: false, error: '该用户名已被占用' });
+    }
+    const ok = await updateAccountProfile(req.user.id, { username: trimmed });
+    if (!ok) {
+      return res.status(500).json({ success: false, error: '用户名更新失败' });
+    }
+    const account = await getAccountById(req.user.id);
+    // 用户名变更后需要签发新token(用户名可能嵌入token payload)
+    const newToken = generateToken(account);
+    log('AUTH', `用户修改用户名: id=${req.user.id} -> "${trimmed}"`);
+    res.json({ success: true, user: buildUserPayload(account), token: newToken });
+  } catch (err) {
+    log('AUTH', `修改用户名失败: ${err.message}`, 'error');
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+/**
  * 修改密码
  * PUT /api/auth/password
  * body: { oldPassword, newPassword }

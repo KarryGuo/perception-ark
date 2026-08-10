@@ -358,18 +358,19 @@ export async function updateSecurity(id, question, answerHash) {
 }
 
 /**
- * 更新账户资料(昵称/头像)
+ * 更新账户资料(昵称/头像/用户名)
  * @param {number} id 账户ID
- * @param {{nickname?: string, avatar?: string|null}} fields
+ * @param {{nickname?: string, avatar?: string|null, username?: string}} fields
  * @returns {boolean} 是否更新成功
  */
-export async function updateAccountProfile(id, { nickname, avatar }) {
+export async function updateAccountProfile(id, { nickname, avatar, username }) {
   if (!db) return false;
   try {
     const sets = [];
     const args = [];
     if (nickname !== undefined) { sets.push('nickname = ?'); args.push(nickname); }
     if (avatar !== undefined) { sets.push('avatar = ?'); args.push(avatar); }
+    if (username !== undefined) { sets.push('username = ?'); args.push(username); }
     if (sets.length === 0) return false;
     args.push(id);
     const result = await db.execute({

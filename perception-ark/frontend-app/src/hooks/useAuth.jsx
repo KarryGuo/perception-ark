@@ -81,6 +81,14 @@ export function AuthProvider({ children }) {
     setUser(newUser);
   }, []);
 
+  // 更新用户信息和token(用户名变更后需要新token)
+  const updateUserAndToken = useCallback((newUser, newToken) => {
+    setUser(newUser);
+    if (newToken) {
+      localStorage.setItem('ark_token', newToken);
+    }
+  }, []);
+
   const logout = useCallback(() => {
     localStorage.removeItem('ark_token');
     setUser(null);
@@ -88,7 +96,7 @@ export function AuthProvider({ children }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, register, logout, refreshUser, updateUser }}>
+    <AuthContext.Provider value={{ user, loading, login, register, logout, refreshUser, updateUser, updateUserAndToken }}>
       {children}
     </AuthContext.Provider>
   );

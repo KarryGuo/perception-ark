@@ -48,6 +48,13 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ nickname })
     }),
+  // 修改登录用户名(支持中文,返回新token)
+  updateUsername: (newUsername) =>
+    request('/auth/username', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ newUsername })
+    }),
   // 修改头像(dataURL: data:image/...;base64,...)
   updateAvatar: (avatar) =>
     request('/auth/avatar', {

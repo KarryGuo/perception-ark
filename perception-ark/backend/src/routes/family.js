@@ -37,7 +37,7 @@ router.get('/users', authRequired, async (req, res) => {
 // 添加使用者(绑定信息) - 支持通过 bind_phone 手机号绑定视障账号
 router.post('/users', authRequired, async (req, res) => {
   const { name, age, relation, phone, emergency_contact, emergency_phone, health_notes, bind_phone } = req.body;
-  if (!name) return res.status(400).json({ error: '请填写姓名' });
+  if (!name) return res.status(400).json({ error: '请填写称呼' });
 
   let bound_account_id = null;
   // 如果填写了视障账号手机号,查找并绑定
@@ -155,7 +155,7 @@ router.post('/reject/:bindingId', authRequired, async (req, res) => {
 // 编辑使用者信息
 router.put('/users/:id', authRequired, async (req, res) => {
   const { name, age, relation, phone, emergency_contact, emergency_phone, health_notes, bind_phone } = req.body;
-  if (!name) return res.status(400).json({ error: '请填写姓名' });
+  if (!name) return res.status(400).json({ error: '请填写称呼' });
 
   let bound_account_id = undefined;
   // 如果填写了视障账号手机号,查找并绑定(空字符串表示解绑)

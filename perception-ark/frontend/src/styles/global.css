@@ -1989,7 +1989,7 @@ input:focus-visible,
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: #000;
+  background: var(--void);
   color: var(--ink);
   max-width: 480px;
   margin: 0 auto;
@@ -2029,7 +2029,7 @@ input:focus-visible,
   height: 100%;
   background:
     radial-gradient(ellipse 80% 60% at 50% 40%, rgba(255,46,126,0.12) 0%, transparent 70%),
-    linear-gradient(180deg, #0a0610 0%, #04060c 100%);
+    linear-gradient(180deg, var(--void-2) 0%, var(--void) 100%);
 }
 .am-overlay {
   position: absolute;
@@ -4322,6 +4322,42 @@ body.ark-large-font .am-tutorial-btn { font-size: 1.1rem; }
     border-color: rgba(224, 53, 126, 0.3);
     color: var(--bio-magenta);
   }
+
+  /* 家属端背景遮罩浅色: 移除黑色渐变,改为轻微白色提亮 */
+  .am-overlay {
+    background: linear-gradient(180deg,
+      rgba(0,0,0,0.04) 0%,
+      rgba(0,0,0,0) 20%,
+      rgba(0,0,0,0) 50%,
+      rgba(0,0,0,0.06) 100%);
+  }
+
+  /* 家属端顶部Tab栏浅色(视障端用.ark-dark覆盖回深色) */
+  .am-top-tabs {
+    background: rgba(255, 255, 255, 0.7);
+    border: 1px solid var(--gb);
+  }
+  .am-tab-pill {
+    color: var(--ink-muted);
+  }
+  .am-tab-pill.active {
+    background: var(--ink);
+    color: var(--void-2);
+  }
+  .am-tab-pill.danger { color: var(--bio-magenta); }
+  .am-tab-pill.danger.active {
+    background: var(--bio-magenta);
+    color: #fff;
+  }
+
+  /* 家属端右上状态栏浅色 */
+  .am-status {
+    background: rgba(255, 255, 255, 0.7);
+    border: 1px solid var(--gb);
+    color: var(--ink-soft);
+  }
+  .am-status .am-dot.on { background: var(--bio-emerald); }
+  .am-status .am-dot.off { background: var(--ink-faint); }
 }
 
 /* 视障端强制暗色主题(覆盖系统浅色偏好) */
@@ -4358,6 +4394,31 @@ body.ark-large-font .am-tutorial-btn { font-size: 1.1rem; }
 }
 .ark-dark .chart-container line {
   stroke: rgba(255, 255, 255, 0.06) !important;
+}
+/* 视障端强制暗色: 恢复顶部Tab栏和遮罩的暗色样式(覆盖浅色主题媒体查询) */
+.ark-dark .am-top-tabs {
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.ark-dark .am-tab-pill {
+  color: rgba(255, 255, 255, 0.6);
+}
+.ark-dark .am-tab-pill.active {
+  background: rgba(255, 255, 255, 0.9);
+  color: #000;
+}
+.ark-dark .am-tab-pill.danger { color: rgba(255, 120, 160, 0.8); }
+.ark-dark .am-overlay {
+  background: linear-gradient(180deg,
+    rgba(0,0,0,0.35) 0%,
+    rgba(0,0,0,0) 20%,
+    rgba(0,0,0,0) 50%,
+    rgba(0,0,0,0.55) 100%);
+}
+.ark-dark .am-status {
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.8);
 }
 
 /* ============================================
@@ -4449,6 +4510,27 @@ body.ark-large-font .am-tutorial-btn { font-size: 1.1rem; }
 }
 :root[data-theme="light"] ::-webkit-scrollbar-track { background: var(--void-3); }
 :root[data-theme="light"] ::-webkit-scrollbar-thumb { background: var(--gbh); }
+:root[data-theme="light"] .am-overlay {
+  background: linear-gradient(180deg,
+    rgba(0,0,0,0.04) 0%, rgba(0,0,0,0) 20%,
+    rgba(0,0,0,0) 50%, rgba(0,0,0,0.06) 100%);
+}
+:root[data-theme="light"] .am-top-tabs {
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid var(--gb);
+}
+:root[data-theme="light"] .am-tab-pill { color: var(--ink-muted); }
+:root[data-theme="light"] .am-tab-pill.active {
+  background: var(--ink); color: var(--void-2);
+}
+:root[data-theme="light"] .am-tab-pill.danger { color: var(--bio-magenta); }
+:root[data-theme="light"] .am-status {
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid var(--gb);
+  color: var(--ink-soft);
+}
+:root[data-theme="light"] .am-status .am-dot.on { background: var(--bio-emerald); }
+:root[data-theme="light"] .am-status .am-dot.off { background: var(--ink-faint); }
 
 /* 手动暗色: 强制暗色主题(覆盖系统浅色偏好) */
 :root[data-theme="dark"] {
@@ -4484,6 +4566,24 @@ body.ark-large-font .am-tutorial-btn { font-size: 1.1rem; }
 }
 :root[data-theme="dark"] .chart-container line {
   stroke: rgba(255, 255, 255, 0.06) !important;
+}
+:root[data-theme="dark"] .am-overlay {
+  background: linear-gradient(180deg,
+    rgba(0,0,0,0.35) 0%, rgba(0,0,0,0) 20%,
+    rgba(0,0,0,0) 50%, rgba(0,0,0,0.55) 100%);
+}
+:root[data-theme="dark"] .am-top-tabs {
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+:root[data-theme="dark"] .am-tab-pill { color: rgba(255, 255, 255, 0.6); }
+:root[data-theme="dark"] .am-tab-pill.active {
+  background: rgba(255, 255, 255, 0.9); color: #000;
+}
+:root[data-theme="dark"] .am-status {
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.8);
 }
 
 /* 主题切换按钮交互反馈 */
