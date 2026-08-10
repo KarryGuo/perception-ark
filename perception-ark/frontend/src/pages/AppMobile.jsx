@@ -566,12 +566,14 @@ function AppMobileUser() {
     setPoiSuggestions([]);
     setPoiLoading(false);
     if (poiSearchTimerRef.current) { clearTimeout(poiSearchTimerRef.current); poiSearchTimerRef.current = null; }
-    // 切换tab时立即停止TTS播报(如:快速识别正在播报时切到导航/SOS,应立即停止)
+    // 切换tab时立即停止所有播报(包括TTS和空间音效,出行模式播报不会持续)
     stopSpeak();
+    spatialAudio.stop();
+    spatialAudio.stopAlarm();
     setSubtitle('');
     const names = { recognize: '识别', navigate: '导航', sos: '紧急呼救' };
     showToast(`已切换到${names[tab]}`);
-  }, [showToast, stopSpeak]);
+  }, [showToast, stopSpeak, spatialAudio]);
 
   // ===== 点击说话(切换模式: 点击开始录入,再点击结束) =====
   const handleToggleSpeak = useCallback(() => {
@@ -592,8 +594,10 @@ function AppMobileUser() {
       return;
     }
     // 当前未录音 → 开始录入
-    // 先停止TTS播报,防止麦克风拾取TTS音频形成回声循环
+    // 先停止所有播报(TTS+空间音效),防止麦克风拾取TTS音频形成回声循环
     stopSpeak();
+    spatialAudio.stop();
+    spatialAudio.stopAlarm();
     isProcessingRef.current = false;
     isPressingRef.current = true;
     setIsRecording(true);
@@ -613,7 +617,7 @@ function AppMobileUser() {
       }
     }, 200);
     setSubtitle('正在聆听...再次点击结束');
-  }, [isRecording, asr, voiceWakeActive, showToast, stopSpeak]);
+  }, [isRecording, asr, voiceWakeActive, showToast, stopSpeak, spatialAudio]);
 
   // ===== 录音模式下ASR自动重启 =====
   // 浏览器Web Speech API在continuous模式下仍可能因no-speech超时自动停止
@@ -818,8 +822,10 @@ function AppMobileUser() {
   // ===== 一次性全场景识别(点击"识别"按钮) =====
   const handleOneShotRecognize = useCallback(async () => {
     if (busy) return;
-    // 停止之前正在进行的TTS播报(避免队列堆积,立即响应新操作)
+    // 停止之前正在进行的所有播报(TTS+空间音效,避免队列堆积,立即响应新操作)
     stopSpeak();
+    spatialAudio.stop();
+    spatialAudio.stopAlarm();
     setBusy(true);
     setOneShotAction('recognize');
     setSubtitle('正在识别画面中的所有物体...');
@@ -855,13 +861,15 @@ function AppMobileUser() {
       setBusy(false);
       setOneShotAction(null);
     }
-  }, [busy, captureImage, addMessage, speak, callWithRetry, stopSpeak]);
+  }, [busy, captureImage, addMessage, speak, callWithRetry, stopSpeak, spatialAudio]);
 
   // ===== 一次性OCR阅读(点击"阅读"按钮) =====
   const handleOneShotRead = useCallback(async () => {
     if (busy) return;
-    // 停止之前正在进行的TTS播报(避免队列堆积,立即响应新操作)
+    // 停止之前正在进行的所有播报(TTS+空间音效,避免队列堆积,立即响应新操作)
     stopSpeak();
+    spatialAudio.stop();
+    spatialAudio.stopAlarm();
     setBusy(true);
     setOneShotAction('read');
     setSubtitle('正在拍照并读取文字内容...');
@@ -896,7 +904,7 @@ function AppMobileUser() {
       setBusy(false);
       setOneShotAction(null);
     }
-  }, [busy, captureImage, addMessage, speak, callWithRetry, stopSpeak]);
+  }, [busy, captureImage, addMessage, speak, callWithRetry, stopSpeak, spatialAudio]);
 
   // ===== 出行导航启动(从识别页出行按钮触发) =====
   // 注意: startTravelNavigate 已移至 handleNavigate 之后定义(避免TDZ)
@@ -912,8 +920,10 @@ function AppMobileUser() {
   };
 
   const toggleMode = useCallback((mode) => {
-    // 切换任何模式前,先停止当前正在进行的TTS播报(如:快速识别长文本播报中切换到出行/红绿灯,应立即停止)
+    // 切换任何模式前,先停止当前正在进行的所有播报(TTS+空间音效+警报)
     stopSpeak();
+    spatialAudio.stop();
+    spatialAudio.stopAlarm();
 
     // 寻物模式特殊处理: 需要先说出/输入要找的物品
     if (mode === 'find') {
@@ -1010,7 +1020,7 @@ function AppMobileUser() {
         return mode;
       }
     });
-  }, [speak, showToast, addMessage, activeMode, handleOneShotRecognize, handleOneShotRead, stopSpeak]);
+  }, [speak, showToast, addMessage, activeMode, handleOneShotRecognize, handleOneShotRead, stopSpeak, spatialAudio]);
 
   // 寻物目标确认后开始寻找
   const startFindMode = useCallback((target) => {
@@ -1038,6 +1048,12 @@ function AppMobileUser() {
     let failCount = 0;
     const runOnce = async () => {
       if (running) return;
+      // TTS正在播报时跳过本次分析(避免堆积多条回复,等用户听完再分析下一帧)
+      // 紧急情况(红灯/1米内障碍)不受此限制,在下方逻辑中用urgent抢占
+      if (ttsSpeakingRef.current || (window.speechSynthesis && window.speechSynthesis.speaking)) {
+        running = false;
+        return;
+      }
       running = true;
       try {
         const img = await camera.capture();
@@ -1312,7 +1328,9 @@ function AppMobileUser() {
       }
     };
 
-    const interval = (activeMode === 'travel' || activeMode === 'traffic') ? 2500 : 5000;
+    // 出行模式5秒间隔(给用户移动时间,基于人物移动状态重新分析)
+    // 红绿灯模式仍需2.5秒快速检测
+    const interval = activeMode === 'traffic' ? 2500 : 5000;
     runOnce();
     modeIntervalRef.current = setInterval(runOnce, interval);
 
