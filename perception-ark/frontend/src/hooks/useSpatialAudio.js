@@ -185,6 +185,11 @@ export function useSpatialAudio() {
     if (!supported || !text) return;
     const { urgent = false, onEnd, rate } = options;
 
+    // 数字小数点转中文"点"(如"1.5米"→"1点5米"),否则TTS会读成"1 5米"导致视障者误解
+    const normalizedText = typeof text === 'string'
+      ? text.replace(/(\d+)\.(\d+)/g, '$1点$2')
+      : text;
+
     stoppedRef.current = false;
 
     try { window.speechSynthesis.resume(); } catch (e) {}
@@ -203,7 +208,7 @@ export function useSpatialAudio() {
       setPan('正前方');
     }
 
-    const sentences = text.match(/[^。！？!?.]+[。！？!?.]?/g) || [text];
+    const sentences = normalizedText.match(/[^。！？!?.]+[。！？!?.]?/g) || [normalizedText];
     const finalRate = rate || getSavedRate();
 
     sentences.forEach((sentence, idx) => {
