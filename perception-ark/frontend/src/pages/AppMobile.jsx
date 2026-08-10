@@ -1054,6 +1054,18 @@ function AppMobileUser() {
         running = false;
         return;
       }
+      // 出行模式节流: 距上次播报不足30秒且上次有障碍物信息时,跳过API调用(节省token)
+      // 环境在短时间内不会剧变,避免重复调用API消耗token
+      // 紧急情况(上次播报含"停下"/"红灯")不跳过,保持高频检测
+      if (activeMode === 'travel') {
+        const now = Date.now();
+        const sinceLast = now - lastTravelTimeRef.current;
+        const lastWasUrgent = /停下|红灯|紧急|1米/.test(lastTravelSpeakRef.current);
+        if (sinceLast < 30000 && !lastWasUrgent && lastTravelSpeakRef.current) {
+          running = false;
+          return;
+        }
+      }
       running = true;
       try {
         const img = await camera.capture();
@@ -1162,9 +1174,9 @@ function AppMobileUser() {
               speakText = suggestion || '前方畅通，请继续直行';
             }
 
-            // 去重: 与上次播报内容相同且15秒内,不重复播报(紧急情况除外)
+            // 去重: 与上次播报内容相同且30秒内,不重复播报(紧急情况除外)
             const now = Date.now();
-            const isDuplicate = speakText === lastTravelSpeakRef.current && (now - lastTravelTimeRef.current) < 15000;
+            const isDuplicate = speakText === lastTravelSpeakRef.current && (now - lastTravelTimeRef.current) < 30000;
             if (!isDuplicate || isUrgent) {
               lastTravelSpeakRef.current = speakText;
               lastTravelTimeRef.current = now;
