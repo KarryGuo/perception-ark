@@ -190,7 +190,8 @@ export function getStats() {
 // ============================================================
 // A01 场景感知 Agent
 // ============================================================
-export async function runSceneAgent(imageBase64, userQuery = '') {
+export async function runSceneAgent(imageBase64, userQuery = '', options = {}) {
+  const { silent = false } = options;
   emitAgentState('A01', true, '正在分析环境...');
   emitLog('A01', '场景感知 Agent 启动');
 
@@ -214,13 +215,17 @@ export async function runSceneAgent(imageBase64, userQuery = '') {
     }
 
     emitAgentState('A01', true, result);
-    emitSpeak('A01', result + memoryHint);
-    emitSubtitle(`👁️ ${result + memoryHint}`);
+    // silent模式: HTTP路由直接调用时,结果通过HTTP响应返回,前端自行处理显示和播报
+    // 不推送WebSocket事件(避免前端同时收到HTTP响应和WebSocket事件,导致重复显示/播报)
+    if (!silent) {
+      emitSpeak('A01', result + memoryHint);
+      emitSubtitle(`👁️ ${result + memoryHint}`);
+    }
     return result;
   } catch (err) {
     emitLog('A01', `场景感知失败: ${err.message}`, 'error');
     // 不emitSpeak(避免TTS音频被ASR拾取形成回声循环),只推送subtitle到前端显示
-    emitSubtitle(`⚠️ 场景分析失败: ${err.message}`);
+    if (!silent) emitSubtitle(`⚠️ 场景分析失败: ${err.message}`);
     return null;
   } finally {
     setTimeout(() => emitAgentState('A01', false), 1000);
@@ -950,7 +955,8 @@ export async function triggerDangerPreemption(imageBase64) {
 // ============================================================
 // A04 社交辅助 Agent
 // ============================================================
-export async function runSocialAgent(imageBase64, mode = 'ocr') {
+export async function runSocialAgent(imageBase64, mode = 'ocr', options = {}) {
+  const { silent = false } = options;
   emitAgentState('A04', true, mode === 'ocr' ? 'OCR识别中...' : '人脸识别中...');
   emitLog('A04', `社交辅助 Agent 启动 · 模式: ${mode}`);
 
@@ -1001,13 +1007,16 @@ export async function runSocialAgent(imageBase64, mode = 'ocr') {
 
     const speakText = result + memoryHint;
     emitAgentState('A04', true, speakText);
-    emitSpeak('A04', speakText);
-    emitSubtitle(mode === 'ocr' ? `📖 ${speakText}` : `👤 ${speakText}`);
+    // silent模式: HTTP路由直接调用时,结果通过HTTP响应返回,前端自行处理显示和播报
+    if (!silent) {
+      emitSpeak('A04', speakText);
+      emitSubtitle(mode === 'ocr' ? `📖 ${speakText}` : `👤 ${speakText}`);
+    }
     return speakText;
   } catch (err) {
     emitLog('A04', `社交辅助失败: ${err.message}`, 'error');
     // 不emitSpeak(避免回声循环)
-    emitSubtitle(`⚠️ 识别失败: ${err.message}`);
+    if (!silent) emitSubtitle(`⚠️ 识别失败: ${err.message}`);
     return null;
   } finally {
     setTimeout(() => emitAgentState('A04', false), 2000);
