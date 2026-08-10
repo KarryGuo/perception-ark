@@ -5,14 +5,15 @@ import { useState, useEffect, useCallback } from 'react';
  * 三态: 'system' 跟随系统 | 'light' 强制浅色 | 'dark' 强制暗色
  * 通过在 <html> 上设置 data-theme 属性实现手动覆盖
  * 持久化到 localStorage('ark-theme')
+ * 默认暗色,用户可自行切换
  */
 const STORAGE_KEY = 'ark-theme';
 
 function getInitialTheme() {
-  if (typeof window === 'undefined') return 'system';
+  if (typeof window === 'undefined') return 'dark';
   const saved = localStorage.getItem(STORAGE_KEY);
   if (saved === 'system' || saved === 'light' || saved === 'dark') return saved;
-  return 'system';
+  return 'dark';
 }
 
 function applyTheme(theme) {
@@ -36,12 +37,12 @@ export function useTheme() {
     }
   }, [theme]);
 
-  // 监听系统主题变化(仅在system模式时由CSS自动响应,此处无需额外处理)
+  // 循环顺序: dark(默认) → light → system → dark
   const cycleTheme = useCallback(() => {
     setTheme(prev => {
-      if (prev === 'system') return 'light';
-      if (prev === 'light') return 'dark';
-      return 'system';
+      if (prev === 'dark') return 'light';
+      if (prev === 'light') return 'system';
+      return 'dark';
     });
   }, []);
 

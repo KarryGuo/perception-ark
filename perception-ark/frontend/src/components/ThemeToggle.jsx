@@ -8,9 +8,9 @@ export default function ThemeToggle({ className = '', size = 'md' }) {
   const { theme, cycleTheme } = useTheme();
 
   const meta = {
-    system: { icon: '🌓', label: '跟随系统', title: '跟随系统主题 (点击切换为浅色)' },
-    light:  { icon: '☀️', label: '浅色',     title: '浅色主题 (点击切换为暗色)' },
-    dark:   { icon: '🌙', label: '暗色',     title: '暗色主题 (点击跟随系统)' },
+    system: { icon: '🌓', label: '跟随系统', title: '跟随系统主题 (点击切换为暗色)' },
+    light:  { icon: '☀️', label: '浅色',     title: '浅色主题 (点击切换为跟随系统)' },
+    dark:   { icon: '🌙', label: '暗色',     title: '暗色主题 (点击切换为浅色)' },
   }[theme];
 
   const sizeStyle = size === 'sm'
