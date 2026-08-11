@@ -1527,6 +1527,15 @@ input:focus-visible,
   justify-content: center;
   background: radial-gradient(ellipse at 50% 30%, rgba(0,255,163,0.08), transparent 60%), var(--void);
   padding: 20px;
+  position: relative;
+}
+
+/* 登录页右上角主题切换按钮 */
+.auth-theme-toggle {
+  position: absolute;
+  top: calc(env(safe-area-inset-top) + 16px);
+  right: 20px;
+  z-index: 50;
 }
 
 .auth-card {
