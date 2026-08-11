@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useAuth } from './hooks/useAuth.jsx';
 import { useTheme } from './hooks/useTheme.js';
 import { api } from './services/api.js';
+import { initNativeBridge, hideSplash, isNative } from './services/nativeBridge.js';
 import Glasses from './pages/Glasses.jsx';
 import Family from './pages/Family.jsx';
 import Login from './pages/Login.jsx';
@@ -121,11 +122,48 @@ export default function App() {
   const [route, setRoute] = useState(window.location.hash || '#/');
   // 全局初始化主题(确保所有页面,包括登录/注册/说明页,都应用正确的data-theme)
   useTheme();
+  const bridgeReady = useRef(false);
+  const pingTimerRef = useRef(null);
 
   useEffect(() => {
     const onHash = () => setRoute(window.location.hash || '#/');
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
+  }, []);
+
+  // 初始化原生桥接 + 隐藏启动屏 + Render保活ping(仅执行一次)
+  useEffect(() => {
+    if (bridgeReady.current) return;
+    bridgeReady.current = true;
+
+    (async () => {
+      // 1. 初始化原生桥接(注册tel:/外链拦截)
+      try { await initNativeBridge(); } catch (e) { console.warn('[App] 原生桥接初始化失败:', e); }
+
+      // 2. 隐藏启动屏(React首帧渲染完成后)
+      // 延迟300ms等首帧DOM完成,避免白屏闪烁
+      setTimeout(() => { hideSplash().catch(() => {}); }, 300);
+
+      // 3. Render保活ping(每5分钟ping一次 /api/health,防止免费版后端休眠)
+      // 仅在生产环境(有 VITE_API_BASE)或原生APP中执行,避免开发环境无意义请求
+      const apiBase = import.meta.env.VITE_API_BASE;
+      if (apiBase) {
+        const ping = () => {
+          fetch(`${apiBase}/api/health`).catch(() => {});
+        };
+        // 启动后立即ping一次(唤醒冷启动的后端)
+        setTimeout(ping, 2000);
+        // 之后每5分钟ping一次
+        pingTimerRef.current = setInterval(ping, 5 * 60 * 1000);
+      }
+    })();
+
+    return () => {
+      if (pingTimerRef.current) {
+        clearInterval(pingTimerRef.current);
+        pingTimerRef.current = null;
+      }
+    };
   }, []);
 
   // 公开路由: 登录/注册/说明页/评委体验入口

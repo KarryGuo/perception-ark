@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { loadAmapSDK, AMAP_JS_KEY } from '../services/amap.js';
+import { openExternalUrl } from '../services/nativeBridge.js';
 
 /**
  * 家属端实时位置小地图
@@ -139,7 +140,7 @@ export default function FamilyMap({ location, activity, online }) {
         {location?.lat && location?.lng && (
           <a
             href={`https://uri.amap.com/marker?position=${location.lng},${location.lat}&name=被守护人位置`}
-            target="_blank" rel="noopener noreferrer"
+            onClick={(e) => { e.preventDefault(); openExternalUrl(`https://uri.amap.com/marker?position=${location.lng},${location.lat}&name=被守护人位置`); }}
             className="fam-map-fallback-link"
           >🗺️ 在高德地图中查看</a>
         )}

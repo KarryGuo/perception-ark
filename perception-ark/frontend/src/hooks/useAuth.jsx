@@ -1,19 +1,22 @@
 import { useState, useEffect, useCallback, createContext, useContext } from 'react';
 import { api } from '../services/api.js';
+import { secureStorage } from '../services/nativeBridge.js';
 
 const AuthContext = createContext(null);
 
 /**
  * 认证 Context Hook
  * 管理登录状态、token持久化、用户信息
+ * Token存储: 原生APP用 @capacitor/preferences(安全),Web环境用 localStorage
  */
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // 初始化: 从localStorage恢复登录状态
+  // 初始化: 从安全存储恢复登录状态
   useEffect(() => {
-    const token = localStorage.getItem('ark_token');
+    // 用同步缓存快速判断(避免每次刷新都闪现登录页)
+    const token = secureStorage.getSync('ark_token');
     if (!token) {
       setLoading(false);
       return;
@@ -25,7 +28,7 @@ export function AuthProvider({ children }) {
           setUser(res.user);
         } else {
           // token无效或账号不存在(后端重启数据丢失),清除token跳转登录
-          localStorage.removeItem('ark_token');
+          secureStorage.removeSync('ark_token');
           // 避免在登录页本身跳转造成循环
           if (window.location.hash !== '#/login' && window.location.hash !== '#/demo') {
             window.location.hash = '#/login';
@@ -34,7 +37,7 @@ export function AuthProvider({ children }) {
       })
       .catch(() => {
         // 网络错误或401/404: 清除token
-        localStorage.removeItem('ark_token');
+        secureStorage.removeSync('ark_token');
         if (window.location.hash !== '#/login' && window.location.hash !== '#/demo') {
           window.location.hash = '#/login';
         }
@@ -45,7 +48,7 @@ export function AuthProvider({ children }) {
   const login = useCallback(async (username, password) => {
     const res = await api.login(username, password);
     if (res.success) {
-      localStorage.setItem('ark_token', res.token);
+      secureStorage.setSync('ark_token', res.token);
       setUser(res.user);
       return res.user;
     }
@@ -56,7 +59,7 @@ export function AuthProvider({ children }) {
   const loginBySms = useCallback(async (phone, code, role) => {
     const res = await api.loginBySms(phone, code, role);
     if (res.success) {
-      localStorage.setItem('ark_token', res.token);
+      secureStorage.setSync('ark_token', res.token);
       setUser(res.user);
       return res.user;
     }
@@ -66,7 +69,7 @@ export function AuthProvider({ children }) {
   const register = useCallback(async (username, password, role, phone, securityQuestion, securityAnswer) => {
     const res = await api.register(username, password, role, phone, securityQuestion, securityAnswer);
     if (res.success) {
-      localStorage.setItem('ark_token', res.token);
+      secureStorage.setSync('ark_token', res.token);
       setUser(res.user);
       return res.user;
     }
@@ -93,7 +96,7 @@ export function AuthProvider({ children }) {
   }, []);
 
   const logout = useCallback(() => {
-    localStorage.removeItem('ark_token');
+    secureStorage.removeSync('ark_token');
     setUser(null);
     window.location.hash = '#/login';
   }, []);

@@ -2,13 +2,16 @@
  * 后端API客户端
  * - 开发环境: 走Vite代理 /api
  * - 生产环境: 通过 VITE_API_BASE 指向后端域名(如 https://perception-ark.onrender.com)
+ * - Token存储: 优先使用 @capacitor/preferences(原生APP安全存储),Web环境降级localStorage
  */
+import { secureStorage } from './nativeBridge.js';
+
 const API_BASE = import.meta.env.VITE_API_BASE || '';
 const BASE = `${API_BASE}/api`;
 
 async function request(url, options = {}) {
-  // 自动携带认证Token
-  const token = localStorage.getItem('ark_token');
+  // 自动携带认证Token(同步读localStorage缓存,原生环境由secureStorage.setSync双写保证)
+  const token = secureStorage.getSync('ark_token');
   const headers = { ...options.headers };
   if (token) headers['Authorization'] = `Bearer ${token}`;
   const res = await fetch(`${BASE}${url}`, { ...options, headers });
