@@ -7,6 +7,8 @@ import { useAuth } from '../hooks/useAuth.jsx';
 import { useSpatialAudio } from '../hooks/useSpatialAudio.js';
 import { useNavigation } from '../hooks/useNavigation.js';
 import { api } from '../services/api.js';
+import { dialPhone } from '../services/nativeBridge.js';
+import { cacheRoute, cacheContact, getCachedContacts } from '../services/offlineCache.js';
 import MapView from '../components/MapView.jsx';
 import Family from './Family.jsx';
 
@@ -436,6 +438,13 @@ function AppMobileUser() {
             if (coords.length > 1) {
               setMapRoute(coords);
               addMessage('assistant', `路线已规划：${event.distance}米，约${event.duration}分钟。`);
+              // 离线缓存路线(网络中断后可回看)
+              cacheRoute({
+                destination: event.destination || '',
+                distance: event.distance,
+                duration: event.duration,
+                coordsCount: coords.length,
+              });
             }
           } catch (e) {}
         }
@@ -445,8 +454,8 @@ function AppMobileUser() {
         setSubtitle('🚨 正在拨打120...');
         if (navigator.vibrate) navigator.vibrate([1000, 200, 1000, 200, 1000, 200, 2000]);
         setTimeout(() => {
-          try { window.location.href = 'tel:120'; }
-          catch (e) { console.warn('[SOS] tel:120 跳转失败:', e); }
+          // 用原生桥接拨号(Android WebView 自动转发 tel: Intent 给系统拨号应用)
+          dialPhone('120').catch(e => console.warn('[SOS] 拨号失败:', e));
         }, 2000);
         break;
       case 'safety_result':
@@ -528,14 +537,27 @@ function AppMobileUser() {
   useEffect(() => {
     // 视障端SOS联系人: 从family_bindings表读取用户在设置中绑定的active家属
     // 确保显示的是视障用户自己绑定的家属,而非家属端users表数据
-    api.getFamilyContacts().then(r => setContacts(r.contacts || [])).catch(() => {});
+    // 先用离线缓存快速显示,再从后端刷新
+    const cached = getCachedContacts();
+    if (cached.length > 0) setContacts(cached);
+
+    api.getFamilyContacts().then(r => {
+      const list = r.contacts || [];
+      setContacts(list);
+      // 更新离线缓存(网络恢复后同步最新)
+      list.forEach(c => cacheContact(c));
+    }).catch(() => {});
     api.familyUsers().then(r => setFavorites(r.users || [])).catch(() => {});
   }, []);
 
   // 切换到SOS页时刷新紧急联系人(用户可能在设置页刚绑定了新家属)
   useEffect(() => {
     if (activeTab === 'sos') {
-      api.getFamilyContacts().then(r => setContacts(r.contacts || [])).catch(() => {});
+      api.getFamilyContacts().then(r => {
+        const list = r.contacts || [];
+        setContacts(list);
+        list.forEach(c => cacheContact(c));
+      }).catch(() => {});
     }
   }, [activeTab]);
 
