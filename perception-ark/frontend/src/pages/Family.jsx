@@ -3,6 +3,7 @@ import { api } from '../services/api.js';
 import { useAuth } from '../hooks/useAuth.jsx';
 import { useWebSocket } from '../hooks/useWebSocket.js';
 import { useSpeechSynthesis, useSpeechRecognition } from '../hooks/useSpeech.js';
+import { openExternalUrl } from '../services/nativeBridge.js';
 import FamilyMap from '../components/FamilyMap.jsx';
 import ThemeToggle from '../components/ThemeToggle.jsx';
 
@@ -1012,7 +1013,7 @@ function GuardianCard({ user }) {
           {user.location?.lat && (
             <a
               href={`https://uri.amap.com/marker?position=${user.location?.lng},${user.location?.lat}&name=被守护人位置`}
-              target="_blank" rel="noopener noreferrer"
+              onClick={(e) => { e.preventDefault(); openExternalUrl(`https://uri.amap.com/marker?position=${user.location?.lng},${user.location?.lat}&name=被守护人位置`); }}
               className="am-fam-guardian-map-link"
             >🗺️ 地图查看</a>
           )}
