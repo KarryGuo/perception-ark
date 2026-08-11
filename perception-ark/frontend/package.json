@@ -7,15 +7,22 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "cap:sync": "vite build && cap sync android",
+    "prebuild": "node scripts/prebuild.cjs",
+    "cap:sync": "npm run prebuild && vite build && cap sync android",
     "cap:open": "cap open android",
     "cap:run": "cap run android",
-    "cap:copy": "cap copy android"
+    "cap:copy": "cap copy android",
+    "android:build": "npm run prebuild && vite build && cap sync android && cap open android"
   },
   "dependencies": {
     "@capacitor/android": "6.2.1",
+    "@capacitor/app": "^6.0.3",
+    "@capacitor/browser": "^6.0.6",
+    "@capacitor/camera": "^6.1.3",
     "@capacitor/cli": "6.2.1",
     "@capacitor/core": "6.2.1",
+    "@capacitor/preferences": "^6.0.4",
+    "@capacitor/splash-screen": "^6.0.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
