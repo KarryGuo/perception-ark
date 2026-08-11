@@ -26,6 +26,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// 信任反向代理(Render/Nginx等),使 req.ip 和 X-Forwarded-For 取得真实客户端IP
+// 用于登录日志记录真实客户端IP地址
+app.set('trust proxy', true);
+
 // 中间件
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));

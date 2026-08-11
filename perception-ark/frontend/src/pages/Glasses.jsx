@@ -7,6 +7,7 @@ import ThemeToggle from '../components/ThemeToggle.jsx';
 const TABS = [
   { key: 'devices', label: '设备监测', icon: '📡' },
   { key: 'accounts', label: '账号管理', icon: '👥' },
+  { key: 'logins', label: '登录日志', icon: '🌐' },
   { key: 'logs', label: '操作日志', icon: '📋' },
 ];
 
@@ -16,6 +17,7 @@ export default function Glasses() {
   const [devices, setDevices] = useState(null);
   const [accounts, setAccounts] = useState([]);
   const [logs, setLogs] = useState([]);
+  const [loginLogs, setLoginLogs] = useState([]);
   const [analytics, setAnalytics] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -24,15 +26,17 @@ export default function Glasses() {
 
   const loadData = useCallback(async () => {
     try {
-      const [dev, acc, logData, ana] = await Promise.all([
+      const [dev, acc, logData, ana, loginLogData] = await Promise.all([
         api.adminDevices().catch(() => null),
         api.adminAccounts().catch(() => ({ accounts: [] })),
         api.adminLogs(50).catch(() => ({ logs: [] })),
         api.adminAnalytics().catch(() => null),
+        api.adminLoginLogs(100).catch(() => ({ logs: [] })),
       ]);
       if (dev) setDevices(dev);
       setAccounts(acc?.accounts || []);
       setLogs(logData?.logs || []);
+      setLoginLogs(loginLogData?.logs || []);
       if (ana) setAnalytics(ana);
       setError(null);
     } catch (err) {
@@ -204,6 +208,9 @@ export default function Glasses() {
         )}
         {activeTab === 'accounts' && (
           <AccountsTab accounts={accounts} currentUserId={user?.id} setBanModal={setBanModal} />
+        )}
+        {activeTab === 'logins' && (
+          <LoginLogsTab loginLogs={loginLogs} />
         )}
         {activeTab === 'logs' && (
           <LogsTab logs={logs} />
@@ -582,6 +589,131 @@ function AccountsTab({ accounts, currentUserId, setBanModal }) {
         <div style={{ fontSize: '.82rem', color: 'var(--ink-muted)' }}>暂无注册账号</div>
       )}
     </Panel>
+  );
+}
+
+function LoginLogsTab({ loginLogs }) {
+  // 统计今日登录次数和独立IP数(用于顶部摘要)
+  const today = new Date().toISOString().slice(0, 10);
+  const todayLogs = loginLogs.filter(l => (l.created_at || '').startsWith(today));
+  const uniqueIps = new Set(loginLogs.filter(l => l.ip).map(l => l.ip)).size;
+  const failedCount = loginLogs.filter(l => l.success === 0 || l.success === false).length;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {/* 顶部摘要卡片 */}
+      <div style={{
+        display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12,
+      }}>
+        <div style={{
+          background: 'var(--glass)', border: '1px solid var(--gb)', borderRadius: 12, padding: 14,
+          backdropFilter: 'blur(20px)'
+        }}>
+          <div style={{ fontSize: '.72rem', color: 'var(--ink-muted)', marginBottom: 4 }}>📋 日志总数</div>
+          <div style={{ fontSize: '1.4rem', fontWeight: 700, color: 'var(--bio-cyan)', fontFamily: 'Space Grotesk, monospace' }}>
+            {loginLogs.length}
+          </div>
+        </div>
+        <div style={{
+          background: 'var(--glass)', border: '1px solid var(--gb)', borderRadius: 12, padding: 14,
+          backdropFilter: 'blur(20px)'
+        }}>
+          <div style={{ fontSize: '.72rem', color: 'var(--ink-muted)', marginBottom: 4 }}>📅 今日登录</div>
+          <div style={{ fontSize: '1.4rem', fontWeight: 700, color: 'var(--bio-emerald)', fontFamily: 'Space Grotesk, monospace' }}>
+            {todayLogs.length}
+          </div>
+        </div>
+        <div style={{
+          background: 'var(--glass)', border: '1px solid var(--gb)', borderRadius: 12, padding: 14,
+          backdropFilter: 'blur(20px)'
+        }}>
+          <div style={{ fontSize: '.72rem', color: 'var(--ink-muted)', marginBottom: 4 }}>🌐 独立IP</div>
+          <div style={{ fontSize: '1.4rem', fontWeight: 700, color: 'var(--bio-violet)', fontFamily: 'Space Grotesk, monospace' }}>
+            {uniqueIps}
+          </div>
+        </div>
+        <div style={{
+          background: 'var(--glass)', border: '1px solid var(--gb)', borderRadius: 12, padding: 14,
+          backdropFilter: 'blur(20px)'
+        }}>
+          <div style={{ fontSize: '.72rem', color: 'var(--ink-muted)', marginBottom: 4 }}>⚠️ 失败次数</div>
+          <div style={{ fontSize: '1.4rem', fontWeight: 700, color: 'var(--bio-magenta)', fontFamily: 'Space Grotesk, monospace' }}>
+            {failedCount}
+          </div>
+        </div>
+      </div>
+
+      <Panel title="🌐 设备登录日志 (IP地址 / 登录地区 / 设备类型)" color="var(--bio-cyan)">
+        {loginLogs.length > 0 ? (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '.82rem' }}>
+              <thead>
+                <tr style={{ borderBottom: '2px solid var(--gb)' }}>
+                  <th style={{ padding: '10px 8px', textAlign: 'left', color: 'var(--ink-muted)', fontSize: '.72rem' }}>账号</th>
+                  <th style={{ padding: '10px 8px', textAlign: 'left', color: 'var(--ink-muted)', fontSize: '.72rem' }}>角色</th>
+                  <th style={{ padding: '10px 8px', textAlign: 'left', color: 'var(--ink-muted)', fontSize: '.72rem' }}>IP地址</th>
+                  <th style={{ padding: '10px 8px', textAlign: 'left', color: 'var(--ink-muted)', fontSize: '.72rem' }}>登录地区</th>
+                  <th style={{ padding: '10px 8px', textAlign: 'left', color: 'var(--ink-muted)', fontSize: '.72rem' }}>设备</th>
+                  <th style={{ padding: '10px 8px', textAlign: 'left', color: 'var(--ink-muted)', fontSize: '.72rem' }}>方式</th>
+                  <th style={{ padding: '10px 8px', textAlign: 'left', color: 'var(--ink-muted)', fontSize: '.72rem' }}>状态</th>
+                  <th style={{ padding: '10px 8px', textAlign: 'left', color: 'var(--ink-muted)', fontSize: '.72rem' }}>时间</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loginLogs.map((l, i) => (
+                  <tr key={i} style={{ borderBottom: '1px solid var(--gb)' }}>
+                    <td style={{ padding: '10px 8px', color: 'var(--ink)', fontWeight: 600 }}>
+                      {l.username || `#${l.account_id}`}
+                    </td>
+                    <td style={{ padding: '10px 8px' }}>
+                      <span style={{
+                        fontSize: '.68rem', padding: '2px 8px', borderRadius: 4,
+                        background: l.role === 'admin' ? 'rgba(255,46,126,0.1)' : l.role === 'family' ? 'rgba(123,97,255,0.1)' : 'rgba(0,255,163,0.1)',
+                        color: l.role === 'admin' ? 'var(--bio-magenta)' : l.role === 'family' ? 'var(--bio-violet)' : 'var(--bio-emerald)',
+                      }}>
+                        {l.role === 'admin' ? '管理员' : l.role === 'family' ? '家属' : l.role === 'user' ? '视障用户' : '-'}
+                      </span>
+                    </td>
+                    <td style={{ padding: '10px 8px', color: 'var(--ink-soft)', fontFamily: 'Space Grotesk, monospace', fontSize: '.78rem' }}>
+                      {l.ip || '-'}
+                    </td>
+                    <td style={{ padding: '10px 8px', color: 'var(--ink-soft)' }}>
+                      {l.location || '未知地区'}
+                    </td>
+                    <td style={{ padding: '10px 8px', color: 'var(--ink-soft)' }}>
+                      {l.device || '-'}
+                    </td>
+                    <td style={{ padding: '10px 8px' }}>
+                      <span style={{
+                        fontSize: '.68rem', padding: '2px 8px', borderRadius: 4,
+                        background: l.login_method === 'sms' ? 'rgba(0,255,163,0.08)' : 'rgba(123,97,255,0.08)',
+                        color: l.login_method === 'sms' ? 'var(--bio-emerald)' : 'var(--bio-violet)',
+                      }}>
+                        {l.login_method === 'sms' ? '短信验证码' : l.login_method === 'password' ? '账号密码' : l.login_method || '-'}
+                      </span>
+                    </td>
+                    <td style={{ padding: '10px 8px' }}>
+                      <span style={{
+                        fontSize: '.68rem', padding: '2px 8px', borderRadius: 4,
+                        background: l.success === 1 || l.success === true ? 'rgba(0,255,163,0.1)' : 'rgba(255,46,126,0.1)',
+                        color: l.success === 1 || l.success === true ? 'var(--bio-emerald)' : 'var(--bio-magenta)',
+                      }}>
+                        {l.success === 1 || l.success === true ? '✓ 成功' : '✗ 失败'}
+                      </span>
+                    </td>
+                    <td style={{ padding: '10px 8px', color: 'var(--ink-muted)', fontFamily: 'Space Grotesk, monospace', fontSize: '.72rem', whiteSpace: 'nowrap' }}>
+                      {l.created_at ? new Date(l.created_at).toLocaleString('zh-CN', { hour12: false }) : '-'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div style={{ fontSize: '.82rem', color: 'var(--ink-muted)' }}>暂无登录日志记录</div>
+        )}
+      </Panel>
+    </div>
   );
 }
 

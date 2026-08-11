@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getAllAccounts, updateAccountStatus, addAdminLog, getAdminLogs, getMemoryStats, getSosEvents, getLast7DaysStats, getSosDistribution, getAccountGrowth } from '../services/memory-store.js';
+import { getAllAccounts, updateAccountStatus, addAdminLog, getAdminLogs, getMemoryStats, getSosEvents, getLast7DaysStats, getSosDistribution, getAccountGrowth, getLoginLogs } from '../services/memory-store.js';
 import { getContext, getStats } from '../agents/orchestrator.js';
 import { authRequired } from '../services/auth.js';
 import { log } from '../utils/logger.js';
@@ -215,6 +215,21 @@ router.get('/analytics', async (req, res) => {
     });
   } catch (err) {
     log('ADMIN', `数据分析接口失败: ${err.message}`, 'error');
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// 登录日志查询(设备登录IP/地区/设备类型)
+// GET /api/admin/login-logs?limit=100&account_id=123
+// 支持可选 account_id 过滤指定账号的登录记录
+router.get('/login-logs', async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit) || 100, 500);
+    const accountId = req.query.account_id ? parseInt(req.query.account_id) : null;
+    const logs = await getLoginLogs(limit, accountId);
+    res.json({ success: true, logs });
+  } catch (err) {
+    log('ADMIN', `查询登录日志失败: ${err.message}`, 'error');
     res.status(500).json({ success: false, error: err.message });
   }
 });

@@ -1,11 +1,66 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
-import { createAccount, getAccountByUsername, getAccountById, getAccountByPhone, updateAccountProfile, deleteAccount, getSecurityQuestion, verifySecurityAnswer, resetPassword, updateSecurity, addFamilyBinding, getFamilyBindings, removeFamilyBinding, getActiveFamilyBindingsAsContacts, confirmFamilyBinding, rejectFamilyBinding, getPendingConfirmViBindings } from '../services/memory-store.js';
+import axios from 'axios';
+import { createAccount, getAccountByUsername, getAccountById, getAccountByPhone, updateAccountProfile, deleteAccount, getSecurityQuestion, verifySecurityAnswer, resetPassword, updateSecurity, addFamilyBinding, getFamilyBindings, removeFamilyBinding, getActiveFamilyBindingsAsContacts, confirmFamilyBinding, rejectFamilyBinding, getPendingConfirmViBindings, addLoginLog, updateAccountLastLogin } from '../services/memory-store.js';
 import { generateToken, authRequired } from '../services/auth.js';
 import { sendFamilyInviteSms } from '../services/sms.js';
 import { log } from '../utils/logger.js';
 
 const router = Router();
+
+// ===== 登录日志辅助: 获取客户端IP / 解析地理位置 / 解析设备类型 =====
+
+/**
+ * 获取客户端真实IP(兼容反向代理)
+ * 优先取 X-Forwarded-For 第一个值,其次 X-Real-IP,最后回退到 req.ip
+ */
+function getClientIp(req) {
+  const xff = req.headers['x-forwarded-for'];
+  if (xff) {
+    const ip = String(xff).split(',')[0].trim();
+    if (ip) return ip;
+  }
+  const xRealIp = req.headers['x-real-ip'];
+  if (xRealIp) return String(xRealIp).trim();
+  // 本地开发环境可能为 ::1 或 127.0.0.1
+  return req.ip || req.connection?.remoteAddress || null;
+}
+
+/**
+ * 通过 ip-api.com 查询IP地理位置(免费,无需key,中文返回)
+ * 本地/内网IP直接返回 "本地网络"
+ * 查询失败时返回 "未知地区",不影响登录流程
+ */
+async function ipToLocation(ip) {
+  if (!ip) return '未知地区';
+  // 本地/内网IP判定
+  const localPatterns = ['127.', '192.168.', '10.', '::1', 'localhost'];
+  if (localPatterns.some(p => ip.startsWith(p))) return '本地网络';
+  try {
+    const url = `http://ip-api.com/json/${ip}?lang=zh-CN&fields=status,country,regionName,city,isp`;
+    const resp = await axios.get(url, { timeout: 3000 });
+    const data = resp.data;
+    if (!data || data.status !== 'success') return '未知地区';
+    const parts = [data.country, data.regionName, data.city].filter(Boolean);
+    return parts.length ? parts.join(' ') : '未知地区';
+  } catch (e) {
+    return '未知地区';
+  }
+}
+
+/**
+ * 从 User-Agent 解析设备类型(简化版,识别 iOS/Android/Windows/Mac/Linux)
+ */
+function parseDevice(ua) {
+  if (!ua) return '未知设备';
+  if (/iPhone/i.test(ua)) return 'iPhone';
+  if (/iPad/i.test(ua)) return 'iPad';
+  if (/Android/i.test(ua)) return 'Android设备';
+  if (/Windows/i.test(ua)) return 'Windows设备';
+  if (/Macintosh|Mac OS/i.test(ua)) return 'Mac设备';
+  if (/Linux/i.test(ua)) return 'Linux设备';
+  return '其他设备';
+}
 
 // ===== 手机验证码存储(内存Map,5分钟过期) =====
 // key: 手机号, value: { code, expireAt, attempts }
@@ -93,13 +148,29 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ success: false, error: '用户名和密码不能为空' });
     }
 
+    // 预解析客户端信息(无论登录成功失败都用于日志记录)
+    const clientIp = getClientIp(req);
+    const userAgent = req.headers['user-agent'] || '';
+    const device = parseDevice(userAgent);
+
     const account = await getAccountByUsername(username);
     if (!account) {
+      // 记录失败日志(账号不存在)
+      await addLoginLog({
+        account_id: 0, username, ip: clientIp, device,
+        user_agent: userAgent, login_method: 'password', success: false
+      });
       return res.status(401).json({ success: false, error: '用户名或密码错误' });
     }
 
     const matched = await bcrypt.compare(password, account.password_hash);
     if (!matched) {
+      // 记录失败日志(密码错误)
+      await addLoginLog({
+        account_id: account.id, username, role: account.role,
+        ip: clientIp, device, user_agent: userAgent,
+        login_method: 'password', success: false
+      });
       return res.status(401).json({ success: false, error: '用户名或密码错误' });
     }
 
@@ -110,6 +181,21 @@ router.post('/login', async (req, res) => {
 
     const token = generateToken(account);
     log('AUTH', `用户登录: ${username}`);
+
+    // 异步记录登录日志 + 更新最后登录信息(不阻塞响应)
+    (async () => {
+      try {
+        const location = await ipToLocation(clientIp);
+        await addLoginLog({
+          account_id: account.id, username, role: account.role,
+          ip: clientIp, location, device, user_agent: userAgent,
+          login_method: 'password', success: true
+        });
+        await updateAccountLastLogin(account.id, clientIp);
+      } catch (e) {
+        log('AUTH', `记录登录日志失败(不影响登录): ${e.message}`, 'warn');
+      }
+    })();
 
     res.json({
       success: true,
@@ -239,6 +325,24 @@ router.post('/login-sms', async (req, res) => {
 
     const token = generateToken(account);
     log('AUTH', `用户手机验证码登录: ${account.username} (${phoneTrim})`);
+
+    // 异步记录登录日志 + 更新最后登录信息(不阻塞响应)
+    const clientIp = getClientIp(req);
+    const userAgent = req.headers['user-agent'] || '';
+    const device = parseDevice(userAgent);
+    (async () => {
+      try {
+        const location = await ipToLocation(clientIp);
+        await addLoginLog({
+          account_id: account.id, username: account.username, role: account.role,
+          ip: clientIp, location, device, user_agent: userAgent,
+          login_method: 'sms', success: true
+        });
+        await updateAccountLastLogin(account.id, clientIp);
+      } catch (e) {
+        log('AUTH', `记录验证码登录日志失败(不影响登录): ${e.message}`, 'warn');
+      }
+    })();
 
     res.json({
       success: true,

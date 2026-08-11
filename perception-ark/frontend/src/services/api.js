@@ -305,4 +305,7 @@ export const api = {
   adminDevices: () => request('/admin/devices'),
   // 数据分析图表聚合(最近7天趋势/SOS分布/账号增长/Agent状态)
   adminAnalytics: () => request('/admin/analytics'),
+  // 登录日志(设备登录IP/地区/设备类型,用于账号安全管理)
+  adminLoginLogs: (limit = 100, accountId = null) =>
+    request(`/admin/login-logs?limit=${limit}${accountId ? `&account_id=${accountId}` : ''}`),
 };

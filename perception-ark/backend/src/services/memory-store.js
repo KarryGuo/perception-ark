@@ -120,7 +120,9 @@ export async function initMemoryStore() {
       phone TEXT,
       status TEXT DEFAULT 'active',
       security_question TEXT,
-      security_answer_hash TEXT
+      security_answer_hash TEXT,
+      last_login TEXT,
+      last_login_ip TEXT
     );
 
     CREATE TABLE IF NOT EXISTS admin_logs (
@@ -145,6 +147,20 @@ export async function initMemoryStore() {
       invited_at TEXT,
       bound_at TEXT,
       UNIQUE(user_account_id, family_phone)
+    );
+
+    CREATE TABLE IF NOT EXISTS login_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      account_id INTEGER NOT NULL,
+      username TEXT NOT NULL,
+      role TEXT,
+      ip TEXT,
+      location TEXT,
+      device TEXT,
+      user_agent TEXT,
+      login_method TEXT,
+      success INTEGER DEFAULT 1,
+      created_at TEXT
     );
   `);
 
@@ -199,6 +215,14 @@ export async function initMemoryStore() {
     if (!cols.includes('security_answer_hash')) {
       await db.execute("ALTER TABLE accounts ADD COLUMN security_answer_hash TEXT");
       log('A05', 'accounts 表已补列 security_answer_hash');
+    }
+    if (!cols.includes('last_login')) {
+      await db.execute("ALTER TABLE accounts ADD COLUMN last_login TEXT");
+      log('A05', 'accounts 表已补列 last_login');
+    }
+    if (!cols.includes('last_login_ip')) {
+      await db.execute("ALTER TABLE accounts ADD COLUMN last_login_ip TEXT");
+      log('A05', 'accounts 表已补列 last_login_ip');
     }
   } catch (e) {
     log('A05', `accounts 表补列检查失败: ${e.message}`, 'warn');
@@ -1016,6 +1040,73 @@ export async function getAdminLogs(limit = 50) {
     args: [limit],
   });
   return rs.rows;
+}
+
+// ===== 登录日志 =====
+/**
+ * 记录一次登录日志
+ * @param {{account_id: number, username: string, role?: string, ip?: string, location?: string, device?: string, user_agent?: string, login_method?: string, success?: boolean}} data
+ */
+export async function addLoginLog({ account_id, username, role, ip, location, device, user_agent, login_method, success = true }) {
+  if (!db) return null;
+  try {
+    const result = await db.execute({
+      sql: `INSERT INTO login_logs (account_id, username, role, ip, location, device, user_agent, login_method, success, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [
+        account_id, username, role || null, ip || null, location || null,
+        device || null, user_agent || null, login_method || null,
+        success ? 1 : 0, new Date().toISOString()
+      ],
+    });
+    return toNumberId(result.lastInsertRowid);
+  } catch (err) {
+    log('A05', `记录登录日志失败: ${err.message}`, 'warn');
+    return null;
+  }
+}
+
+/**
+ * 查询登录日志(管理端使用)
+ * @param {number} limit 返回条数
+ * @param {number} accountId 可选,按账号过滤
+ */
+export async function getLoginLogs(limit = 100, accountId = null) {
+  if (!db) return [];
+  try {
+    if (accountId) {
+      const rs = await db.execute({
+        sql: 'SELECT * FROM login_logs WHERE account_id = ? ORDER BY created_at DESC LIMIT ?',
+        args: [accountId, limit],
+      });
+      return rs.rows;
+    }
+    const rs = await db.execute({
+      sql: 'SELECT * FROM login_logs ORDER BY created_at DESC LIMIT ?',
+      args: [limit],
+    });
+    return rs.rows;
+  } catch (err) {
+    log('A05', `查询登录日志失败: ${err.message}`, 'warn');
+    return [];
+  }
+}
+
+/**
+ * 更新账号最后登录时间和IP
+ */
+export async function updateAccountLastLogin(accountId, ip) {
+  if (!db) return false;
+  try {
+    await db.execute({
+      sql: 'UPDATE accounts SET last_login = ?, last_login_ip = ? WHERE id = ?',
+      args: [new Date().toISOString(), ip || null, accountId],
+    });
+    return true;
+  } catch (err) {
+    log('A05', `更新最后登录信息失败: ${err.message}`, 'warn');
+    return false;
+  }
 }
 
 // ===== 路线记忆 =====
