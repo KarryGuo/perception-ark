@@ -201,11 +201,6 @@ export async function initMemoryStore() {
       await db.execute("ALTER TABLE family_bindings ADD COLUMN initiator TEXT DEFAULT 'user'");
       log('A05', 'family_bindings 表已补列 initiator');
     }
-    // 补列 alias: 家属对被守护人的自定义称呼(邀请绑定场景,与 users.alias 对应)
-    if (!fbCols.includes('alias')) {
-      await db.execute("ALTER TABLE family_bindings ADD COLUMN alias TEXT");
-      log('A05', 'family_bindings 表已补列 alias');
-    }
   } catch (e) {
     log('A05', `family_bindings 表补列检查失败: ${e.message}`, 'warn');
   }
@@ -244,6 +239,11 @@ export async function initMemoryStore() {
     if (!cols.includes('last_login_ip')) {
       await db.execute("ALTER TABLE accounts ADD COLUMN last_login_ip TEXT");
       log('A05', 'accounts 表已补列 last_login_ip');
+    }
+    // 用户名最后修改时间: 用于限制半年修改一次
+    if (!cols.includes('last_username_change_at')) {
+      await db.execute("ALTER TABLE accounts ADD COLUMN last_username_change_at TEXT");
+      log('A05', 'accounts 表已补列 last_username_change_at');
     }
   } catch (e) {
     log('A05', `accounts 表补列检查失败: ${e.message}`, 'warn');
@@ -335,7 +335,7 @@ export async function getAccountByUsername(username) {
 export async function getAccountById(id) {
   if (!db) return null;
   const rs = await db.execute({
-    sql: 'SELECT id, username, role, user_id, created_at, nickname, avatar, phone, status, security_question FROM accounts WHERE id = ?',
+    sql: 'SELECT id, username, role, user_id, created_at, nickname, avatar, phone, status, security_question, last_username_change_at FROM accounts WHERE id = ?',
     args: [id],
   });
   return rs.rows[0] || null;
@@ -431,6 +431,84 @@ export async function updateAccountProfile(id, { nickname, avatar, username }) {
   } catch (err) {
     log('A05', `更新账户资料失败: ${err.message}`, 'error');
     return false;
+  }
+}
+
+/**
+ * 修改登录用户名(同时记录修改时间,用于半年一次限制)
+ * @param {number} id 账户ID
+ * @param {string} newUsername 新用户名
+ * @returns {boolean} 是否更新成功
+ */
+export async function updateAccountUsername(id, newUsername) {
+  if (!db) return false;
+  try {
+    const now = new Date().toISOString();
+    const result = await db.execute({
+      sql: 'UPDATE accounts SET username = ?, last_username_change_at = ? WHERE id = ?',
+      args: [newUsername, now, id],
+    });
+    return toChanges(result.rowsAffected) > 0;
+  } catch (err) {
+    log('A05', `修改用户名失败: ${err.message}`, 'error');
+    return false;
+  }
+}
+
+/**
+ * 检查用户名是否被占用(排除指定账户自身)
+ * @param {string} username 待检查的用户名
+ * @param {number} excludeId 需要排除的账户ID(通常为当前用户)
+ * @returns {Promise<boolean>} true=已被占用
+ */
+export async function isUsernameTaken(username, excludeId = null) {
+  if (!db) return false;
+  try {
+    const rs = await db.execute({
+      sql: 'SELECT id FROM accounts WHERE username = ? AND id != ?',
+      args: [username, excludeId ?? -1],
+    });
+    return (rs.rows?.length ?? 0) > 0;
+  } catch (err) {
+    log('A05', `检查用户名占用失败: ${err.message}`, 'error');
+    return false;
+  }
+}
+
+/**
+ * 生成可用用户名建议(基于用户输入的前缀,追加数字后缀)
+ * @param {string} base 用户期望的用户名前缀
+ * @param {number} excludeId 当前账户ID(排除自身)
+ * @param {number} count 生成建议数量(默认5个)
+ * @returns {Promise<string[]>} 可用的用户名列表
+ */
+export async function suggestAvailableUsernames(base, excludeId, count = 5) {
+  if (!db) return [];
+  const clean = String(base || '').trim();
+  if (clean.length < 1) return [];
+  try {
+    // 候选生成策略: 在原前缀后追加 _数字 / 数字 / 2024 / 2025 等
+    const candidates = [];
+    const suffixes = ['_01', '_02', '_88', '_99', '888', '666', '2024', '2025', '007', '01', '02', '03'];
+    for (const s of suffixes) {
+      candidates.push(`${clean}${s}`);
+      if (candidates.length >= count * 2) break;
+    }
+    // 去重并保留顺序
+    const unique = Array.from(new Set(candidates));
+    // 一次性查询数据库中已存在的用户名(全部候选),避免多次往返
+    if (unique.length === 0) return [];
+    const placeholders = unique.map(() => '?').join(',');
+    const rs = await db.execute({
+      sql: `SELECT username FROM accounts WHERE username IN (${placeholders}) AND id != ?`,
+      args: [...unique, excludeId ?? -1],
+    });
+    const taken = new Set((rs.rows || []).map(r => r.username || r[0]));
+    // 返回未被占用的候选,数量限制为 count
+    return unique.filter(u => !taken.has(u)).slice(0, count);
+  } catch (err) {
+    log('A05', `生成用户名建议失败: ${err.message}`, 'error');
+    return [];
   }
 }
 
@@ -678,14 +756,13 @@ export async function removeFamilyBinding(bindingId, userAccountId) {
  * @param {{family_name?: string, relation?: string}} data
  * @returns {boolean} 是否更新成功
  */
-export async function updateFamilyBinding(bindingId, { family_name, relation, alias }) {
+export async function updateFamilyBinding(bindingId, { family_name, relation }) {
   if (!db) return false;
   try {
     const sets = [];
     const args = [];
     if (family_name !== undefined) { sets.push('family_name = ?'); args.push(family_name); }
     if (relation !== undefined) { sets.push('relation = ?'); args.push(relation); }
-    if (alias !== undefined) { sets.push('alias = ?'); args.push(alias); }
     if (sets.length === 0) return false;
     args.push(bindingId);
     const result = await db.execute({
@@ -754,7 +831,7 @@ export async function getFamilyBoundVisuallyImpairedUsers(familyAccountId) {
   if (!db || !familyAccountId) return [];
   try {
     const rs = await db.execute({
-      sql: `SELECT fb.id AS binding_id, fb.user_account_id, fb.family_name, fb.relation, fb.alias,
+      sql: `SELECT fb.id AS binding_id, fb.user_account_id, fb.family_name, fb.relation,
                    fb.invited_at, fb.bound_at,
                    a.username, a.nickname, a.phone, a.role
             FROM family_bindings fb
@@ -766,7 +843,6 @@ export async function getFamilyBoundVisuallyImpairedUsers(familyAccountId) {
     return rs.rows.map(r => ({
       id: `bind_${r.binding_id}`,
       name: r.nickname || r.username || '视障用户',
-      alias: r.alias || '',
       age: null,
       relation: r.relation || '被守护人',
       phone: r.phone || '',
