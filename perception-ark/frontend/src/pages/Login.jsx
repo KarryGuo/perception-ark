@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../hooks/useAuth.jsx';
 import { api } from '../services/api.js';
+import ThemeToggle from '../components/ThemeToggle.jsx';
 
 // 判断是否为移动端(扫码体验默认进AppMobile移动端APP)
 const isMobile = () => typeof window !== 'undefined' && window.innerWidth <= 768;
@@ -171,6 +172,10 @@ export default function Login() {
 
   return (
     <div className="auth-page">
+      {/* 右上角主题切换 */}
+      <div className="auth-theme-toggle">
+        <ThemeToggle size="sm" />
+      </div>
       <div className="auth-card">
         <div className="auth-brand">
           <img src="/logo.png" alt="PerceptionArk" className="auth-logo-img" />

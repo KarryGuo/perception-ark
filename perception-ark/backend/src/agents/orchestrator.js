@@ -11,7 +11,7 @@
 import { visionUnderstand, ocrRecognize, faceDescribe, isConfigured, getModels } from '../services/trae-client.js';
 import { planWalkRoute, searchPOI } from '../services/amap-client.js';
 import {
-  searchRoutes, searchFaces, getHabit, upsertHabit, addRoute, addFace, addSosEvent, updateSosStatus, getMemoryStats, getAllUsers
+  searchRoutes, searchFaces, getHabit, upsertHabit, addRoute, addFace, addSosEvent, updateSosStatus, getMemoryStats, getAllUsers, addStatusEvent
 } from '../services/memory-store.js';
 import { understandIntent } from '../services/assistant.js';
 import { log, genId, now, calcDistance } from '../utils/logger.js';
@@ -70,6 +70,66 @@ function emit(event) {
   if (sharedContext.history.length > 100) sharedContext.history.shift();
   listeners.forEach(fn => {
     try { fn(event); } catch (e) { console.error('Listener error:', e); }
+  });
+  // 异步持久化关键事件到家属端状态事件表(默认保存3天,供家属端分页查询/编辑/删除)
+  // 非阻塞,失败不影响主流程
+  persistStatusEvent(event).catch(() => {});
+}
+
+/**
+ * 把关键事件持久化到 family_status_events 表
+ * 仅持久化家属关心的状态事件:识别/安全/SOS/智能体状态/导航
+ * 跳过 log/preemption 等内部调试事件,避免数据膨胀
+ */
+async function persistStatusEvent(event) {
+  const persistableTypes = ['subtitle', 'safety_result', 'sos', 'agent_state', 'speak'];
+  if (!persistableTypes.includes(event.type)) return;
+
+  // 把事件字段映射为状态事件字段
+  let title = '';
+  let content = '';
+  let eventType = event.type;
+  let agentId = event.agentId || null;
+  let priority = event.priority != null ? event.priority : 3;
+  let location = null;
+
+  if (event.type === 'sos') {
+    title = event.title || 'SOS告警';
+    content = event.sub || '';
+    eventType = 'sos';
+  } else if (event.type === 'safety_result') {
+    title = `安全预警: ${event.object || '障碍物'} ${event.direction || '正前方'}`;
+    content = JSON.stringify({
+      object: event.object,
+      direction: event.direction,
+      distance: event.distance,
+      action: event.action,
+      traffic_light: event.traffic_light,
+      safe: event.safe
+    });
+    eventType = 'safety';
+    priority = 0;
+  } else if (event.type === 'subtitle' || event.type === 'speak') {
+    // 识别/播报事件
+    const text = event.text || '';
+    if (!text) return;
+    title = text.length > 60 ? text.slice(0, 60) + '...' : text;
+    content = text;
+    eventType = 'recognition';
+  } else if (event.type === 'agent_state') {
+    title = `${agentId || '智能体'} ${event.active ? '激活' : '待机'}`;
+    content = event.output || '';
+    eventType = 'agent';
+  }
+
+  await addStatusEvent({
+    event_type: eventType,
+    agent_id: agentId,
+    title,
+    content,
+    priority,
+    location,
+    created_at: event.timestamp
   });
 }
 

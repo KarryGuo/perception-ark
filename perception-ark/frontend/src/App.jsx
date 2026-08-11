@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from './hooks/useAuth.jsx';
+import { useTheme } from './hooks/useTheme.js';
 import { api } from './services/api.js';
 import Glasses from './pages/Glasses.jsx';
 import Family from './pages/Family.jsx';
@@ -118,6 +119,8 @@ function DemoEntry() {
 
 export default function App() {
   const [route, setRoute] = useState(window.location.hash || '#/');
+  // 全局初始化主题(确保所有页面,包括登录/注册/说明页,都应用正确的data-theme)
+  useTheme();
 
   useEffect(() => {
     const onHash = () => setRoute(window.location.hash || '#/');

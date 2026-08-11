@@ -187,17 +187,20 @@ function setGlobalLocation(pos) {
  * 规则:
  * 1. 第一次定位直接应用
  * 2. 已有精确定位(accuracy < 1000m)后,不再接受IP级(accuracy > 5000m)结果
- * 3. 新位置精度比旧位置差3倍以上时拒绝(防止低精度结果拉偏位置)
- * 4. 移动距离 < 10米视为抖动(防止地图跳动),但精度显著更好时更新精度
- * 5. 短时间(5秒)内位移异常大(>300米)视为漂移,拒绝
+ * 3. 新位置精度比旧位置差5倍以上时拒绝(放宽阈值,允许室内→室外精度变化)
+ * 4. 移动距离 < 动态抖动阈值(基于精度,最低5米)视为抖动,但精度显著更好时更新精度
+ * 5. 短时间(3秒)内位移异常大(>500米)视为漂移,拒绝(放宽,适应高速移动)
+ * 6. 位置超过30秒未更新时,强制接受新位置(避免位置过期停滞)
  */
 async function applyLocation(pos) {
+  const now = Date.now();
+
   // 第一次定位直接应用
   if (lastPosRef.lat === null) {
     lastPosRef.lat = pos.lat;
     lastPosRef.lng = pos.lng;
     lastPosRef.accuracy = pos.accuracy;
-    lastPosRef.timestamp = Date.now();
+    lastPosRef.timestamp = now;
     if (pos.accuracy < 1000) preciseLocatedRef.value = true;
 
     setGlobalLocation({
@@ -232,20 +235,27 @@ async function applyLocation(pos) {
     return;
   }
 
-  // 已有精确定位后,拒绝IP级结果(防止跳回城市中心)
-  if (preciseLocatedRef.value && pos.accuracy > 5000) {
+  // 位置过期检测:超过30秒未更新,强制接受新位置(避免停滞)
+  const elapsedSinceLastUpdate = now - (lastPosRef.timestamp || now);
+  const isStale = elapsedSinceLastUpdate > 30000;
+
+  // 已有精确定位后,拒绝IP级结果(防止跳回城市中心) - 过期时除外
+  if (!isStale && preciseLocatedRef.value && pos.accuracy > 5000) {
     return;
   }
 
-  // 新位置精度比旧位置差3倍以上时拒绝(防止低精度结果拉偏位置)
-  if (pos.accuracy > lastPosRef.accuracy * 3 && lastPosRef.accuracy !== Infinity) {
+  // 新位置精度比旧位置差5倍以上时拒绝(放宽阈值,适应室内外切换) - 过期时除外
+  if (!isStale && pos.accuracy > lastPosRef.accuracy * 5 && lastPosRef.accuracy !== Infinity) {
     return;
   }
 
-  // 移动距离过滤: <10米视为抖动(防止地图跳动)
+  // 动态抖动阈值:基于精度计算,最低5米(精度越好阈值越小)
+  const jitterThreshold = Math.max(5, Math.min(15, (pos.accuracy || 50) * 0.3));
   const moved = distance(pos.lat, pos.lng, lastPosRef.lat, lastPosRef.lng);
-  if (moved < 10) {
-    // 即使没移动,如果精度显著更好也更新精度信息(修复: 之前用回调式更新会丢坐标)
+
+  // 移动距离 < 动态抖动阈值视为抖动(防止地图跳动) - 过期时除外
+  if (!isStale && moved < jitterThreshold) {
+    // 即使没移动,如果精度显著更好也更新精度信息
     if (pos.accuracy < lastPosRef.accuracy * 0.5) {
       lastPosRef.accuracy = pos.accuracy;
       if (globalLocation) {
@@ -255,14 +265,12 @@ async function applyLocation(pos) {
     return;
   }
 
-  // 短时间(5秒)内位移异常大(>300米)视为GPS漂移,拒绝
-  const now = Date.now();
-  const elapsed = now - (lastPosRef.timestamp || now);
-  if (elapsed < 5000 && moved > 300) {
+  // 短时间(3秒)内位移异常大(>500米)视为GPS漂移,拒绝(放宽,适应高速移动)
+  if (elapsedSinceLastUpdate < 3000 && moved > 500) {
     return;
   }
 
-  // 移动了 > 10米,接受新位置
+  // 接受新位置
   lastPosRef.lat = pos.lat;
   lastPosRef.lng = pos.lng;
   lastPosRef.accuracy = pos.accuracy;
@@ -325,7 +333,7 @@ async function initLocation() {
 
 /**
  * 启动持续监听(只启动一次,全局共享)
- * 优化: maximumAge=2000(2秒缓存),平衡耗电和实时性
+ * 优化: maximumAge=0(禁用缓存,获取实时位置),降低延迟
  */
 function startWatch() {
   if (globalWatchStarted) return;
@@ -337,8 +345,8 @@ function startWatch() {
       if (!AMap.Geolocation) return;
       const geo = new AMap.Geolocation({
         enableHighAccuracy: true,
-        timeout: 15000,
-        maximumAge: 2000,
+        timeout: 8000,
+        maximumAge: 0,
         convert: true
       });
       geo.watchPosition((status, result) => {
@@ -360,7 +368,7 @@ function startWatch() {
         applyLocation({ lat: gcj.lat, lng: gcj.lng, accuracy: pos.coords.accuracy || 100, source: 'browser-watch' });
       },
       () => {},
-      { enableHighAccuracy: true, timeout: 20000, maximumAge: 2000 }
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
   }
 }

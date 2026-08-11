@@ -162,6 +162,22 @@ export async function initMemoryStore() {
       success INTEGER DEFAULT 1,
       created_at TEXT
     );
+
+    CREATE TABLE IF NOT EXISTS family_status_events (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      event_type TEXT NOT NULL,
+      agent_id TEXT,
+      title TEXT,
+      content TEXT,
+      priority INTEGER DEFAULT 3,
+      location TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT,
+      family_account_id INTEGER
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_family_status_events_created_at ON family_status_events(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_family_status_events_type ON family_status_events(event_type);
   `);
 
   // 辅助: 查询表的所有列名 (libsql 兼容 pragma_table_info 函数)
@@ -239,6 +255,11 @@ export async function initMemoryStore() {
     if (!userCols.includes('family_account_id')) {
       await db.execute("ALTER TABLE users ADD COLUMN family_account_id INTEGER");
       log('A05', 'users 表已补列 family_account_id');
+    }
+    // 补列 alias: 家属对被守护人的自定义称呼(与视障用户本人姓名区分)
+    if (!userCols.includes('alias')) {
+      await db.execute("ALTER TABLE users ADD COLUMN alias TEXT");
+      log('A05', 'users 表已补列 alias');
     }
   } catch (e) {
     log('A05', `users 表补列检查失败: ${e.message}`, 'warn');
@@ -430,11 +451,11 @@ export async function deleteAccount(id) {
 // ===== 使用者管理(家属端绑定) =====
 export async function addUser(user) {
   if (!db) return null;
-  const { name, age, relation, phone, emergency_contact, emergency_phone, health_notes, bound_account_id, family_account_id } = user;
+  const { name, age, relation, phone, emergency_contact, emergency_phone, health_notes, bound_account_id, family_account_id, alias } = user;
   const result = await db.execute({
-    sql: `INSERT INTO users (name, age, relation, phone, emergency_contact, emergency_phone, health_notes, bound_at, bound_account_id, family_account_id)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    args: [name, age || null, relation || '', phone || '', emergency_contact || '', emergency_phone || '', health_notes || '', new Date().toISOString(), bound_account_id || null, family_account_id || null],
+    sql: `INSERT INTO users (name, age, relation, phone, emergency_contact, emergency_phone, health_notes, bound_at, bound_account_id, family_account_id, alias)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    args: [name, age || null, relation || '', phone || '', emergency_contact || '', emergency_phone || '', health_notes || '', new Date().toISOString(), bound_account_id || null, family_account_id || null, alias || null],
   });
   return toNumberId(result.lastInsertRowid);
 }
@@ -468,7 +489,7 @@ export async function deleteUser(id) {
  */
 export async function updateUser(id, data) {
   if (!db) return 0;
-  const { name, age, relation, phone, emergency_contact, emergency_phone, health_notes, bound_account_id } = data;
+  const { name, age, relation, phone, emergency_contact, emergency_phone, health_notes, bound_account_id, alias } = data;
   const result = await db.execute({
     sql: `UPDATE users SET
       name = COALESCE(?, name),
@@ -478,12 +499,14 @@ export async function updateUser(id, data) {
       emergency_contact = COALESCE(?, emergency_contact),
       emergency_phone = COALESCE(?, emergency_phone),
       health_notes = COALESCE(?, health_notes),
-      bound_account_id = COALESCE(?, bound_account_id)
+      bound_account_id = COALESCE(?, bound_account_id),
+      alias = COALESCE(?, alias)
     WHERE id = ?`,
     args: [
       name || null, age !== undefined ? age : null, relation || null, phone || null,
       emergency_contact || null, emergency_phone || null, health_notes || null,
-      bound_account_id !== undefined ? bound_account_id : null, id,
+      bound_account_id !== undefined ? bound_account_id : null,
+      alias !== undefined ? alias : null, id,
     ],
   });
   return toChanges(result.rowsAffected);
@@ -1265,6 +1288,132 @@ export async function clearSosEvents() {
   if (!db) return 0;
   const result = await db.execute('DELETE FROM sos_events');
   return toChanges(result.rowsAffected);
+}
+
+// ===== 家属端状态事件(识别/SOS/智能体状态,默认保存3天) =====
+/**
+ * 新增状态事件(由 orchestrator.emit 异步调用)
+ * @param {{event_type:string, agent_id?:string, title?:string, content?:string, priority?:number, location?:string, family_account_id?:number}} event
+ * @returns {number|null} 新记录ID
+ */
+export async function addStatusEvent(event) {
+  if (!db || !event) return null;
+  try {
+    const result = await db.execute({
+      sql: `INSERT INTO family_status_events
+            (event_type, agent_id, title, content, priority, location, created_at, updated_at, family_account_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [
+        event.event_type || 'log',
+        event.agent_id || null,
+        event.title || null,
+        event.content || null,
+        event.priority != null ? event.priority : 3,
+        event.location || null,
+        event.created_at || new Date().toISOString(),
+        new Date().toISOString(),
+        event.family_account_id || null,
+      ],
+    });
+    return toNumberId(result.lastInsertRowid);
+  } catch (err) {
+    log('A05', `addStatusEvent 失败: ${err.message}`, 'warn');
+    return null;
+  }
+}
+
+/**
+ * 分页查询状态事件(支持类型过滤、日期范围、关键字搜索)
+ * @param {{page?:number, pageSize?:number, event_type?:string, days?:number, keyword?:string}} options
+ * @returns {{items: array, total: number, page: number, pageSize: number}}
+ */
+export async function getStatusEvents(options = {}) {
+  if (!db) return { items: [], total: 0, page: 1, pageSize: 20 };
+  const page = Math.max(1, parseInt(options.page) || 1);
+  const pageSize = Math.min(100, Math.max(5, parseInt(options.pageSize) || 20));
+  const offset = (page - 1) * pageSize;
+
+  // 默认仅返回最近3天数据
+  const days = options.days != null ? parseInt(options.days) : 3;
+  const where = [];
+  const args = [];
+  if (days >= 0) {
+    const cutoff = new Date(Date.now() - days * 86400000).toISOString();
+    where.push('created_at >= ?');
+    args.push(cutoff);
+  }
+  if (options.event_type && options.event_type !== 'all') {
+    where.push('event_type = ?');
+    args.push(options.event_type);
+  }
+  if (options.keyword && options.keyword.trim()) {
+    where.push('(title LIKE ? OR content LIKE ?)');
+    const kw = `%${options.keyword.trim()}%`;
+    args.push(kw, kw);
+  }
+  const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+  const countRs = await db.execute({
+    sql: `SELECT COUNT(*) as c FROM family_status_events ${whereClause}`,
+    args,
+  });
+  const total = countRs.rows[0]?.c || 0;
+
+  const rs = await db.execute({
+    sql: `SELECT * FROM family_status_events ${whereClause} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+    args: [...args, pageSize, offset],
+  });
+  return { items: rs.rows, total, page, pageSize };
+}
+
+/**
+ * 编辑状态事件(家属端可编辑标题/内容)
+ */
+export async function updateStatusEvent(id, data) {
+  if (!db) return 0;
+  const { title, content } = data;
+  const result = await db.execute({
+    sql: `UPDATE family_status_events SET
+      title = COALESCE(?, title),
+      content = COALESCE(?, content),
+      updated_at = ?
+    WHERE id = ?`,
+    args: [title || null, content || null, new Date().toISOString(), id],
+  });
+  return toChanges(result.rowsAffected);
+}
+
+/**
+ * 删除状态事件
+ */
+export async function deleteStatusEvent(id) {
+  if (!db) return 0;
+  const result = await db.execute({
+    sql: 'DELETE FROM family_status_events WHERE id = ?',
+    args: [id],
+  });
+  return toChanges(result.rowsAffected);
+}
+
+/**
+ * 清理超过指定天数的旧状态事件(默认3天)
+ * 建议在 getStatusEvents 时偶尔触发,或定时任务调用
+ */
+export async function pruneOldStatusEvents(days = 3) {
+  if (!db) return 0;
+  try {
+    const cutoff = new Date(Date.now() - days * 86400000).toISOString();
+    const result = await db.execute({
+      sql: 'DELETE FROM family_status_events WHERE created_at < ?',
+      args: [cutoff],
+    });
+    const removed = toChanges(result.rowsAffected);
+    if (removed > 0) log('A05', `清理 ${removed} 条过期状态事件(>${days}天)`);
+    return removed;
+  } catch (err) {
+    log('A05', `pruneOldStatusEvents 失败: ${err.message}`, 'warn');
+    return 0;
+  }
 }
 
 // ===== 记忆总览 =====

@@ -9,7 +9,6 @@ import ThemeToggle from '../components/ThemeToggle.jsx';
 // 顶部药丸Tab(与视障端统一框架)
 const TABS = [
   { key: 'overview', label: '守护' },
-  { key: 'status', label: '状态' },
   { key: 'safety', label: '安全' },
   { key: 'routes', label: '路线' },
   { key: 'users', label: '我的' },
@@ -32,7 +31,9 @@ export default function Family() {
   const [editingUserId, setEditingUserId] = useState(null); // null=添加模式, 数字=编辑模式
   const [editingBindingSource, setEditingBindingSource] = useState(null); // 编辑时用户来源(invitation/手动)
   const [formData, setFormData] = useState({
-    name: '', alias: '', relation: '', phone: '', bind_phone: ''
+    name: '', age: '', relation: '', phone: '',
+    emergency_contact: '', emergency_phone: '', health_notes: '',
+    bind_phone: ''
   });
   const [liveAlert, setLiveAlert] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -46,13 +47,6 @@ export default function Family() {
   const [currentConfirmItem, setCurrentConfirmItem] = useState(null);
   const [confirmProcessing, setConfirmProcessing] = useState(false);
   const announcedIdsRef = useRef(new Set()); // 已语音播报过的邀请ID,避免重复播报
-
-  // ===== 状态事件(识别/SOS/智能体,分页+编辑+删除,默认3天) =====
-  const [statusEvents, setStatusEvents] = useState({ items: [], total: 0, page: 1, pageSize: 10 });
-  const [eventFilter, setEventFilter] = useState({ event_type: 'all', keyword: '', page: 1, pageSize: 10 });
-  const [editingEventId, setEditingEventId] = useState(null);
-  const [eventFormData, setEventFormData] = useState({ title: '', content: '' });
-  const [eventLoading, setEventLoading] = useState(false);
 
   const loadData = useCallback(async (silent = false) => {
     if (silent) setRefreshing(true);
@@ -98,80 +92,6 @@ export default function Family() {
       // 静默失败,不打扰用户
     }
   }, []);
-
-  // ===== 状态事件: 分页查询/编辑/删除(默认3天) =====
-  const loadStatusEvents = useCallback(async (filterOverride) => {
-    setEventLoading(true);
-    try {
-      const f = filterOverride || eventFilter;
-      const res = await api.familyStatusEvents({
-        page: f.page,
-        pageSize: f.pageSize,
-        event_type: f.event_type,
-        days: 3,
-        keyword: f.keyword
-      });
-      if (res?.success) {
-        setStatusEvents({ items: res.items || [], total: res.total || 0, page: res.page || 1, pageSize: res.pageSize || 10 });
-      }
-    } catch (err) {
-      console.warn('[Family] 加载状态事件失败:', err.message);
-    } finally {
-      setEventLoading(false);
-    }
-  }, [eventFilter]);
-
-  // 编辑事件: 打开编辑表单
-  const handleEditEvent = useCallback((evt) => {
-    setEditingEventId(evt.id);
-    setEventFormData({ title: evt.title || '', content: evt.content || '' });
-  }, []);
-
-  // 保存事件编辑
-  const handleSaveEvent = useCallback(async (e) => {
-    e?.preventDefault?.();
-    if (!editingEventId) return;
-    try {
-      await api.familyUpdateStatusEvent(editingEventId, eventFormData);
-      setEditingEventId(null);
-      setEventFormData({ title: '', content: '' });
-      loadStatusEvents();
-    } catch (err) {
-      alert('保存失败: ' + err.message);
-    }
-  }, [editingEventId, eventFormData, loadStatusEvents]);
-
-  // 删除事件
-  const handleDeleteEvent = useCallback(async (id) => {
-    if (!confirm('确定删除该条状态记录?')) return;
-    try {
-      await api.familyDeleteStatusEvent(id);
-      loadStatusEvents();
-    } catch (err) {
-      alert('删除失败: ' + err.message);
-    }
-  }, [loadStatusEvents]);
-
-  // 切换事件类型筛选
-  const handleEventFilterChange = useCallback((newType) => {
-    const newFilter = { ...eventFilter, event_type: newType, page: 1 };
-    setEventFilter(newFilter);
-    loadStatusEvents(newFilter);
-  }, [eventFilter, loadStatusEvents]);
-
-  // 切换页码
-  const handleEventPageChange = useCallback((newPage) => {
-    const newFilter = { ...eventFilter, page: newPage };
-    setEventFilter(newFilter);
-    loadStatusEvents(newFilter);
-  }, [eventFilter, loadStatusEvents]);
-
-  // 关键字搜索
-  const handleEventSearch = useCallback((keyword) => {
-    const newFilter = { ...eventFilter, keyword, page: 1 };
-    setEventFilter(newFilter);
-    loadStatusEvents(newFilter);
-  }, [eventFilter, loadStatusEvents]);
 
   // 加载待确认邀请(视障端发起,等待家属确认)
   const loadPendingConfirm = useCallback(async () => {
@@ -265,13 +185,6 @@ export default function Family() {
     return () => clearInterval(interval);
   }, [loadData, loadUsers, loadPendingConfirm, loadPreciseLocation]);
 
-  // 切换到"状态"Tab时加载状态事件
-  useEffect(() => {
-    if (activeTab === 'status') {
-      loadStatusEvents();
-    }
-  }, [activeTab, loadStatusEvents]);
-
   // ASR 语音指令监听: 当确认对话框打开时,识别"确认绑定"/"拒绝"指令
   useEffect(() => {
     if (!showConfirmModal || !currentConfirmItem || !asrText) return;
@@ -309,7 +222,10 @@ export default function Family() {
     setFormError(null); // 清除上次的错误提示
     setFormInfo(null);
     try {
-      const payload = { ...formData };
+      const payload = {
+        ...formData,
+        age: formData.age ? parseInt(formData.age) : null
+      };
       if (editingUserId) {
         // 编辑模式
         await api.familyUpdateUser(editingUserId, payload);
@@ -319,7 +235,7 @@ export default function Family() {
         setFormInfo('已保存修改');
         // 延迟关闭表单,让用户看到成功提示
         setTimeout(() => {
-          setFormData({ name: '', alias: '', relation: '', phone: '', bind_phone: '' });
+          setFormData({ name: '', age: '', relation: '', phone: '', emergency_contact: '', emergency_phone: '', health_notes: '', bind_phone: '' });
           setShowAddForm(false);
           setEditingUserId(null);
           setEditingBindingSource(null);
@@ -347,7 +263,7 @@ export default function Family() {
           setFormInfo('已添加使用者');
         }
       }
-      setFormData({ name: '', alias: '', relation: '', phone: '', bind_phone: '' });
+      setFormData({ name: '', age: '', relation: '', phone: '', emergency_contact: '', emergency_phone: '', health_notes: '', bind_phone: '' });
       setShowAddForm(false);
       setEditingUserId(null);
       loadUsers();
@@ -368,9 +284,12 @@ export default function Family() {
     setEditingBindingSource(u.binding_source || null); // 记录用户来源(邀请绑定/手动添加)
     setFormData({
       name: u.name || '',
-      alias: u.alias || '',
+      age: u.age != null ? String(u.age) : '',
       relation: u.relation || '',
       phone: u.phone || '',
+      emergency_contact: u.emergency_contact || '',
+      emergency_phone: u.emergency_phone || '',
+      health_notes: u.health_notes || '',
       bind_phone: undefined // 编辑时不传bind_phone,避免误触发解绑
     });
     setShowAddForm(true);
@@ -382,7 +301,7 @@ export default function Family() {
     setEditingUserId(null);
     setEditingBindingSource(null);
     setFormError(null);
-    setFormData({ name: '', alias: '', relation: '', phone: '', bind_phone: '' });
+    setFormData({ name: '', age: '', relation: '', phone: '', emergency_contact: '', emergency_phone: '', health_notes: '', bind_phone: '' });
   }, []);
 
   const handleDeleteUser = useCallback(async (id, name) => {
@@ -479,6 +398,13 @@ export default function Family() {
         </div>
       )}
 
+      {/* ===== 刷新指示器 ===== */}
+      {refreshing && (
+        <div className="am-fam-refresh">
+          <span className="am-fam-refresh-dot" /> 正在刷新数据...
+        </div>
+      )}
+
       {/* ===== 主内容浮层(可滚动) ===== */}
       <div className="am-content-layer am-fam-content">
         {/* === 守护Tab === */}
@@ -529,11 +455,10 @@ export default function Family() {
               ) : (
                 <div className="am-fam-recog-list">
                   {recentRecognitions.slice(0, 5).map((evt, i) => {
-                    const text = evt.text || evt.summary || '';
-                    const time = evt.time ? new Date(evt.time).toLocaleTimeString('zh-CN', { hour12: false })
-                      : (evt.timestamp ? new Date(evt.timestamp).toLocaleTimeString('zh-CN', { hour12: false }) : '');
+                    const text = evt.text || evt.message || '';
+                    const time = evt.timestamp ? new Date(evt.timestamp).toLocaleTimeString('zh-CN', { hour12: false }) : '';
                     return (
-                      <div key={evt.id || i} className="am-fam-recog-item">
+                      <div key={i} className="am-fam-recog-item">
                         <span className="am-fam-recog-text">{text}</span>
                         <span className="am-fam-recog-time">{time}</span>
                       </div>
@@ -558,125 +483,6 @@ export default function Family() {
                       </span>
                     </div>
                   ))}
-                </div>
-              )}
-            </FamCard>
-          </>
-        )}
-
-        {/* === 状态Tab(分页状态事件,默认3天) === */}
-        {activeTab === 'status' && (
-          <>
-            <FamCard title="状态事件" icon="📋" color="cyan" badge={statusEvents.total}>
-              {/* 筛选栏 */}
-              <div className="am-fam-event-filter">
-                <div className="am-fam-event-tabs" role="tablist" aria-label="事件类型筛选">
-                  {[
-                    { key: 'all', label: '全部' },
-                    { key: 'recognition', label: '识别' },
-                    { key: 'safety', label: '安全' },
-                    { key: 'sos', label: 'SOS' },
-                    { key: 'agent', label: '智能体' }
-                  ].map(t => (
-                    <button
-                      key={t.key}
-                      className={`am-fam-event-tab ${eventFilter.event_type === t.key ? 'active' : ''}`}
-                      onClick={() => handleEventFilterChange(t.key)}
-                      role="tab"
-                      aria-selected={eventFilter.event_type === t.key}
-                    >{t.label}</button>
-                  ))}
-                </div>
-                <input
-                  className="am-fam-event-search"
-                  type="search"
-                  placeholder="搜索关键字..."
-                  value={eventFilter.keyword || ''}
-                  onChange={e => handleEventSearch(e.target.value)}
-                  autoComplete="nope"
-                  name="fam-event-search"
-                />
-              </div>
-
-              {/* 数据保存提示 */}
-              <div className="am-fam-event-hint">数据默认保存3天,可编辑/删除</div>
-
-              {/* 事件列表 */}
-              {eventLoading ? (
-                <FamEmpty text="加载中..." />
-              ) : statusEvents.items.length === 0 ? (
-                <FamEmpty text="暂无状态记录" />
-              ) : (
-                <div className="am-fam-event-list">
-                  {statusEvents.items.map(evt => (
-                    <div key={evt.id} className={`am-fam-event-item type-${evt.event_type}`}>
-                      {editingEventId === evt.id ? (
-                        <form className="am-fam-event-edit-form" onSubmit={handleSaveEvent}>
-                          <input
-                            className="am-fam-event-edit-input"
-                            type="text"
-                            placeholder="标题"
-                            value={eventFormData.title}
-                            onChange={e => setEventFormData({ ...eventFormData, title: e.target.value })}
-                            autoComplete="nope"
-                            name="fam-event-title"
-                          />
-                          <textarea
-                            className="am-fam-event-edit-textarea"
-                            placeholder="内容备注"
-                            value={eventFormData.content}
-                            onChange={e => setEventFormData({ ...eventFormData, content: e.target.value })}
-                            rows={2}
-                          />
-                          <div className="am-fam-event-edit-actions">
-                            <button type="submit" className="am-fam-event-save">保存</button>
-                            <button type="button" className="am-fam-event-cancel" onClick={() => { setEditingEventId(null); setEventFormData({ title: '', content: '' }); }}>取消</button>
-                          </div>
-                        </form>
-                      ) : (
-                        <>
-                          <div className="am-fam-event-head">
-                            <span className={`am-fam-event-type type-${evt.event_type}`}>
-                              {evt.event_type === 'recognition' ? '👁️ 识别' :
-                                evt.event_type === 'safety' ? '🛡️ 安全' :
-                                evt.event_type === 'sos' ? '🚨 SOS' :
-                                evt.event_type === 'agent' ? '🤖 智能体' : '📋 事件'}
-                            </span>
-                            <span className="am-fam-event-time">
-                              {new Date(evt.created_at).toLocaleString('zh-CN')}
-                            </span>
-                          </div>
-                          <div className="am-fam-event-title">{evt.title || '(无标题)'}</div>
-                          {evt.content && evt.event_type !== 'recognition' && (
-                            <div className="am-fam-event-content">{evt.content}</div>
-                          )}
-                          <div className="am-fam-event-actions">
-                            <button className="am-fam-event-edit-btn" onClick={() => handleEditEvent(evt)} aria-label="编辑">编辑</button>
-                            <button className="am-fam-event-del-btn" onClick={() => handleDeleteEvent(evt.id)} aria-label="删除">删除</button>
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* 分页 */}
-              {statusEvents.total > statusEvents.pageSize && (
-                <div className="am-fam-event-pagination">
-                  <button
-                    className="am-fam-event-page-btn"
-                    disabled={statusEvents.page <= 1}
-                    onClick={() => handleEventPageChange(statusEvents.page - 1)}
-                  >上一页</button>
-                  <span className="am-fam-event-page-info">
-                    {statusEvents.page} / {Math.ceil(statusEvents.total / statusEvents.pageSize)} 页 · 共 {statusEvents.total} 条
-                  </span>
-                  <button
-                    className="am-fam-event-page-btn"
-                    disabled={statusEvents.page >= Math.ceil(statusEvents.total / statusEvents.pageSize)}
-                    onClick={() => handleEventPageChange(statusEvents.page + 1)}
-                  >下一页</button>
                 </div>
               )}
             </FamCard>
@@ -798,13 +604,20 @@ export default function Family() {
                 <div className="am-fam-form-title">{editingUserId ? '编辑使用者' : '添加使用者'}</div>
                 {editingUserId && editingBindingSource === 'invitation' && (
                   <div className="am-fam-form-info" role="status" style={{ marginBottom: '8px' }}>
-                    该使用者通过邀请绑定,姓名和关系由视障用户本人维护,仅可修改称呼
+                    该使用者通过邀请绑定,仅可修改称呼和关系,其他信息由视障用户本人维护
                   </div>
                 )}
-                <FamFormInput placeholder="姓名 * (视障用户注册名)" value={formData.name} onChange={v => setFormData({ ...formData, name: v })} required disabled={editingBindingSource === 'invitation'} />
-                <FamFormInput placeholder="称呼 (如:爸爸,显示在守护页)" value={formData.alias} onChange={v => setFormData({ ...formData, alias: v })} />
-                <FamFormInput placeholder="关系(如:父亲)" value={formData.relation} onChange={v => setFormData({ ...formData, relation: v })} disabled={editingBindingSource === 'invitation'} />
+                <FamFormInput placeholder="称呼 * (如:爸爸)" value={formData.name} onChange={v => setFormData({ ...formData, name: v })} required />
+                <div className="am-fam-form-row">
+                  <FamFormInput placeholder="年龄" type="number" value={formData.age} onChange={v => setFormData({ ...formData, age: v })} disabled={editingBindingSource === 'invitation'} />
+                  <FamFormInput placeholder="关系(如:父亲)" value={formData.relation} onChange={v => setFormData({ ...formData, relation: v })} />
+                </div>
                 <FamFormInput placeholder="使用者手机号" value={formData.phone} onChange={v => setFormData({ ...formData, phone: v })} disabled={editingBindingSource === 'invitation'} />
+                <div className="am-fam-form-row">
+                  <FamFormInput placeholder="紧急联系人" value={formData.emergency_contact} onChange={v => setFormData({ ...formData, emergency_contact: v })} disabled={editingBindingSource === 'invitation'} />
+                  <FamFormInput placeholder="紧急电话" value={formData.emergency_phone} onChange={v => setFormData({ ...formData, emergency_phone: v })} disabled={editingBindingSource === 'invitation'} />
+                </div>
+                <FamFormInput placeholder="健康备注(如:高血压)" value={formData.health_notes} onChange={v => setFormData({ ...formData, health_notes: v })} disabled={editingBindingSource === 'invitation'} />
                 {!editingUserId && (
                   <FamFormInput placeholder="绑定视障人员手机号(未注册将提示)" value={formData.bind_phone || ''} onChange={v => setFormData({ ...formData, bind_phone: v })} />
                 )}
@@ -863,21 +676,21 @@ export default function Family() {
                   <div key={u.id} className="am-fam-user-card">
                     <div className="am-fam-user-card-head">
                       <div>
-                        <div className="am-fam-user-name">{u.alias || u.name}</div>
+                        <div className="am-fam-user-name">{u.name}</div>
                         <div className="am-fam-user-meta">
-                          {u.relation || '未填写关系'}
+                          {u.relation || '未填写关系'}{u.age ? ` · ${u.age}岁` : ''}
                         </div>
                       </div>
                       <div className="am-fam-user-actions">
                         <button
                           className="am-fam-user-edit"
                           onClick={() => handleEditUser(u)}
-                          aria-label={`编辑${u.alias || u.name}`}
+                          aria-label={`编辑${u.name}`}
                         >编辑</button>
                         <button
                           className="am-fam-user-del"
-                          onClick={() => handleDeleteUser(u.id, u.alias || u.name)}
-                          aria-label={`删除${u.alias || u.name}`}
+                          onClick={() => handleDeleteUser(u.id, u.name)}
+                          aria-label={`删除${u.name}`}
                         >✕</button>
                       </div>
                     </div>
@@ -892,6 +705,8 @@ export default function Family() {
                         <span className="am-fam-bind-badge unbound">○ 未绑定视障账号</span>
                       </div>
                     )}
+                    {u.emergency_contact && <div className="am-fam-user-emergency">紧急联系人: {u.emergency_contact} {u.emergency_phone}</div>}
+                    {u.health_notes && <div className="am-fam-user-health">⚕ {u.health_notes}</div>}
                   </div>
                 ))}
               </div>

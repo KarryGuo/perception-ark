@@ -286,6 +286,25 @@ export const api = {
   familyRecognitionHistory: (limit) => request(`/family/recognition-history${limit ? `?limit=${limit}` : ''}`),
   familyRoutes: () => request('/family/routes'),
   familyHabits: () => request('/family/habits'),
+  // 家属端状态事件(识别/SOS/智能体,持久化3天,分页/编辑/删除)
+  familyStatusEvents: (params = {}) => {
+    const q = new URLSearchParams();
+    if (params.page) q.set('page', params.page);
+    if (params.pageSize) q.set('pageSize', params.pageSize);
+    if (params.event_type) q.set('event_type', params.event_type);
+    if (params.days != null) q.set('days', params.days);
+    if (params.keyword) q.set('keyword', params.keyword);
+    const qs = q.toString();
+    return request(`/family/status-events${qs ? `?${qs}` : ''}`);
+  },
+  familyUpdateStatusEvent: (id, data) =>
+    request(`/family/status-events/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    }),
+  familyDeleteStatusEvent: (id) =>
+    request(`/family/status-events/${id}`, { method: 'DELETE' }),
 
   // 管理员后台
   adminAccounts: () => request('/admin/accounts'),
