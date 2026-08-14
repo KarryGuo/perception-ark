@@ -991,7 +991,8 @@ function GuardianCard({ user }) {
   };
   const activity = activityMap[user.activity] || '待机中';
   const isFallen = user.activity === 'fallen';
-  const battery = user.battery || 87;
+  const battery = user.battery != null ? user.battery : 0;
+  const charging = !!user.charging;
 
   return (
     <div className={`am-fam-guardian-card ${isFallen ? 'fallen' : ''}`}>
@@ -1021,12 +1022,12 @@ function GuardianCard({ user }) {
 
         {/* 设备电量 */}
         <div className="am-fam-guardian-batt">
-          <div className="am-fam-guardian-batt-label">🔋 设备电量</div>
+          <div className="am-fam-guardian-batt-label">🔋 设备电量{charging ? ' ⚡充电中' : ''}</div>
           <div className="am-fam-guardian-batt-pct">{battery}%</div>
           <div className="am-fam-guardian-batt-bar">
-            <div className="am-fam-guardian-batt-fill" style={{ width: `${battery}%` }}></div>
+            <div className={`am-fam-guardian-batt-fill ${charging ? 'charging' : ''}`} style={{ width: `${battery}%` }}></div>
           </div>
-          <div className="am-fam-guardian-batt-hint">~{Math.round(battery / 12)}小时</div>
+          <div className="am-fam-guardian-batt-hint">{battery > 0 ? `~${Math.round(battery / 12)}小时` : '等待上报'}</div>
         </div>
       </div>
 

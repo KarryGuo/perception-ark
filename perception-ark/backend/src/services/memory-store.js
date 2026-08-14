@@ -178,6 +178,26 @@ export async function initMemoryStore() {
 
     CREATE INDEX IF NOT EXISTS idx_family_status_events_created_at ON family_status_events(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_family_status_events_type ON family_status_events(event_type);
+
+    CREATE TABLE IF NOT EXISTS agent_calls (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      agent_id TEXT NOT NULL,
+      agent_name TEXT,
+      call_count INTEGER DEFAULT 0,
+      last_called_at TEXT,
+      created_at TEXT,
+      UNIQUE(agent_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS device_status (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      account_id INTEGER,
+      battery INTEGER,
+      charging INTEGER DEFAULT 0,
+      online INTEGER DEFAULT 0,
+      updated_at TEXT,
+      UNIQUE(account_id)
+    );
   `);
 
   // 辅助: 查询表的所有列名 (libsql 兼容 pragma_table_info 函数)
@@ -200,6 +220,11 @@ export async function initMemoryStore() {
     if (!fbCols.includes('initiator')) {
       await db.execute("ALTER TABLE family_bindings ADD COLUMN initiator TEXT DEFAULT 'user'");
       log('A05', 'family_bindings 表已补列 initiator');
+    }
+    // alias 列: 家属对邀请绑定用户的自定义称呼(如"爸爸"),用于守护页显示
+    if (!fbCols.includes('alias')) {
+      await db.execute("ALTER TABLE family_bindings ADD COLUMN alias TEXT");
+      log('A05', 'family_bindings 表已补列 alias');
     }
   } catch (e) {
     log('A05', `family_bindings 表补列检查失败: ${e.message}`, 'warn');
@@ -673,13 +698,14 @@ export async function removeFamilyBinding(bindingId, userAccountId) {
  * @param {{family_name?: string, relation?: string}} data
  * @returns {boolean} 是否更新成功
  */
-export async function updateFamilyBinding(bindingId, { family_name, relation }) {
+export async function updateFamilyBinding(bindingId, { family_name, relation, alias }) {
   if (!db) return false;
   try {
     const sets = [];
     const args = [];
     if (family_name !== undefined) { sets.push('family_name = ?'); args.push(family_name); }
     if (relation !== undefined) { sets.push('relation = ?'); args.push(relation); }
+    if (alias !== undefined) { sets.push('alias = ?'); args.push(alias); }
     if (sets.length === 0) return false;
     args.push(bindingId);
     const result = await db.execute({
@@ -748,7 +774,7 @@ export async function getFamilyBoundVisuallyImpairedUsers(familyAccountId) {
   if (!db || !familyAccountId) return [];
   try {
     const rs = await db.execute({
-      sql: `SELECT fb.id AS binding_id, fb.user_account_id, fb.family_name, fb.relation,
+      sql: `SELECT fb.id AS binding_id, fb.user_account_id, fb.family_name, fb.relation, fb.alias,
                    fb.invited_at, fb.bound_at,
                    a.username, a.nickname, a.phone, a.role
             FROM family_bindings fb
@@ -760,6 +786,7 @@ export async function getFamilyBoundVisuallyImpairedUsers(familyAccountId) {
     return rs.rows.map(r => ({
       id: `bind_${r.binding_id}`,
       name: r.nickname || r.username || '视障用户',
+      alias: r.alias || '',
       age: null,
       relation: r.relation || '被守护人',
       phone: r.phone || '',
@@ -1431,6 +1458,115 @@ export async function getMemoryStats() {
     habits: habitsRs.rows[0].c,
     sos_events: sosRs.rows[0].c,
   };
+}
+
+// ===== Agent 调用次数统计(持久化) =====
+
+/**
+ * 记录一次 Agent 调用(累加计数)
+ * @param {string} agentId Agent标识
+ * @param {string} agentName Agent显示名称(可选)
+ */
+export async function recordAgentCall(agentId, agentName) {
+  if (!db || !agentId) return;
+  try {
+    const now = new Date().toISOString();
+    await db.execute({
+      sql: `INSERT INTO agent_calls (agent_id, agent_name, call_count, last_called_at, created_at)
+            VALUES (?, ?, 1, ?, ?)
+            ON CONFLICT(agent_id) DO UPDATE SET
+              call_count = call_count + 1,
+              last_called_at = ?,
+              agent_name = COALESCE(?, agent_name)`,
+      args: [agentId, agentName || null, now, now, now, agentName || null],
+    });
+  } catch (err) {
+    log('A05', `记录Agent调用失败: ${err.message}`, 'warn');
+  }
+}
+
+/**
+ * 获取所有 Agent 的调用次数统计
+ * @returns {Promise<Array<{agent_id, agent_name, call_count, last_called_at}>>}
+ */
+export async function getAgentCallStats() {
+  if (!db) return [];
+  try {
+    const rs = await db.execute({
+      sql: 'SELECT agent_id, agent_name, call_count, last_called_at FROM agent_calls ORDER BY call_count DESC',
+    });
+    return rs.rows || [];
+  } catch (err) {
+    log('A05', `获取Agent调用统计失败: ${err.message}`, 'warn');
+    return [];
+  }
+}
+
+// ===== 设备状态(电量/充电/在线) =====
+
+/**
+ * 上报/更新设备状态(视障人员端调用)
+ * @param {number} accountId 账户ID
+ * @param {{battery?: number, charging?: number, online?: number}} status
+ */
+export async function updateDeviceStatus(accountId, { battery, charging, online }) {
+  if (!db || !accountId) return false;
+  try {
+    const now = new Date().toISOString();
+    const sets = [];
+    const args = [];
+    if (battery !== undefined) { sets.push('battery = ?'); args.push(battery); }
+    if (charging !== undefined) { sets.push('charging = ?'); args.push(charging); }
+    if (online !== undefined) { sets.push('online = ?'); args.push(online); }
+    sets.push('updated_at = ?'); args.push(now);
+    args.push(accountId);
+    await db.execute({
+      sql: `INSERT INTO device_status (account_id, battery, charging, online, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(account_id) DO UPDATE SET ${sets.join(', ')}`,
+      args: [accountId, battery ?? null, charging ?? 0, online ?? 1, now, ...args.slice(0, -1)],
+    });
+    return true;
+  } catch (err) {
+    log('A05', `更新设备状态失败: ${err.message}`, 'warn');
+    return false;
+  }
+}
+
+/**
+ * 获取设备状态(家属端/管理端调用)
+ * @param {number} accountId 视障用户账户ID
+ * @returns {Promise<{battery, charging, online, updated_at} | null>}
+ */
+export async function getDeviceStatus(accountId) {
+  if (!db || !accountId) return null;
+  try {
+    const rs = await db.execute({
+      sql: 'SELECT battery, charging, online, updated_at FROM device_status WHERE account_id = ?',
+      args: [accountId],
+    });
+    return rs.rows[0] || null;
+  } catch (err) {
+    log('A05', `获取设备状态失败: ${err.message}`, 'warn');
+    return null;
+  }
+}
+
+/**
+ * 获取最新上报的设备状态(管理端用,取所有设备中最近更新的)
+ * @returns {Promise<{battery, charging, online, updated_at, account_id} | null>}
+ */
+export async function getLatestDeviceStatus() {
+  if (!db) return null;
+  try {
+    const rs = await db.execute({
+      sql: 'SELECT account_id, battery, charging, online, updated_at FROM device_status ORDER BY updated_at DESC LIMIT 1',
+    });
+    return rs.rows[0] || null;
+  } catch (err) {
+    log('A05', `获取最新设备状态失败: ${err.message}`, 'warn');
+    return null;
+  }
 }
 
 // ===== 数据分析聚合查询(管理后台 /admin/analytics) =====

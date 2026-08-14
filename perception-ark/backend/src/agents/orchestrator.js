@@ -11,7 +11,7 @@
 import { visionUnderstand, ocrRecognize, faceDescribe, isConfigured, getModels } from '../services/trae-client.js';
 import { planWalkRoute, searchPOI } from '../services/amap-client.js';
 import {
-  searchRoutes, searchFaces, getHabit, upsertHabit, addRoute, addFace, addSosEvent, updateSosStatus, getMemoryStats, getAllUsers, addStatusEvent
+  searchRoutes, searchFaces, getHabit, upsertHabit, addRoute, addFace, addSosEvent, updateSosStatus, getMemoryStats, getAllUsers, addStatusEvent, recordAgentCall
 } from '../services/memory-store.js';
 import { understandIntent } from '../services/assistant.js';
 import { log, genId, now, calcDistance } from '../utils/logger.js';
@@ -74,6 +74,11 @@ function emit(event) {
   // 异步持久化关键事件到家属端状态事件表(默认保存3天,供家属端分页查询/编辑/删除)
   // 非阻塞,失败不影响主流程
   persistStatusEvent(event).catch(() => {});
+  // 异步记录 Agent 调用次数(持久化到 agent_calls 表,供管理后台统计)
+  if (event.agentId) {
+    const agentInfo = sharedContext.agents?.[event.agentId];
+    recordAgentCall(event.agentId, agentInfo?.name || event.agentId).catch(() => {});
+  }
 }
 
 /**

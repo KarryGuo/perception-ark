@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import bcrypt from 'bcryptjs';
 import axios from 'axios';
-import { createAccount, getAccountByUsername, getAccountById, getAccountByPhone, updateAccountProfile, deleteAccount, getSecurityQuestion, verifySecurityAnswer, resetPassword, updateSecurity, addFamilyBinding, getFamilyBindings, removeFamilyBinding, getActiveFamilyBindingsAsContacts, confirmFamilyBinding, rejectFamilyBinding, getPendingConfirmViBindings, addLoginLog, updateAccountLastLogin } from '../services/memory-store.js';
+import { createAccount, getAccountByUsername, getAccountById, getAccountByPhone, updateAccountProfile, deleteAccount, getSecurityQuestion, verifySecurityAnswer, resetPassword, updateSecurity, addFamilyBinding, getFamilyBindings, removeFamilyBinding, getActiveFamilyBindingsAsContacts, confirmFamilyBinding, rejectFamilyBinding, getPendingConfirmViBindings, addLoginLog, updateAccountLastLogin, updateDeviceStatus } from '../services/memory-store.js';
 import { generateToken, authRequired } from '../services/auth.js';
 import { sendFamilyInviteSms } from '../services/sms.js';
 import { log } from '../utils/logger.js';
@@ -814,5 +814,32 @@ function buildUserPayload(account) {
     status: account.status || 'active'
   };
 }
+
+/**
+ * 设备状态上报(视障人员端调用,上报真实电池电量/充电状态)
+ * POST /api/auth/device-status
+ * body: { battery: number, charging: boolean, online: boolean }
+ */
+router.post('/device-status', authRequired, async (req, res) => {
+  try {
+    const { battery, charging, online } = req.body;
+    if (battery === undefined || battery === null) {
+      return res.status(400).json({ success: false, error: '缺少 battery 参数' });
+    }
+    const batteryNum = parseInt(battery, 10);
+    if (isNaN(batteryNum) || batteryNum < 0 || batteryNum > 100) {
+      return res.status(400).json({ success: false, error: 'battery 参数无效(0-100)' });
+    }
+    await updateDeviceStatus(req.user.id, {
+      battery: batteryNum,
+      charging: charging ? 1 : 0,
+      online: online !== false ? 1 : 0,
+    });
+    res.json({ success: true });
+  } catch (err) {
+    log('AUTH', `设备状态上报失败: ${err.message}`, 'error');
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 
 export default router;

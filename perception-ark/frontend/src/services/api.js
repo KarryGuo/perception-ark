@@ -107,6 +107,13 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ question, answer })
     }),
+  // 设备状态上报(电池电量/充电状态)
+  reportDeviceStatus: (battery, charging, online = true) =>
+    request('/auth/device-status', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ battery, charging, online })
+    }),
   // 家属绑定(视障用户邀请家属)
   bindFamily: (phone, name, relation) =>
     request('/auth/family/bind', {

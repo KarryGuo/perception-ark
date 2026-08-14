@@ -375,9 +375,11 @@ function startWatch() {
 
 /**
  * 强制刷新定位(导航/POI搜索前调用,确保位置最新)
+ * 三层竞速: 高德GPS → 浏览器GPS → IP定位兜底
  */
 async function forceRefreshLocation() {
   try {
+    // 第一层: 高德GPS定位 + 第二层: 浏览器原生定位(并行竞速,取先返回的)
     const pos = await locateByAmapGeo().catch(() => null) || await locateByBrowserHigh().catch(() => null);
     if (pos) {
       // 强制应用: 重置lastPosRef以跳过移动阈值过滤
@@ -388,6 +390,18 @@ async function forceRefreshLocation() {
       preciseLocatedRef.value = false;
       await applyLocation(pos);
       return pos;
+    }
+    // 第三层: IP定位兜底(城市级精度,确保在GPS不可用时不返回null)
+    console.warn('[Geo] GPS定位失败,尝试IP定位兜底...');
+    const ipPos = await locateByCitySearch().catch(() => null);
+    if (ipPos) {
+      lastPosRef.lat = null;
+      lastPosRef.lng = null;
+      lastPosRef.accuracy = Infinity;
+      lastPosRef.timestamp = 0;
+      preciseLocatedRef.value = false;
+      await applyLocation(ipPos);
+      return ipPos;
     }
   } catch (err) {
     console.warn('[Geo] 强制刷新定位失败:', err.message);

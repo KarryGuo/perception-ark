@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getSosEvents, getMemoryStats, getAllRoutes, searchFaces, getAllUsers, addUser, deleteUser, updateUser, getAllHabits, findUserAccountByPhone, syncFamilyBindingFromFamilySide, getAccountById, getFamilyBoundVisuallyImpairedUsers, confirmFamilyBinding, rejectFamilyBinding, getPendingConfirmFamilyBindings, updateFamilyBinding, removeFamilyBindingByFamily, getStatusEvents, updateStatusEvent, deleteStatusEvent, pruneOldStatusEvents } from '../services/memory-store.js';
+import { getSosEvents, getMemoryStats, getAllRoutes, searchFaces, getAllUsers, addUser, deleteUser, updateUser, getAllHabits, findUserAccountByPhone, syncFamilyBindingFromFamilySide, getAccountById, getFamilyBoundVisuallyImpairedUsers, confirmFamilyBinding, rejectFamilyBinding, getPendingConfirmFamilyBindings, updateFamilyBinding, removeFamilyBindingByFamily, getStatusEvents, updateStatusEvent, deleteStatusEvent, pruneOldStatusEvents, getDeviceStatus, updateDeviceStatus } from '../services/memory-store.js';
 import { getContext, getStats } from '../agents/orchestrator.js';
 import { authRequired } from '../services/auth.js';
 import { log } from '../utils/logger.js';
@@ -95,7 +95,7 @@ router.delete('/users/:id', authRequired, async (req, res) => {
     const idParam = req.params.id;
     // 处理通过邀请绑定的用户(id格式为 bind_xxx)
     if (idParam.startsWith('bind_')) {
-      const bindingId = parseInt(idParam.slice(6));
+      const bindingId = parseInt(idParam.slice(5));
       if (!bindingId) {
         return res.status(400).json({ success: false, error: '无效的绑定ID' });
       }
@@ -184,13 +184,14 @@ router.put('/users/:id', authRequired, async (req, res) => {
     // 这类用户的信息存储在family_bindings表中,家属仅能更新称呼(family_name)和自定义称呼(alias)
     // 姓名和关系由视障用户本人维护,家属不可修改
     if (idParam.startsWith('bind_')) {
-      const bindingId = parseInt(idParam.slice(6));
+      const bindingId = parseInt(idParam.slice(5));
       if (!bindingId) {
         return res.status(400).json({ success: false, error: '无效的绑定ID' });
       }
       const ok = await updateFamilyBinding(bindingId, {
         family_name: name,
-        relation: relation || undefined
+        relation: relation || undefined,
+        alias: alias || undefined
       });
       if (!ok) {
         return res.status(500).json({ success: false, error: '更新失败,绑定记录可能不存在' });
@@ -270,6 +271,17 @@ router.get('/overview', authRequired, async (req, res) => {
       primary: i === 0
     }));
 
+  // 设备电量: 从 device_status 表获取被守护人的真实设备状态
+  let overviewDeviceBattery = 0;
+  let overviewDeviceCharging = false;
+  if (primaryUser?.bound_account_id) {
+    const devStatus = await getDeviceStatus(primaryUser.bound_account_id);
+    if (devStatus) {
+      overviewDeviceBattery = devStatus.battery ?? 0;
+      overviewDeviceCharging = !!devStatus.charging;
+    }
+  }
+
   res.json({
     users,
     user: {
@@ -277,7 +289,8 @@ router.get('/overview', authRequired, async (req, res) => {
       location: privacyFilterLocation(context.currentLocation),  // 模糊化位置
       activity: context.userActivity,
       // 隐私保护: 不返回 lastSpoken(聊天内容属于隐私)
-      battery: parseInt(process.env.DEVICE_BATTERY || '87', 10),
+      battery: overviewDeviceBattery,
+      charging: overviewDeviceCharging,
       online: true
     },
     agents: context.agents,
@@ -488,6 +501,18 @@ router.get('/dashboard', authRequired, async (req, res) => {
     last_visited: r.last_visited
   }));
 
+  // 设备电量: 从 device_status 表获取被守护人的真实设备状态
+  let deviceBattery = 0;
+  let deviceCharging = false;
+  const boundAccountId = users[0]?.bound_account_id;
+  if (boundAccountId) {
+    const devStatus = await getDeviceStatus(boundAccountId);
+    if (devStatus) {
+      deviceBattery = devStatus.battery ?? 0;
+      deviceCharging = !!devStatus.charging;
+    }
+  }
+
   res.json({
     stats: {
       totalRecognitions: recognitionCount,
@@ -507,7 +532,8 @@ router.get('/dashboard', authRequired, async (req, res) => {
       location: privacyFilterLocation(context.currentLocation),  // 模糊化位置
       activity: context.userActivity,
       // 隐私保护: 不返回 lastSpoken
-      battery: parseInt(process.env.DEVICE_BATTERY || '87', 10),
+      battery: deviceBattery,
+      charging: deviceCharging,
       online: true
     },
     agents: context.agents,

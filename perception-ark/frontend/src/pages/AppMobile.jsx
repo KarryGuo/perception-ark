@@ -345,6 +345,49 @@ function AppMobileUser() {
     if (localStorage.getItem('ark_high_contrast') === 'true') document.body.classList.add('ark-high-contrast');
   }, []);
 
+  // 设备电量获取与上报(使用 Battery Status API 对接手机真实电量)
+  // 每60秒定时上报 + 电量/充电状态变化时即时上报
+  useEffect(() => {
+    let battery = null;
+    let interval = null;
+    let mounted = true;
+
+    const reportBattery = async (b) => {
+      if (!mounted || !b) return;
+      try {
+        const level = Math.round((b.level || 0) * 100);
+        const charging = !!b.charging;
+        await api.reportDeviceStatus(level, charging, true);
+      } catch (err) {
+        // 静默失败,不影响主流程
+      }
+    };
+
+    const handleLevelChange = () => reportBattery(battery);
+    const handleChargingChange = () => reportBattery(battery);
+
+    if (navigator.getBattery) {
+      navigator.getBattery().then(b => {
+        if (!mounted) return;
+        battery = b;
+        reportBattery(battery);
+        battery.addEventListener('levelchange', handleLevelChange);
+        battery.addEventListener('chargingchange', handleChargingChange);
+        // 每60秒定时上报
+        interval = setInterval(() => reportBattery(battery), 60000);
+      }).catch(() => {});
+    }
+
+    return () => {
+      mounted = false;
+      if (battery) {
+        battery.removeEventListener('levelchange', handleLevelChange);
+        battery.removeEventListener('chargingchange', handleChargingChange);
+      }
+      if (interval) clearInterval(interval);
+    };
+  }, []);
+
   // 摄像头启动(带降级处理)
   const startCamera = useCallback(async () => {
     if (camera.active) return true;

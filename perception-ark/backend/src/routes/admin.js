@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getAllAccounts, updateAccountStatus, addAdminLog, getAdminLogs, getMemoryStats, getSosEvents, getLast7DaysStats, getSosDistribution, getAccountGrowth, getLoginLogs } from '../services/memory-store.js';
+import { getAllAccounts, updateAccountStatus, addAdminLog, getAdminLogs, getMemoryStats, getSosEvents, getLast7DaysStats, getSosDistribution, getAccountGrowth, getLoginLogs, getAgentCallStats, getLatestDeviceStatus } from '../services/memory-store.js';
 import { getContext, getStats } from '../agents/orchestrator.js';
 import { authRequired } from '../services/auth.js';
 import { log } from '../utils/logger.js';
@@ -104,6 +104,11 @@ router.get('/devices', async (req, res) => {
   // 在线设备数: 当前有WebSocket连接的设备(简化为context有位置信息则视为在线)
   const onlineDevices = context.currentLocation ? 1 : 0;
 
+  // 设备电量: 从 device_status 表获取真实数据(取最新上报的设备)
+  const latestDevice = await getLatestDeviceStatus();
+  const deviceBattery = latestDevice?.battery ?? 0;
+  const deviceCharging = !!latestDevice?.charging;
+
   res.json({
     accounts: {
       total: accounts.length,
@@ -115,7 +120,8 @@ router.get('/devices', async (req, res) => {
     },
     devices: {
       online: true,
-      battery: parseInt(process.env.DEVICE_BATTERY || '87', 10),
+      battery: deviceBattery,
+      charging: deviceCharging,
       location: context.currentLocation,
       activity: context.userActivity,
       onlineDevices
@@ -153,11 +159,12 @@ router.get('/analytics', async (req, res) => {
     const context = getContext();
     const agents = context.agents || {};
 
-    // 并行获取所有聚合数据
-    const [last7days, sosDistribution, accountGrowth] = await Promise.all([
+    // 并行获取所有聚合数据(含持久化的 Agent 调用统计)
+    const [last7days, sosDistribution, accountGrowth, agentCallStats] = await Promise.all([
       getLast7DaysStats(),
       getSosDistribution(),
       getAccountGrowth(),
+      getAgentCallStats(),
     ]);
 
     // 从 context.history 按天聚合识别次数与安全检查次数
@@ -171,8 +178,6 @@ router.get('/analytics', async (req, res) => {
       d.setDate(d.getDate() - i);
       dateBuckets.set(d.toISOString().slice(0, 10), { recognitions: 0, safety: 0 });
     }
-    // 同时按 agentId 统计调用次数(只计有 agentId 的事件)
-    const agentCallMap = new Map();
     for (const evt of history) {
       const ts = evt.timestamp;
       if (ts) {
@@ -183,8 +188,6 @@ router.get('/analytics', async (req, res) => {
           else if (evt.type === 'safety_result') bucket.safety += 1;
         }
       }
-      const aid = evt.agentId;
-      if (aid) agentCallMap.set(aid, (agentCallMap.get(aid) || 0) + 1);
     }
 
     // 合并 last7days: 补充 recognitions/safety 字段
@@ -196,6 +199,12 @@ router.get('/analytics', async (req, res) => {
       safety: dateBuckets.get(row.date)?.safety || 0,
     }));
 
+    // Agent 调用次数: 从持久化的 agent_calls 表获取真实累计统计
+    const agentCallMap = new Map();
+    for (const ac of agentCallStats) {
+      agentCallMap.set(ac.agent_id, ac.call_count || 0);
+    }
+
     // Agent状态(扁平化为数组,只暴露必要字段)
     const agentStatus = Object.entries(agents).map(([key, info]) => ({
       key,
@@ -205,6 +214,19 @@ router.get('/analytics', async (req, res) => {
       priority: info.priority,
       calls: agentCallMap.get(key) || 0,
     }));
+    // 补充: agent_calls 表中有记录但当前 agents 对象中没有的(历史调用过的Agent)
+    for (const ac of agentCallStats) {
+      if (!agents[ac.agent_id]) {
+        agentStatus.push({
+          key: ac.agent_id,
+          name: ac.agent_name || ac.agent_id,
+          active: false,
+          color: null,
+          priority: null,
+          calls: ac.call_count || 0,
+        });
+      }
+    }
 
     res.json({
       last7days: last7daysFull,
