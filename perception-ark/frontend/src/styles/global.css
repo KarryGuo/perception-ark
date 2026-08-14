@@ -4774,3 +4774,93 @@ body.ark-large-font .am-tutorial-btn { font-size: 1.1rem; }
   .ark-theme-toggle > span:last-child { display: none; }
   .ark-theme-toggle { padding: 6px 10px !important; min-width: 40px; }
 }
+
+/* ============================================
+   语音唤醒状态指示器(视障端)
+   - 默认: 唤醒词监听中(绿点脉冲)
+   - .listening: 唤醒后的对话中(紫色高亮)
+   - .off: 监听暂时离线,自动恢复中(琥珀色)
+   - .denied: 麦克风权限被拒(红色警示)
+   位置: 顶部居中悬浮,不遮挡右上工具栏与底部操作区
+   ============================================ */
+.am-wake-indicator {
+  position: absolute;
+  top: calc(env(safe-area-inset-top, 0px) + 12px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: 999px;
+  background: var(--glass, rgba(13, 17, 28, 0.6));
+  border: 1px solid var(--gb, rgba(255, 255, 255, 0.08));
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  color: var(--ink-soft, #D0D8E8);
+  font-size: .88rem;
+  font-weight: 600;
+  letter-spacing: .02em;
+  white-space: nowrap;
+  pointer-events: none; /* 纯指示器,不拦截触摸 */
+  user-select: none;
+}
+
+/* 状态圆点: 默认绿色脉冲(监听中) */
+.am-wake-indicator .am-wake-dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--bio-emerald, #00FFA3);
+  box-shadow: 0 0 8px rgba(0, 255, 163, 0.7);
+  animation: am-wake-pulse 2s ease-in-out infinite;
+}
+
+/* 唤醒后的对话中: 紫色高亮,脉冲更快 */
+.am-wake-indicator.listening {
+  color: var(--ink, #EAF0FF);
+  border-color: rgba(123, 97, 255, 0.45);
+  box-shadow: 0 0 16px rgba(123, 97, 255, 0.25);
+}
+.am-wake-indicator.listening .am-wake-dot {
+  background: var(--bio-violet, #7B61FF);
+  box-shadow: 0 0 10px rgba(123, 97, 255, 0.8);
+  animation-duration: 1s;
+}
+
+/* 监听离线恢复中: 琥珀色,呼吸提示 */
+.am-wake-indicator.off .am-wake-dot {
+  background: var(--bio-amber, #FFB627);
+  box-shadow: 0 0 8px rgba(255, 182, 39, 0.7);
+  animation-duration: 1.4s;
+}
+
+/* 麦克风未授权: 红色警示,不闪烁(持续报警状态) */
+.am-wake-indicator.denied {
+  color: var(--bio-magenta, #FF2E7E);
+  border-color: rgba(255, 46, 126, 0.4);
+}
+.am-wake-indicator.denied .am-wake-dot {
+  background: var(--bio-magenta, #FF2E7E);
+  box-shadow: 0 0 8px rgba(255, 46, 126, 0.7);
+  animation: none;
+}
+
+@keyframes am-wake-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: .45; transform: scale(.82); }
+}
+
+/* 窄屏适配: 缩小内边距,避免与右上工具栏重叠 */
+@media (max-width: 480px) {
+  .am-wake-indicator {
+    padding: 6px 12px;
+    font-size: .78rem;
+    gap: 6px;
+    max-width: calc(100vw - 120px); /* 避开右上工具栏 */
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+}

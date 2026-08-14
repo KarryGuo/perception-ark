@@ -12,7 +12,11 @@ import { cacheRoute, cacheContact, getCachedContacts } from '../services/offline
 import MapView from '../components/MapView.jsx';
 import Family from './Family.jsx';
 
-const WAKE_WORDS = ['小舟小舟', '小周小周', '小舟'];
+const WAKE_WORDS = ['小舟小舟', '小周小周', '小州小州', '小舟小周', '小周小舟', '小舟', '小周', '小州'];
+// 常见随身物品关键词(用于区分"寻找物品→寻物模式"与"查找地点→智能导航")
+const ITEM_KEYWORDS = ['钥匙', '钥匙扣', '钥匙串', '手机', '眼镜', '老花镜', '眼镜盒', '钱包', '水杯', '茶杯', '杯子', '保温杯', '拐杖', '盲杖', '药盒', '身份证', '社保卡', '银行卡', '遥控器', '雨伞', '书包', '背包', '耳机', '充电器', '充电宝', '数据线', '手表', '手环', '戒指', '项链', '帽子', '口罩', '纸巾', '水壶', '饭盒', '筷子', '剪刀', '指甲刀', '助听器', '手套', '围巾', '行李箱', '钱包卡包'];
+// 地点关键词(优先按地点处理→智能导航)
+const PLACE_KEYWORDS = ['超市', '商场', '商店', '便利店', '医院', '诊所', '药店', '银行', 'ATM', '地铁', '公交', '车站', '火车站', '高铁站', '机场', '公园', '广场', '餐厅', '饭馆', '饭店', '小吃', '菜市场', '市场', '学校', '厕所', '卫生间', '公司', '派出所', '警务站', '加油站', '酒店', '宾馆', '书店', '图书馆', '健身房', '景点', '游乐场', '社区', '居委会', '邮局', '营业厅'];
 
 // App端入口: 根据角色分流(家属→家属监控视图,视障人员→原功能,管理员→不允许访问App端)
 export default function AppMobile() {
@@ -85,7 +89,7 @@ function AppMobileUser() {
   const pendingPoisRef = useRef([]); // 同步引用
   const activeTabRef = useRef('recognize'); // 同步引用: 跟踪当前tab,用于异步操作完成后判断是否还需要speak
 
-  const { speak, stop: stopSpeak, speaking: ttsSpeaking, setVoiceByName, setVoiceByGender, voice: currentVoice } = useSpeechSynthesis();
+  const { speak: speakBase, stop: stopSpeakBase, speaking: ttsSpeaking, setVoiceByName, setVoiceByGender, voice: currentVoice } = useSpeechSynthesis();
   const spatialAudio = useSpatialAudio();
   const asr = useSpeechRecognition();
   const camera = useCamera();
@@ -96,7 +100,34 @@ function AppMobileUser() {
   // TTS播报状态ref(同步引用): 唤醒词/命令ASR据此判断是否应忽略结果
   // 防止TTS音频被麦克风拾取→误触发唤醒词→speak('我在请说')→generation递增→中断当前播报
   const ttsSpeakingRef = useRef(false);
-  useEffect(() => { ttsSpeakingRef.current = ttsSpeaking; }, [ttsSpeaking]);
+  // ===== TTS回声精确防护(修复"小舟小舟无法唤醒"的核心bug) =====
+  // Chrome的speechSynthesis.speaking在cancel()/onend丢失后会永久卡在true(已知浏览器bug),
+  // 之前直接信任该原生状态导致唤醒词识别结果被永久忽略 → 唤醒失效。
+  // 改为基于"TTS开始时间+估算时长上限"的回声窗口判断,超时后即使speaking卡死也恢复识别。
+  const ttsEchoUntilRef = useRef(0);   // TTS结束后回声尾音消散截止时间(ms时间戳)
+  const ttsStuckUntilRef = useRef(0);  // 本次TTS最长播报截止时间(超过则视为speaking状态卡死)
+  useEffect(() => {
+    ttsSpeakingRef.current = ttsSpeaking;
+    if (!ttsSpeaking) ttsEchoUntilRef.current = Math.max(ttsEchoUntilRef.current, Date.now() + 1500);
+  }, [ttsSpeaking]);
+  // 包装speak: 记录TTS开始,按文本长度估算最长播报时长(防speaking卡死导致唤醒永久失效)
+  const speak = useCallback((text, options = {}) => {
+    ttsStuckUntilRef.current = Date.now() + Math.min((text ? text.length : 0) * 300 + 3500, 60000);
+    return speakBase(text, options);
+  }, [speakBase]);
+  // 包装stopSpeak: 停止后立即开启回声消散窗口
+  const stopSpeak = useCallback((...args) => {
+    ttsEchoUntilRef.current = Math.max(ttsEchoUntilRef.current, Date.now() + 1200);
+    return stopSpeakBase(...args);
+  }, [stopSpeakBase]);
+  // 判断当前是否处于TTS回声窗口(此时应忽略ASR识别结果)
+  const isTtsEcho = useCallback(() => {
+    const now = Date.now();
+    if (ttsSpeakingRef.current && now < ttsStuckUntilRef.current) return true; // 真实播报中
+    return now < ttsEchoUntilRef.current; // 播报结束后的尾音消散窗口 / speaking卡死超时后自动放行
+  }, []);
+  const isTtsEchoRef = useRef(isTtsEcho);
+  useEffect(() => { isTtsEchoRef.current = isTtsEcho; }, [isTtsEcho]);
 
   const showToast = useCallback((text) => {
     setToast(text);
@@ -127,6 +158,12 @@ function AppMobileUser() {
   const asrRetryCountRef = useRef(0); // ASR自动重启重试计数(防止无限循环)
   const wakeStartRef = useRef(null);
   const wakeStopRef = useRef(null);
+  const wakeDialogueRef = useRef(false); // 唤醒对话状态同步引用(避免ASR onend闭包陈旧)
+  const wakePermDeniedRef = useRef(false); // 麦克风权限被拒(不再自动重试,等待用户授权)
+  const poiSelectTimerRef = useRef(null); // POI选择超时定时器
+  const [wakeListeningUi, setWakeListeningUi] = useState(false); // 唤醒监听状态(UI指示器)
+  const [wakePermDeniedUi, setWakePermDeniedUi] = useState(false); // 麦克风权限被拒(UI指示器)
+  useEffect(() => { wakeDialogueRef.current = wakeDialogue; }, [wakeDialogue]);
   const lastTravelSpeakRef = useRef(''); // 出行模式上次播报文本(去重,避免重复播报相同内容)
   const lastTravelTimeRef = useRef(0); // 出行模式上次播报时间(强制刷新间隔)
 
@@ -203,10 +240,13 @@ function AppMobileUser() {
   }, []);
 
   const startWakeListener = useCallback(() => {
-    if (!voiceWakeActive || wakeListeningRef.current) return;
+    if (!voiceWakeActive || wakeListeningRef.current || wakeDialogueRef.current || wakePermDeniedRef.current) return;
     try {
       const WakeRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-      if (!WakeRecognition) return;
+      if (!WakeRecognition) {
+        showToast('当前浏览器不支持语音唤醒，请使用Chrome浏览器');
+        return;
+      }
       const recognition = new WakeRecognition();
       recognition.lang = 'zh-CN';
       recognition.continuous = true;
@@ -215,27 +255,48 @@ function AppMobileUser() {
       wakeAsrRef.current = recognition;
       wakePendingRef.current = '';
       recognition.onresult = (e) => {
-        // TTS正在播报时忽略唤醒词(防止TTS音频被麦克风拾取→误识别为唤醒词
-        // → speak('我在请说') → generation递增 → 中断当前识别结果播报)
-        // 同时检查浏览器原生speaking状态,确保ref未同步的短暂窗口也能拦截
-        if (ttsSpeakingRef.current || (window.speechSynthesis && window.speechSynthesis.speaking)) return;
+        // TTS回声窗口内忽略识别结果(防止TTS音频被麦克风拾取→误识别为唤醒词/指令)
+        // 使用精确回声窗口判断(原生speaking卡死时会自动放行,修复唤醒永久失效)
+        if (isTtsEchoRef.current()) return;
         let interim = '';
+        let finalText = '';
         for (let i = e.resultIndex; i < e.results.length; i++) {
-          interim += e.results[i][0].transcript;
+          const t = e.results[i][0].transcript;
+          if (e.results[i].isFinal) finalText += t;
+          else interim += t;
         }
-        const text = interim.replace(/\s/g, '');
+        // ===== POI选择模式: 任意最终语音直接作为选择指令("去第一个"/"取消"),无需唤醒词 =====
+        if (navDialogueModeRef.current === 'poi_select' && finalText.trim()) {
+          try { recognition.stop(); } catch(ex) {}
+          wakeListeningRef.current = false;
+          setWakeListeningUi(false);
+          suppressWakeRef.current = true;
+          handleVoiceInputRef.current?.(finalText.trim());
+          setWakeDialogue(false);
+          setTimeout(() => {
+            suppressWakeRef.current = false;
+            wakeStartRef.current?.();
+          }, 800);
+          return;
+        }
+        const text = (interim + finalText).replace(/\s/g, '');
         const detected = WAKE_WORDS.find(w => text.includes(w));
         if (detected) {
           // 检测到唤醒词: 立即停止唤醒词监听 + 抑制自动重启(防止onend抢占麦克风)
           try { recognition.stop(); } catch(ex) {}
           wakeListeningRef.current = false;
+          setWakeListeningUi(false);
           suppressWakeRef.current = true; // 关键: 阻止onend回调自动重启唤醒词
           setWakeDialogue(true);
           spatialAudio.beep('正前方', 0.12, 880);
           showToast('🎤 我在，请说...');
           wakePendingRef.current = '';
           // TTS播报"我在请说",onEnd后延迟1500ms启动命令ASR(等TTS尾音完全消散,避免回声)
-          speak('我在，请说', { rate: 1.05, onEnd: () => {
+          // 增加兜底定时器: 若TTS的onEnd未触发(Chrome偶发bug),按估算时长兜底启动命令识别
+          let dialogueStarted = false;
+          const startDialogue = () => {
+            if (dialogueStarted) return;
+            dialogueStarted = true;
             setTimeout(() => {
               const CmdRec = window.SpeechRecognition || window.webkitSpeechRecognition;
               if (!CmdRec) {
@@ -297,24 +358,47 @@ function AppMobileUser() {
                 wakeStartRef.current?.();
               }, 8000);
             }, 1500); // 1500ms: 等TTS尾音完全消散再启动命令ASR,避免回声循环
-          }});
+          };
+          speak('我在，请说', { rate: 1.05, onEnd: startDialogue });
+          // 兜底: "我在请说"约5字≈2秒,若onEnd未触发,2.5秒后强制进入命令识别
+          setTimeout(startDialogue, 2500);
         }
       };
-      recognition.onerror = () => {
+      recognition.onerror = (e) => {
         wakeListeningRef.current = false;
+        setWakeListeningUi(false);
+        // 麦克风权限被拒: 明确提示用户并停止重试(浏览器不会再次弹权限框)
+        if (e && (e.error === 'not-allowed' || e.error === 'service-not-allowed' || e.error === 'audio-capture')) {
+          if (!wakePermDeniedRef.current) {
+            wakePermDeniedRef.current = true;
+            setWakePermDeniedUi(true);
+            showToast('🎤 麦克风权限被拒绝，语音唤醒不可用。请在浏览器地址栏/系统设置中允许麦克风后刷新页面');
+          }
+          return;
+        }
         if (!suppressWakeRef.current) {
-          setTimeout(() => { if (voiceWakeActive && !suppressWakeRef.current) wakeStartRef.current?.(); }, 3000);
+          setTimeout(() => { if (voiceWakeActive && !suppressWakeRef.current && !wakePermDeniedRef.current) wakeStartRef.current?.(); }, 2000);
         }
       };
       recognition.onend = () => {
         wakeListeningRef.current = false;
-        // 仅在未被抑制(非唤醒对话中)且唤醒开关开启时自动重启
-        if (voiceWakeActive && !wakeDialogue && !suppressWakeRef.current) {
-          setTimeout(() => { if (!suppressWakeRef.current) wakeStartRef.current?.(); }, 800);
+        setWakeListeningUi(false);
+        // 仅在未被抑制(非唤醒对话中)且唤醒开关开启时自动重启(使用ref避免闭包陈旧)
+        if (voiceWakeActive && !wakeDialogueRef.current && !suppressWakeRef.current && !wakePermDeniedRef.current) {
+          setTimeout(() => { if (!suppressWakeRef.current && !wakeDialogueRef.current) wakeStartRef.current?.(); }, 600);
         }
       };
-      recognition.start();
-      wakeListeningRef.current = true;
+      try {
+        recognition.start();
+        wakeListeningRef.current = true;
+        setWakeListeningUi(true);
+        wakePermDeniedRef.current = false;
+      } catch (err) {
+        // start失败(如实例冲突): 稍后自动重试
+        wakeListeningRef.current = false;
+        setWakeListeningUi(false);
+        setTimeout(() => { if (voiceWakeActive && !suppressWakeRef.current && !wakeDialogueRef.current) wakeStartRef.current?.(); }, 1500);
+      }
     } catch (e) {
       console.warn('[Wake] 唤醒词初始化失败:', e);
     }
@@ -326,6 +410,7 @@ function AppMobileUser() {
       wakeAsrRef.current = null;
     }
     wakeListeningRef.current = false;
+    setWakeListeningUi(false);
     if (dialogueTimeoutRef.current) { clearTimeout(dialogueTimeoutRef.current); dialogueTimeoutRef.current = null; }
   }, []);
 
@@ -435,6 +520,20 @@ function AppMobileUser() {
       if (dialogueTimeoutRef.current) clearTimeout(dialogueTimeoutRef.current);
     };
   }, [firstUse]);
+
+  // 唤醒监听看门狗: 每6秒检查一次,若监听意外停止则自动恢复
+  // 防止ASR会话异常死亡(不触发onend/onerror)或start失败后唤醒永久失效
+  useEffect(() => {
+    if (firstUse) return;
+    const watchdog = setInterval(() => {
+      if (!voiceWakeActive || wakePermDeniedRef.current) return;
+      if (suppressWakeRef.current || wakeDialogueRef.current) return;
+      if (wakeListeningRef.current) return;
+      if (isTtsEchoRef.current()) return; // TTS播报/回声窗口期间不抢占麦克风
+      wakeStartRef.current?.();
+    }, 6000);
+    return () => clearInterval(watchdog);
+  }, [firstUse, voiceWakeActive]);
 
   // 引导教程语音
   useEffect(() => {
@@ -569,13 +668,13 @@ function AppMobileUser() {
   // 语音指令切换tab
   useEffect(() => {
     if (!asr.transcript) return;
-    // TTS正在播报时不处理ASR结果(避免TTS声音被拾取后误触发tab切换→stopSpeak中断播报)
-    if (ttsSpeaking) return;
+    // TTS回声窗口内不处理ASR结果(避免TTS声音被拾取后误触发tab切换→stopSpeak中断播报)
+    if (isTtsEchoRef.current()) return;
     const text = asr.transcript;
     if (/打开识别|识别模式|切换识别/.test(text)) { switchTab('recognize'); asr.stop(); }
     else if (/打开导航|导航模式|切换导航/.test(text)) { switchTab('navigate'); asr.stop(); }
     else if (/紧急呼救|SOS|救命|呼救/.test(text)) { switchTab('sos'); asr.stop(); }
-  }, [asr.transcript, ttsSpeaking]);
+  }, [asr.transcript, ttsSpeaking, switchTab, asr]);
 
   useEffect(() => {
     // 视障端SOS联系人: 从family_bindings表读取用户在设置中绑定的active家属
@@ -745,8 +844,8 @@ function AppMobileUser() {
 
   useEffect(() => {
     if (!asr.transcript || isPressingRef.current === null) return;
-    // 防护1: TTS正在播报时不处理ASR结果(避免回声循环)
-    if (ttsSpeaking) return;
+    // 防护1: TTS回声窗口内不处理ASR结果(避免回声循环)
+    if (isTtsEchoRef.current()) return;
     // 防护2: 正在处理上一条命令时不处理新结果
     if (isProcessingRef.current) return;
     const text = asr.transcript.trim();
@@ -1141,9 +1240,9 @@ function AppMobileUser() {
     let failCount = 0;
     const runOnce = async () => {
       if (running) return;
-      // TTS正在播报时跳过本次分析(避免堆积多条回复,等用户听完再分析下一帧)
+      // TTS回声窗口内跳过本次分析(避免堆积多条回复,等用户听完再分析下一帧)
       // 紧急情况(红灯/1米内障碍)不受此限制,在下方逻辑中用urgent抢占
-      if (ttsSpeakingRef.current || (window.speechSynthesis && window.speechSynthesis.speaking)) {
+      if (isTtsEchoRef.current()) {
         running = false;
         return;
       }
@@ -1602,13 +1701,24 @@ function AppMobileUser() {
         setMapPois(res.pois);
         setMapRoute(null);
 
-        // 构建播报文本
+        // POI选择90秒超时: 超时自动退出选择模式(避免唤醒监听长期把语音当选择指令)
+        if (poiSelectTimerRef.current) clearTimeout(poiSelectTimerRef.current);
+        poiSelectTimerRef.current = setTimeout(() => {
+          if (navDialogueModeRef.current === 'poi_select') {
+            setNavDialogueMode(null);
+            navDialogueModeRef.current = null;
+            setPendingPois([]);
+            pendingPoisRef.current = [];
+          }
+        }, 90000);
+
+        // 构建播报文本(告知用户无需再说唤醒词,直接说编号即可)
         let text = `已为您找到${res.pois.length}个附近的${keyword}。`;
         topPois.forEach((p, i) => {
           const dist = p.distance < 1000 ? `${p.distance}米` : `${(p.distance / 1000).toFixed(1)}公里`;
           text += `第${i + 1}个，${p.name}，距离您${dist}。`;
         });
-        text += '请问您要去哪一个？请说"去第一个"、"去第二个"或"去第三个"。';
+        text += '请问您要去哪一个？直接说"去第一个"、"去第二个"或"去第三个"。';
 
         addMessage('assistant', text);
         speak(text);
@@ -1649,6 +1759,7 @@ function AppMobileUser() {
     navDialogueModeRef.current = null;
     setPendingPois([]);
     pendingPoisRef.current = [];
+    if (poiSelectTimerRef.current) { clearTimeout(poiSelectTimerRef.current); poiSelectTimerRef.current = null; }
 
     const confirmText = `好的，正在为您导航到${poi.name}`;
     addMessage('assistant', confirmText);
@@ -1723,14 +1834,39 @@ function AppMobileUser() {
     if (/打开导航|导航模式/.test(text)) { switchTab('navigate'); return; }
     if (/紧急呼救|SOS|救命/.test(text)) { switchTab('sos'); return; }
 
+    // ===== 场景识别意图: "前面有什么"/"画面里是什么" =====
+    if (/^(前面|前方|眼前|周围|旁边|画面|画面里|画面中|现在|当前).{0,8}(有什么|是什么|有什么东西|怎么样)|^(看到了?什么|看到什么了)/.test(text)) {
+      switchTab('recognize');
+      handleOneShotRecognize();
+      return;
+    }
+
+    // ===== 寻物意图: "帮我寻找钥匙" → 直接开启寻物模式 =====
+    const findMatch = text.match(/^(?:请|麻烦)?(?:帮我|给我|我要|我想|想要)?(?:寻找|找寻|查找|找一下|找找|找到|找)(?:一?下)?(?:我的|一下)?([^,，。!?？!的]{1,12}?)(?:在哪|在哪里|在哪儿|呢|在哪边)?$/);
+    if (findMatch) {
+      const item = findMatch[1].trim();
+      const isPlace = PLACE_KEYWORDS.some(w => item.includes(w));
+      const isItem = ITEM_KEYWORDS.some(w => item.includes(w));
+      if (isItem && !isPlace) {
+        switchTab('recognize');
+        startFindMode(item);
+        return;
+      }
+    }
+
     // ===== 导航意图检测 → 走智能导航流程 =====
     if (activeTab === 'recognize') {
       let navDestination = null;
-      if (/^(导航[到去]?|带我去|我要去|我要导航[到去]?|帮我导航[到去]?)/.test(text)) {
-        navDestination = text.replace(/^(导航[到去]?|带我去|我要去|我要导航[到去]?|帮我导航[到去]?)/, '').trim();
+      // 注: [到去区]中"区"为"去"的常见同音字
+      if (/^(导航[到去区]?|带我去|我要去|我想去|我要导航[到去区]?|帮我导航[到去区]?|帮我寻找|帮我找一?下?)/.test(text)) {
+        navDestination = text.replace(/^(导航[到去区]?|带我去|我要去|我想去|我要导航[到去区]?|帮我导航[到去区]?|帮我寻找|帮我找一?下?)/, '').trim();
       } else {
         const m = text.match(/([^过来回出])去(.+)/);
         if (m) navDestination = m[2].trim();
+      }
+      if (!navDestination) {
+        const m = text.match(/^[去到]([^,，。!?？!]{1,20})$/);
+        if (m) navDestination = m[1].trim();
       }
       if (/怎么走|怎么去|路线|怎么到达|如何去|如何到达/.test(text) && !navDestination) {
         const m = text.match(/^(.+?)怎么[走去]/) || text.match(/^(.+?)路线/) || text.match(/^(.+?)(?:怎么|如何)到达/);
@@ -1758,7 +1894,7 @@ function AppMobileUser() {
     addMessage('user', text);
     if (activeTab === 'recognize') handleRecognizeCommand(text);
     else if (activeTab === 'navigate') handleNavigateCommand(text);
-  }, [activeTab, switchTab, addMessage, handleRecognizeCommand, handleNavigateCommand, startSmartNavigation]);
+  }, [activeTab, switchTab, addMessage, handleRecognizeCommand, handleNavigateCommand, startSmartNavigation, handleOneShotRecognize, startFindMode]);
 
   // ===== SOS紧急呼救(新流程: 立即发送位置 → 60秒后询问 → 再60秒无应答拨120) =====
   const handleSos = useCallback(async () => {
@@ -1856,9 +1992,9 @@ function AppMobileUser() {
 
   const handleVoiceInput = useCallback((text) => {
     if (!text) return;
-    // TTS正在播报时忽略命令(防止TTS音频被命令ASR拾取→误识别为命令→stopSpeak中断当前播报)
-    // 此场景下命令来自TTS回声而非用户真实语音,应直接丢弃
-    if (ttsSpeakingRef.current || (window.speechSynthesis && window.speechSynthesis.speaking)) return;
+    // TTS回声窗口内忽略命令(防止TTS音频被命令ASR拾取→误识别为命令→stopSpeak中断当前播报)
+    // 使用精确回声窗口判断: 真实播报中或尾音消散期内丢弃,回声窗口外正常处理
+    if (isTtsEchoRef.current()) return;
     const clean = text.trim();
     if (!clean) return;
     stopSpeak();
@@ -1873,6 +2009,7 @@ function AppMobileUser() {
         navDialogueModeRef.current = null;
         setPendingPois([]);
         pendingPoisRef.current = [];
+        if (poiSelectTimerRef.current) { clearTimeout(poiSelectTimerRef.current); poiSelectTimerRef.current = null; }
         speak('已取消导航选择');
         setSubtitle('已取消');
         return;
@@ -1907,6 +2044,31 @@ function AppMobileUser() {
     if (/关闭摄像头/.test(clean)) { camera.stop(); speak('摄像头已关闭'); return; }
     if (/停止|别说了|安静|闭嘴|停一下/.test(clean)) { stopSpeak(); spatialAudio.stop(); setSubtitle(''); return; }
     if (/帮助|怎么用|使用说明|教程|引导/.test(clean)) { setTutorialStep(0); setFirstUse(true); return; }
+    // 结束寻物: 寻物模式下说"结束寻找/停止寻找/不用找了"直接退出
+    if (activeMode === 'find' && /结束寻找|停止寻找|不用找了|不找了|退出寻找|取消寻找/.test(clean)) {
+      setActiveMode(null); setFindTarget(''); speak('寻物模式已关闭'); return;
+    }
+
+    // ===== 场景识别意图: "前面有什么"/"画面里是什么"/"看到了什么" → 立即识别当前画面 =====
+    if (/^(前面|前方|眼前|周围|旁边|画面|画面里|画面中|现在|当前).{0,8}(有什么|是什么|有什么东西|怎么样)|^(看到了?什么|看到什么了)/.test(clean)) {
+      switchTab('recognize');
+      handleOneShotRecognize();
+      return;
+    }
+
+    // ===== 寻物意图: "帮我寻找钥匙"/"找一下我的眼镜" → 直接开启寻物模式寻找物品 =====
+    // (在导航意图之前判断,避免"找钥匙"被误当作POI地点搜索)
+    const findMatch = clean.match(/^(?:请|麻烦)?(?:帮我|给我|我要|我想|想要)?(?:寻找|找寻|查找|找一下|找找|找到|找)(?:一?下)?(?:我的|一下)?([^,，。!?？!的]{1,12}?)(?:在哪|在哪里|在哪儿|呢|在哪边)?$/);
+    if (findMatch) {
+      const item = findMatch[1].trim();
+      const isPlace = PLACE_KEYWORDS.some(w => item.includes(w));
+      const isItem = ITEM_KEYWORDS.some(w => item.includes(w));
+      if (isItem && !isPlace) {
+        switchTab('recognize');
+        startFindMode(item);
+        return;
+      }
+    }
 
     const modeMap = { '出行模式': 'travel', '开始出行': 'travel', '开启出行': 'travel', '出行': 'travel', '红绿灯识别': 'traffic', '红绿灯': 'traffic', '识别': 'analyze', '快速分析': 'analyze', '分析': 'analyze', '阅读': 'read', '阅读模式': 'read', '朗读': 'read', '寻物': 'find' };
     for (const [kw, mode] of Object.entries(modeMap)) {
@@ -1943,11 +2105,18 @@ function AppMobileUser() {
     // ===== 导航意图检测: 走智能导航流程(搜索附近POI → 播报 → 选择 → 导航 → 出行模式) =====
     if (activeTab === 'recognize' || activeTab === 'navigate') {
       let navDestination = null;
-      if (/^(导航[到去]?|带我去|我要去|我要导航[到去]?|帮我导航[到去]?)/.test(clean)) {
-        navDestination = clean.replace(/^(导航[到去]?|带我去|我要去|我要导航[到去]?|帮我导航[到去]?)/, '').trim();
-      } else {
+      // 注: [到去区]中"区"为"去"的常见ASR同音误识别(如"我要导航区超市")
+      if (/^(导航[到去区]?|带我去|我要去|我想去|我要导航[到去区]?|帮我导航[到去区]?|帮我寻找|帮我找一?下?|带我去)/.test(clean)) {
+        navDestination = clean.replace(/^(导航[到去区]?|带我去|我要去|我想去|我要导航[到去区]?|帮我导航[到去区]?|帮我寻找|帮我找一?下?|带我去)/, '').trim();
+      }
+      if (!navDestination) {
         const m = clean.match(/([^过来回出])去(.+)/);
         if (m) navDestination = m[2].trim();
+      }
+      // 直接说"去超市"/"到超市"
+      if (!navDestination) {
+        const m = clean.match(/^[去到]([^,，。!?？!]{1,20})$/);
+        if (m) navDestination = m[1].trim();
       }
       if (!navDestination && /怎么走|怎么去|路线|怎么到达|如何去/.test(clean)) {
         const m = clean.match(/^(.+?)怎么[走去]/) || clean.match(/^(.+?)路线/);
@@ -1965,6 +2134,7 @@ function AppMobileUser() {
         const m = clean.match(/^附近(?:的)?(.+)$/);
         navDestination = m ? m[1].trim() : null;
       }
+      // 目的地为地点关键词时才走智能导航(防止"去第一个"以外的误触发)
       if (navDestination && navDestination.length >= 1 && navDestination.length < 50) {
         startSmartNavigation(navDestination);
         return;
@@ -1975,7 +2145,7 @@ function AppMobileUser() {
     isProcessingRef.current = true;
     if (activeTab === 'recognize') handleRecognizeCommand(clean);
     else if (activeTab === 'navigate') handleNavigateCommand(clean);
-  }, [switchTab, handleSos, handleSosRespond, handleSosCancel, startCamera, camera, activeMode, activeTab, addMessage, speak, stopSpeak, spatialAudio, handleNavigate, handleRecognizeCommand, handleNavigateCommand, handleOneShotRecognize, handleOneShotRead, startSmartNavigation, selectPoiAndNavigate]);
+  }, [switchTab, handleSos, handleSosRespond, handleSosCancel, startCamera, camera, activeMode, activeTab, addMessage, speak, stopSpeak, spatialAudio, handleNavigate, handleRecognizeCommand, handleNavigateCommand, handleOneShotRecognize, handleOneShotRead, startSmartNavigation, selectPoiAndNavigate, startFindMode]);
 
   useEffect(() => {
     handleVoiceInputRef.current = handleVoiceInput;
@@ -2050,6 +2220,28 @@ function AppMobileUser() {
         )}
         <button className="am-icon-btn" onClick={goSettings} title="设置" aria-label="打开设置">⚙️</button>
       </div>
+
+      {/* ===== 语音唤醒状态指示器(让用户随时知道唤醒监听是否在线) ===== */}
+      {!firstUse && wakeDialogue && (
+        <div className="am-wake-indicator listening" role="status" aria-live="assertive">
+          <span className="am-wake-dot" /> 我在听，请说指令
+        </div>
+      )}
+      {!firstUse && !wakeDialogue && wakeListeningUi && voiceWakeActive && (
+        <div className="am-wake-indicator" role="status" aria-label="语音唤醒监听中，请说小舟小舟">
+          <span className="am-wake-dot" /> 小舟小舟
+        </div>
+      )}
+      {!firstUse && !wakeDialogue && !wakeListeningUi && !wakePermDeniedUi && voiceWakeActive && (
+        <div className="am-wake-indicator off" role="status" aria-label="语音唤醒暂时离线，正在自动恢复">
+          <span className="am-wake-dot" /> 唤醒恢复中
+        </div>
+      )}
+      {wakePermDeniedUi && (
+        <div className="am-wake-indicator denied" role="alert" aria-label="麦克风权限被拒绝，语音唤醒不可用">
+          <span className="am-wake-dot" /> 麦克风未授权
+        </div>
+      )}
 
       {/* ===== 主内容浮层 ===== */}
       <div className="am-content-layer">
