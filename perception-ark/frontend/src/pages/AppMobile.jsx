@@ -665,17 +665,6 @@ function AppMobileUser() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // 语音指令切换tab
-  useEffect(() => {
-    if (!asr.transcript) return;
-    // TTS回声窗口内不处理ASR结果(避免TTS声音被拾取后误触发tab切换→stopSpeak中断播报)
-    if (isTtsEchoRef.current()) return;
-    const text = asr.transcript;
-    if (/打开识别|识别模式|切换识别/.test(text)) { switchTab('recognize'); asr.stop(); }
-    else if (/打开导航|导航模式|切换导航/.test(text)) { switchTab('navigate'); asr.stop(); }
-    else if (/紧急呼救|SOS|救命|呼救/.test(text)) { switchTab('sos'); asr.stop(); }
-  }, [asr.transcript, ttsSpeaking, switchTab, asr]);
-
   useEffect(() => {
     // 视障端SOS联系人: 从family_bindings表读取用户在设置中绑定的active家属
     // 确保显示的是视障用户自己绑定的家属,而非家属端users表数据
@@ -766,6 +755,17 @@ function AppMobileUser() {
     const names = { recognize: '识别', navigate: '导航', sos: '紧急呼救' };
     showToast(`已切换到${names[tab]}`);
   }, [showToast, stopSpeak, spatialAudio, stopNavigation, forceLocate, requestCompassPermission]);
+
+  // 语音指令切换tab(必须放在switchTab声明之后:useEffect依赖数组在渲染时立即求值,前向引用会触发TDZ错误)
+  useEffect(() => {
+    if (!asr.transcript) return;
+    // TTS回声窗口内不处理ASR结果(避免TTS声音被拾取后误触发tab切换→stopSpeak中断播报)
+    if (isTtsEchoRef.current()) return;
+    const text = asr.transcript;
+    if (/打开识别|识别模式|切换识别/.test(text)) { switchTab('recognize'); asr.stop(); }
+    else if (/打开导航|导航模式|切换导航/.test(text)) { switchTab('navigate'); asr.stop(); }
+    else if (/紧急呼救|SOS|救命|呼救/.test(text)) { switchTab('sos'); asr.stop(); }
+  }, [asr.transcript, ttsSpeaking, switchTab, asr]);
 
   // ===== 点击说话(切换模式: 点击开始录入,再点击结束) =====
   const handleToggleSpeak = useCallback(() => {
