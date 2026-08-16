@@ -1863,6 +1863,38 @@ input:focus-visible,
   margin-bottom: 16px;
 }
 
+/* ===== 语音登录助手按钮(视障用户登录页全程语音交互入口) ===== */
+.auth-voice-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  margin-top: 14px;
+  padding: 11px 14px;
+  background: transparent;
+  color: var(--bio-violet, #7B61FF);
+  border: 1px dashed rgba(123, 97, 255, 0.55);
+  border-radius: 10px;
+  font-size: .88rem;
+  font-weight: 600;
+  letter-spacing: .02em;
+  cursor: pointer;
+  transition: all .25s ease;
+}
+.auth-voice-btn .icon { font-size: 1.1rem; }
+.auth-voice-btn:hover { background: rgba(123, 97, 255, 0.08); border-style: solid; }
+.auth-voice-btn.on {
+  color: var(--bio-violet, #7B61FF);
+  border: 1px solid rgba(123, 97, 255, 0.75);
+  background: rgba(123, 97, 255, 0.12);
+  animation: auth-voice-breath 2s ease-in-out infinite;
+}
+@keyframes auth-voice-breath {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(123, 97, 255, 0.35); }
+  50% { box-shadow: 0 0 0 6px rgba(123, 97, 255, 0); }
+}
+
 .auth-btn {
   width: 100%;
   padding: 13px;
@@ -3527,108 +3559,6 @@ input:focus-visible,
   justify-content: center;
 }
 
-/* ===== 修改用户名表单 ===== */
-.sp-username-row {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-.sp-username-row .sp-user-info {
-  flex: 1;
-  min-width: 0;
-}
-.sp-username-form {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.sp-username-hint {
-  font-size: .8rem;
-  color: var(--ink-faint);
-  line-height: 1.5;
-  padding: 6px 10px;
-  background: rgba(255, 200, 0, 0.08);
-  border-left: 3px solid rgba(255, 200, 0, 0.5);
-  border-radius: 4px;
-}
-.sp-username-form .sp-input {
-  width: 100%;
-  padding: 12px 14px;
-  font-size: .95rem;
-  min-height: 48px;
-}
-.sp-username-checking {
-  font-size: .82rem;
-  color: var(--ink-faint);
-  padding: 4px 2px;
-}
-.sp-username-result {
-  padding: 8px 12px;
-  border-radius: 8px;
-  font-size: .85rem;
-  line-height: 1.5;
-}
-.sp-username-result.ok {
-  background: rgba(0, 255, 163, 0.08);
-  border: 1px solid rgba(0, 255, 163, 0.3);
-  color: var(--bio-emerald);
-}
-.sp-username-result.err {
-  background: rgba(255, 80, 80, 0.08);
-  border: 1px solid rgba(255, 80, 80, 0.3);
-  color: #ff6b6b;
-}
-.sp-username-status {
-  display: block;
-  font-weight: 600;
-}
-.sp-username-suggestions {
-  margin-top: 8px;
-}
-.sp-username-suggestions-title {
-  display: block;
-  font-size: .78rem;
-  color: var(--ink-muted);
-  margin-bottom: 6px;
-}
-.sp-username-suggestions-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.sp-username-suggestion-chip {
-  padding: 6px 12px;
-  background: rgba(0, 255, 163, 0.1);
-  border: 1px solid rgba(0, 255, 163, 0.35);
-  border-radius: 16px;
-  color: var(--bio-emerald);
-  font-size: .82rem;
-  font-weight: 600;
-  font-family: inherit;
-  cursor: pointer;
-  transition: all .2s;
-  min-height: 36px;
-  display: inline-flex;
-  align-items: center;
-}
-.sp-username-suggestion-chip:hover {
-  background: rgba(0, 255, 163, 0.2);
-  transform: translateY(-1px);
-}
-.sp-username-suggestion-chip:active {
-  transform: scale(.96);
-}
-.sp-username-cooldown {
-  font-size: .82rem;
-  color: #ffb74d;
-  padding: 6px 10px;
-  background: rgba(255, 183, 77, 0.08);
-  border-left: 3px solid rgba(255, 183, 77, 0.5);
-  border-radius: 4px;
-  line-height: 1.5;
-}
-
 /* 家属绑定列表 */
 .sp-family-list {
   display: flex;
@@ -4875,4 +4805,172 @@ body.ark-large-font .am-tutorial-btn { font-size: 1.1rem; }
 @media (max-width: 760px) {
   .ark-theme-toggle > span:last-child { display: none; }
   .ark-theme-toggle { padding: 6px 10px !important; min-width: 40px; }
+}
+
+/* ============================================
+   语音唤醒状态小药丸(视障端)
+   - 默认: 唤醒词监听中(绿点脉冲)
+   - .listening: 唤醒后的对话中(紫色高亮)
+   - .off: 监听暂时离线,自动恢复中(琥珀色)
+   - .denied: 麦克风权限被拒(红色警示)
+   位置: 右上工具栏"在线"状态正下方,
+   不与居中导航药丸重叠
+   ============================================ */
+.am-wake-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.72);
+  font-size: .64rem;
+  font-weight: 600;
+  letter-spacing: .02em;
+  white-space: nowrap;
+  pointer-events: none; /* 纯指示器,不拦截触摸 */
+  user-select: none;
+}
+
+/* 状态圆点: 默认绿色脉冲(监听中) */
+.am-wake-indicator .am-wake-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--bio-emerald, #00FFA3);
+  box-shadow: 0 0 6px rgba(0, 255, 163, 0.7);
+  animation: am-wake-pulse 2s ease-in-out infinite;
+}
+
+/* 唤醒后的对话中: 紫色高亮,脉冲更快 */
+.am-wake-indicator.listening {
+  color: var(--bio-violet, #A99BFF);
+  border-color: rgba(123, 97, 255, 0.4);
+}
+.am-wake-indicator.listening .am-wake-dot {
+  background: var(--bio-violet, #7B61FF);
+  box-shadow: 0 0 8px rgba(123, 97, 255, 0.8);
+  animation-duration: 1s;
+}
+
+/* 监听离线恢复中: 琥珀色,呼吸提示 */
+.am-wake-indicator.off {
+  color: var(--bio-amber, #FFB627);
+  border-color: rgba(255, 182, 39, 0.35);
+}
+.am-wake-indicator.off .am-wake-dot {
+  background: var(--bio-amber, #FFB627);
+  box-shadow: 0 0 6px rgba(255, 182, 39, 0.7);
+  animation-duration: 1.4s;
+}
+
+/* 麦克风未授权: 红色警示,不闪烁(持续报警状态) */
+.am-wake-indicator.denied {
+  color: var(--bio-magenta, #FF2E7E);
+  border-color: rgba(255, 46, 126, 0.4);
+}
+.am-wake-indicator.denied .am-wake-dot {
+  background: var(--bio-magenta, #FF2E7E);
+  box-shadow: 0 0 6px rgba(255, 46, 126, 0.7);
+  animation: none;
+}
+
+@keyframes am-wake-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: .45; transform: scale(.82); }
+}
+
+/* ===== 悬浮语音精灵(视障端): 点击直接语音对话 + 实时显示当前智能体 ===== */
+.am-sprite {
+  position: absolute;
+  right: 14px;
+  bottom: 188px;
+  z-index: 32;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.am-sprite .am-sprite-icon {
+  position: relative;
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26px;
+  background: linear-gradient(135deg, var(--bio-emerald, #00FFA3) 0%, var(--bio-cyan, #00E5FF) 100%);
+  box-shadow: 0 4px 18px rgba(0, 255, 163, 0.35), inset 0 0 12px rgba(255, 255, 255, 0.18);
+  transition: transform .2s ease, box-shadow .3s ease, background .3s ease;
+}
+.am-sprite:active .am-sprite-icon { transform: scale(.92); }
+/* 待命脉冲环 */
+.am-sprite .am-sprite-ring {
+  position: absolute;
+  top: 0;
+  width: 54px;
+  height: 54px;
+  border-radius: 50%;
+  border: 2px solid rgba(0, 255, 163, 0.55);
+  animation: am-sprite-ring 2.4s ease-out infinite;
+  pointer-events: none;
+}
+/* 对话中: 紫色系 + 快速脉冲 */
+.am-sprite.talking .am-sprite-icon {
+  background: linear-gradient(135deg, var(--bio-violet, #7B61FF) 0%, var(--bio-cyan, #00E5FF) 100%);
+  box-shadow: 0 4px 22px rgba(123, 97, 255, 0.5);
+}
+.am-sprite.talking .am-sprite-ring {
+  border-color: rgba(123, 97, 255, 0.7);
+  animation-duration: 1.1s;
+}
+/* 麦克风未授权: 红色警示 */
+.am-sprite.denied .am-sprite-icon {
+  background: linear-gradient(135deg, var(--bio-magenta, #FF2E7E) 0%, var(--bio-amber, #FFB627) 100%);
+  box-shadow: 0 4px 18px rgba(255, 46, 126, 0.45);
+}
+.am-sprite.denied .am-sprite-ring { display: none; }
+/* 当前智能体标签(视障用户/评委直观看到系统正在调用什么功能) */
+.am-sprite .am-sprite-tag {
+  max-width: 96px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: .68rem;
+  font-weight: 600;
+  letter-spacing: .02em;
+  color: var(--ink, #EAF0FF);
+  background: rgba(13, 17, 28, 0.78);
+  border: 1px solid var(--gb, rgba(255, 255, 255, 0.06));
+  backdrop-filter: blur(10px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.am-sprite.talking .am-sprite-tag {
+  color: var(--bio-violet, #7B61FF);
+  border-color: rgba(123, 97, 255, 0.45);
+}
+@keyframes am-sprite-ring {
+  0% { transform: scale(1); opacity: .8; }
+  100% { transform: scale(1.65); opacity: 0; }
+}
+@media (max-width: 480px) {
+  .am-sprite { right: 10px; bottom: 178px; }
+  .am-sprite .am-sprite-icon { width: 48px; height: 48px; font-size: 23px; }
+  .am-sprite .am-sprite-ring { width: 48px; height: 48px; }
+}
+
+/* 窄屏适配: 小药丸文字精简,防止过宽 */
+@media (max-width: 480px) {
+  .am-wake-indicator { font-size: .6rem; padding: 3px 9px; gap: 4px; }
 }
