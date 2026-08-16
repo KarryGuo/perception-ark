@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useWebSocket } from '../hooks/useWebSocket.js';
 import { useCamera } from '../hooks/useCamera.js';
 import { useSpeechSynthesis, useSpeechRecognition } from '../hooks/useSpeech.js';
@@ -239,6 +239,91 @@ function AppMobileUser() {
     setFirstUse(false);
   }, []);
 
+  // ===== 开启语音对话(唤醒词命中/点击悬浮精灵共用入口) =====
+  // 播报"我在请说" → 等TTS尾音消散 → 启动命令ASR → handleVoiceInput分发到对应智能体
+  const beginVoiceDialogue = useCallback(() => {
+    // 停掉唤醒词监听并抑制自动重启(防止onend抢占麦克风,使命令ASR无法启动)
+    if (wakeAsrRef.current) { try { wakeAsrRef.current.stop(); } catch(ex) {} }
+    wakeListeningRef.current = false;
+    setWakeListeningUi(false);
+    suppressWakeRef.current = true;
+    setWakeDialogue(true);
+    spatialAudio.beep('正前方', 0.12, 880);
+    showToast('🎤 我在，请说...');
+    wakePendingRef.current = '';
+    // TTS播报"我在请说",onEnd后延迟1500ms启动命令ASR(等TTS尾音完全消散,避免回声)
+    // 增加兜底定时器: 若TTS的onEnd未触发(Chrome偶发bug),按估算时长兜底启动命令识别
+    let dialogueStarted = false;
+    const startDialogue = () => {
+      if (dialogueStarted) return;
+      dialogueStarted = true;
+      setTimeout(() => {
+        const CmdRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!CmdRec) {
+          // 不支持命令识别: 直接恢复唤醒词监听
+          suppressWakeRef.current = false;
+          setWakeDialogue(false);
+          wakeStartRef.current?.();
+          return;
+        }
+        const cmdRec = new CmdRec();
+        cmdRec.lang = 'zh-CN';
+        cmdRec.continuous = false;
+        cmdRec.interimResults = true;
+        cmdRec.maxAlternatives = 1;
+        let gotResult = false;
+        cmdRec.onresult = (ev) => {
+          for (let i = ev.resultIndex; i < ev.results.length; i++) {
+            const t = ev.results[i][0].transcript.trim();
+            if (ev.results[i].isFinal && t) {
+              gotResult = true;
+              handleVoiceInputRef.current?.(t);
+              setWakeDialogue(false);
+              // 命令处理完再重启唤醒词监听
+              setTimeout(() => {
+                suppressWakeRef.current = false;
+                wakeStartRef.current?.();
+              }, 800);
+            } else {
+              setSubtitle(`👂 ${t}`);
+            }
+          }
+        };
+        cmdRec.onerror = () => {
+          setWakeDialogue(false); setSubtitle('');
+          suppressWakeRef.current = false;
+          setTimeout(() => wakeStartRef.current?.(), 1000);
+        };
+        cmdRec.onend = () => {
+          if (!gotResult) {
+            setWakeDialogue(false); setSubtitle('');
+            suppressWakeRef.current = false;
+            setTimeout(() => wakeStartRef.current?.(), 1000);
+          }
+        };
+        try {
+          cmdRec.start();
+        } catch (err) {
+          // 命令ASR启动失败: 恢复唤醒词监听
+          suppressWakeRef.current = false;
+          setWakeDialogue(false);
+          setTimeout(() => wakeStartRef.current?.(), 1000);
+          return;
+        }
+        if (dialogueTimeoutRef.current) clearTimeout(dialogueTimeoutRef.current);
+        dialogueTimeoutRef.current = setTimeout(() => {
+          try { cmdRec.abort(); } catch(ex) {}
+          setWakeDialogue(false); setSubtitle('');
+          suppressWakeRef.current = false;
+          wakeStartRef.current?.();
+        }, 8000);
+      }, 1500); // 1500ms: 等TTS尾音完全消散再启动命令ASR,避免回声循环
+    };
+    speak('我在，请说', { rate: 1.05, onEnd: startDialogue });
+    // 兜底: "我在请说"约5字≈2秒,若onEnd未触发,2.5秒后强制进入命令识别
+    setTimeout(startDialogue, 2500);
+  }, [speak, spatialAudio, showToast]);
+
   const startWakeListener = useCallback(() => {
     if (!voiceWakeActive || wakeListeningRef.current || wakeDialogueRef.current || wakePermDeniedRef.current) return;
     try {
@@ -282,86 +367,11 @@ function AppMobileUser() {
         const text = (interim + finalText).replace(/\s/g, '');
         const detected = WAKE_WORDS.find(w => text.includes(w));
         if (detected) {
-          // 检测到唤醒词: 立即停止唤醒词监听 + 抑制自动重启(防止onend抢占麦克风)
+          // 检测到唤醒词: 停止唤醒词监听并进入语音对话(共用悬浮精灵的对话入口)
           try { recognition.stop(); } catch(ex) {}
           wakeListeningRef.current = false;
           setWakeListeningUi(false);
-          suppressWakeRef.current = true; // 关键: 阻止onend回调自动重启唤醒词
-          setWakeDialogue(true);
-          spatialAudio.beep('正前方', 0.12, 880);
-          showToast('🎤 我在，请说...');
-          wakePendingRef.current = '';
-          // TTS播报"我在请说",onEnd后延迟1500ms启动命令ASR(等TTS尾音完全消散,避免回声)
-          // 增加兜底定时器: 若TTS的onEnd未触发(Chrome偶发bug),按估算时长兜底启动命令识别
-          let dialogueStarted = false;
-          const startDialogue = () => {
-            if (dialogueStarted) return;
-            dialogueStarted = true;
-            setTimeout(() => {
-              const CmdRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-              if (!CmdRec) {
-                // 不支持命令识别: 直接恢复唤醒词监听
-                suppressWakeRef.current = false;
-                setWakeDialogue(false);
-                wakeStartRef.current?.();
-                return;
-              }
-              const cmdRec = new CmdRec();
-              cmdRec.lang = 'zh-CN';
-              cmdRec.continuous = false;
-              cmdRec.interimResults = true;
-              cmdRec.maxAlternatives = 1;
-              let gotResult = false;
-              cmdRec.onresult = (ev) => {
-                for (let i = ev.resultIndex; i < ev.results.length; i++) {
-                  const t = ev.results[i][0].transcript.trim();
-                  if (ev.results[i].isFinal && t) {
-                    gotResult = true;
-                    handleVoiceInputRef.current?.(t);
-                    setWakeDialogue(false);
-                    // 命令处理完再重启唤醒词监听
-                    setTimeout(() => {
-                      suppressWakeRef.current = false;
-                      wakeStartRef.current?.();
-                    }, 800);
-                  } else {
-                    setSubtitle(`👂 ${t}`);
-                  }
-                }
-              };
-              cmdRec.onerror = () => {
-                setWakeDialogue(false); setSubtitle('');
-                suppressWakeRef.current = false;
-                setTimeout(() => wakeStartRef.current?.(), 1000);
-              };
-              cmdRec.onend = () => {
-                if (!gotResult) {
-                  setWakeDialogue(false); setSubtitle('');
-                  suppressWakeRef.current = false;
-                  setTimeout(() => wakeStartRef.current?.(), 1000);
-                }
-              };
-              try {
-                cmdRec.start();
-              } catch (err) {
-                // 命令ASR启动失败: 恢复唤醒词监听
-                suppressWakeRef.current = false;
-                setWakeDialogue(false);
-                setTimeout(() => wakeStartRef.current?.(), 1000);
-                return;
-              }
-              if (dialogueTimeoutRef.current) clearTimeout(dialogueTimeoutRef.current);
-              dialogueTimeoutRef.current = setTimeout(() => {
-                try { cmdRec.abort(); } catch(ex) {}
-                setWakeDialogue(false); setSubtitle('');
-                suppressWakeRef.current = false;
-                wakeStartRef.current?.();
-              }, 8000);
-            }, 1500); // 1500ms: 等TTS尾音完全消散再启动命令ASR,避免回声循环
-          };
-          speak('我在，请说', { rate: 1.05, onEnd: startDialogue });
-          // 兜底: "我在请说"约5字≈2秒,若onEnd未触发,2.5秒后强制进入命令识别
-          setTimeout(startDialogue, 2500);
+          beginVoiceDialogue();
         }
       };
       recognition.onerror = (e) => {
@@ -402,7 +412,7 @@ function AppMobileUser() {
     } catch (e) {
       console.warn('[Wake] 唤醒词初始化失败:', e);
     }
-  }, [voiceWakeActive, speak, spatialAudio, showToast]);
+  }, [voiceWakeActive, speak, spatialAudio, showToast, beginVoiceDialogue]);
 
   const stopWakeListener = useCallback(() => {
     if (wakeAsrRef.current) {
@@ -754,7 +764,9 @@ function AppMobileUser() {
     }
     const names = { recognize: '识别', navigate: '导航', sos: '紧急呼救' };
     showToast(`已切换到${names[tab]}`);
-  }, [showToast, stopSpeak, spatialAudio, stopNavigation, forceLocate, requestCompassPermission]);
+    // 视障用户触摸Tab后语音播报确认(所有切换路径统一由此播报,语音指令处不再重复speak)
+    speak(`已切换到${names[tab]}页面`);
+  }, [showToast, speak, stopSpeak, spatialAudio, stopNavigation, forceLocate, requestCompassPermission]);
 
   // 语音指令切换tab(必须放在switchTab声明之后:useEffect依赖数组在渲染时立即求值,前向引用会触发TDZ错误)
   useEffect(() => {
@@ -2035,15 +2047,31 @@ function AppMobileUser() {
       return;
     }
 
-    if (/打开识别|识别模式/.test(clean)) { switchTab('recognize'); speak('已切换到识别模式'); return; }
-    if (/打开导航|导航模式/.test(clean)) { switchTab('navigate'); speak('已切换到导航模式'); return; }
-    if (/紧急呼救|SOS|救命|求救/.test(clean)) { switchTab('sos'); speak('已进入紧急呼救'); handleSos(); return; }
+    if (/打开识别|识别模式/.test(clean)) { switchTab('recognize'); return; }
+    if (/打开导航|导航模式/.test(clean)) { switchTab('navigate'); return; }
+    if (/紧急呼救|SOS|救命|求救/.test(clean)) { switchTab('sos'); handleSos(); return; }
     if (/我没事|我很好|我没事了|我安全|我好的/.test(clean)) { handleSosRespond(); return; }
     if (/取消SOS|取消呼救|取消急救/.test(clean)) { handleSosCancel(); return; }
     if (/打开摄像头|开启摄像头/.test(clean)) { startCamera(); speak('正在开启摄像头'); return; }
     if (/关闭摄像头/.test(clean)) { camera.stop(); speak('摄像头已关闭'); return; }
     if (/停止|别说了|安静|闭嘴|停一下/.test(clean)) { stopSpeak(); spatialAudio.stop(); setSubtitle(''); return; }
     if (/帮助|怎么用|使用说明|教程|引导/.test(clean)) { setTutorialStep(0); setFirstUse(true); return; }
+    // ===== 语音退出登录: 视障用户无需找退出按钮 =====
+    if (/退出登录|退出账号|注销登录|注销账号|退出系统/.test(clean)) {
+      speak('正在退出登录,再见');
+      setTimeout(() => { logout(); window.location.hash = '#/login'; }, 1200);
+      return;
+    }
+    // ===== 播报当前页面说明: "这是什么页面"/"当前是什么页面" =====
+    if (/这是什么页面|当前.{0,3}页面|现在.{0,3}页面|哪个页面|页面介绍/.test(clean)) {
+      const pageIntro = {
+        recognize: '当前是识别页面。您可以说:开启出行模式、阅读文字、识别红绿灯、帮我寻找物品,或者说:我要去超市,我来帮您智能导航',
+        navigate: '当前是导航页面。您可以说:导航到某个地点,比如导航去最近的超市,我会帮您查找并规划路线',
+        sos: '当前是紧急呼救页面。点击大红按钮或说紧急呼救,立即向家属发送位置并拨打急救电话'
+      };
+      speak(pageIntro[activeTabRef.current] || pageIntro.recognize);
+      return;
+    }
     // 结束寻物: 寻物模式下说"结束寻找/停止寻找/不用找了"直接退出
     if (activeMode === 'find' && /结束寻找|停止寻找|不用找了|不找了|退出寻找|取消寻找/.test(clean)) {
       setActiveMode(null); setFindTarget(''); speak('寻物模式已关闭'); return;
@@ -2145,11 +2173,34 @@ function AppMobileUser() {
     isProcessingRef.current = true;
     if (activeTab === 'recognize') handleRecognizeCommand(clean);
     else if (activeTab === 'navigate') handleNavigateCommand(clean);
-  }, [switchTab, handleSos, handleSosRespond, handleSosCancel, startCamera, camera, activeMode, activeTab, addMessage, speak, stopSpeak, spatialAudio, handleNavigate, handleRecognizeCommand, handleNavigateCommand, handleOneShotRecognize, handleOneShotRead, startSmartNavigation, selectPoiAndNavigate, startFindMode]);
+  }, [switchTab, handleSos, handleSosRespond, handleSosCancel, startCamera, camera, activeMode, activeTab, addMessage, speak, stopSpeak, spatialAudio, handleNavigate, handleRecognizeCommand, handleNavigateCommand, handleOneShotRecognize, handleOneShotRead, startSmartNavigation, selectPoiAndNavigate, startFindMode, logout]);
 
   useEffect(() => {
     handleVoiceInputRef.current = handleVoiceInput;
   }, [handleVoiceInput]);
+
+  // ===== 悬浮语音精灵: 当前调用的智能体/功能标签(视障用户可见当前系统在做什么) =====
+  const agentLabel = useMemo(() => {
+    if (wakeDialogue) return '对话中';
+    if (navDialogueModeRef.current === 'poi_select') return '选择目的地';
+    if (activeMode === 'travel') return '出行模式';
+    if (activeMode === 'find') return findTarget ? `寻找${findTarget}` : '寻物模式';
+    if (activeMode === 'traffic') return '红绿灯识别';
+    if (activeMode === 'read') return '阅读文字';
+    if (activeMode === 'analyze') return '快速分析';
+    if (mapRoute) return '导航中';
+    if (activeTab === 'navigate') return '智能导航';
+    if (activeTab === 'sos') return '紧急呼救';
+    return '小舟待命';
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wakeDialogue, activeMode, findTarget, mapRoute, activeTab, poiSuggestions]);
+
+  // 精灵点击 → 直接进入语音对话(唤醒词识别失败时的兜底入口,随时可点击)
+  const handleSpriteClick = useCallback(() => {
+    if (wakeDialogueRef.current) return; // 对话中不重复触发
+    try { navigator.vibrate?.(30); } catch(ex) {}
+    beginVoiceDialogue();
+  }, [beginVoiceDialogue]);
 
   return (
     <div className="am-app ark-dark">
@@ -2241,6 +2292,20 @@ function AppMobileUser() {
         <div className="am-wake-indicator denied" role="alert" aria-label="麦克风权限被拒绝，语音唤醒不可用">
           <span className="am-wake-dot" /> 麦克风未授权
         </div>
+      )}
+
+      {/* ===== 悬浮语音精灵(识别页常驻): 点击直接与小舟语音对话,实时显示当前调用的智能体 ===== */}
+      {!firstUse && (
+        <button
+          type="button"
+          className={`am-sprite ${wakeDialogue ? 'talking' : ''} ${wakePermDeniedUi ? 'denied' : ''}`}
+          onClick={handleSpriteClick}
+          aria-label={`语音精灵，当前功能：${agentLabel}。点击开始语音对话，说出您需要做的事`}
+        >
+          <span className="am-sprite-ring" aria-hidden="true" />
+          <span className="am-sprite-icon" aria-hidden="true">{wakeDialogue ? '🎧' : '🧚'}</span>
+          <span className="am-sprite-tag">{agentLabel}</span>
+        </button>
       )}
 
       {/* ===== 主内容浮层 ===== */}
